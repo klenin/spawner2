@@ -3,4 +3,5 @@
 members = [
 	"libspawner",
 	"sp",
+	"sp_derive",
 ]

@@ -8,4 +8,5 @@ name = "sp"
 path = "main.rs"
 
 [dependencies]
+sp_derive = { path = "../sp_derive" }
 spawner = { path = "../libspawner" }

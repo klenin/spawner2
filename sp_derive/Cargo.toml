@@ -1,0 +1,13 @@
+[package]
+name = "sp_derive"
+version = "0.0.0"
+authors = ["ptslog <hsfk@yandex.ru>"]
+
+[lib]
+path = "lib.rs"
+crate-type = ["proc-macro"]
+
+[dependencies]
+proc-macro2 = "0.4"
+quote = "0.6.3"
+syn = "0.15.22"
