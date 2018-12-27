@@ -4,6 +4,9 @@ mod instance;
 mod opts;
 mod value_parser;
 
+#[cfg(test)]
+mod tests;
+
 use instance::SpawnerOptions;
 use opts::CmdLineOptions;
 use std::env;
