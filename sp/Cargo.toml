@@ -6,3 +6,6 @@ authors = ["ptslog <hsfk@yandex.ru>"]
 [[bin]]
 name = "sp"
 path = "main.rs"
+
+[dependencies]
+spawner = { path = "../libspawner" }

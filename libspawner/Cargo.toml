@@ -1,0 +1,9 @@
+[package]
+name = "spawner"
+version = "0.0.0"
+authors = ["ptslog <hsfk@yandex.ru>"]
+
+[lib]
+name = "spawner"
+path = "lib.rs"
+crate-type = ["dylib"]
