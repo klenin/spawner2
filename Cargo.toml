@@ -1,7 +1,5 @@
-[package]
-name = "sp"
-version = "0.1.0"
-authors = ["ptslog <hsfk@yandex.ru>"]
+[workspace]
 
-[dependencies]
-getopts = "0.2"
+members = [
+	"sp",
+]
