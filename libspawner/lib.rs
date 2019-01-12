@@ -1,5 +1,12 @@
-mod executable;
-mod spawner;
+extern crate cfg_if;
 
-pub use executable::*;
-pub use spawner::*;
+#[cfg(windows)]
+extern crate winapi;
+
+pub mod command;
+pub mod runner;
+pub mod spawner;
+
+mod sys;
+
+pub use self::spawner::*;

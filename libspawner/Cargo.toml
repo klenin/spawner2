@@ -6,4 +6,18 @@ authors = ["ptslog <hsfk@yandex.ru>"]
 [lib]
 name = "spawner"
 path = "lib.rs"
-crate-type = ["dylib"]
+crate-type = ["lib"]
+
+[dependencies]
+cfg-if = "0.1.6"
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3.6", features = [
+    "processthreadsapi",
+    "winbase",
+    "winnt",
+    "minwindef",
+    "handleapi",
+    "winuser",
+    "jobapi2",
+    "tlhelp32",] }
