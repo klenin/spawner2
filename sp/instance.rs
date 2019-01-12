@@ -5,6 +5,7 @@ use value_parser::{
     StdinRedirectParser, StdoutRedirectParser, TimeValueParser,
 };
 
+#[derive(Clone)]
 pub enum EnvType {
     Inherit,
     UserDefault,
@@ -17,6 +18,7 @@ pub struct RedirectFlags {
     pub exclusive: bool,
 }
 
+#[derive(Clone)]
 pub enum PipeKind {
     Null,
     Std,
@@ -25,16 +27,19 @@ pub enum PipeKind {
     Stderr(u32),
 }
 
+#[derive(Clone)]
 pub enum StdioRedirectKind {
     File(String),
     Pipe(PipeKind),
 }
 
+#[derive(Clone)]
 pub struct StdioRedirect {
     pub kind: StdioRedirectKind,
     pub flags: RedirectFlags,
 }
 
+#[derive(Clone)]
 pub struct StdioRedirectList {
     pub items: Vec<StdioRedirect>,
     pub default_flags: RedirectFlags,
@@ -51,7 +56,7 @@ pub type StdinRedirectList = StdioRedirectList;
 pub type StdoutRedirectList = StdioRedirectList;
 pub type StderrRedirectList = StdioRedirectList;
 
-#[derive(CmdLineOptions)]
+#[derive(CmdLineOptions, Clone)]
 #[optcont(
     delimeters = "=:",
     usage = "sp [options] executable [arguments]",
@@ -239,6 +244,8 @@ pub struct SpawnerOptions {
 
     #[flag(names("-j", "--json"), desc = "Use JSON format in report")]
     pub use_json: bool,
+
+    pub argv: Vec<String>,
 }
 
 impl Default for SpawnerOptions {
@@ -272,6 +279,7 @@ impl Default for SpawnerOptions {
             controller: false,
             shared_memory: None,
             use_json: false,
+            argv: Vec::new(),
         }
     }
 }
