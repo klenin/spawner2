@@ -1,8 +1,9 @@
 pub use opts::{CmdLineOptions, OptionValueParser};
-use std::{f64, u32};
+use std::time::Duration;
+use std::{f64, u32, u64};
 use value_parser::{
     DefaultValueParser, FileFlagsParser, MemValueParser, PercentValueParser, StderrRedirectParser,
-    StdinRedirectParser, StdoutRedirectParser, TimeValueParser,
+    StdinRedirectParser, StdoutRedirectParser,
 };
 
 #[derive(Clone)]
@@ -66,18 +67,16 @@ pub struct SpawnerOptions {
     #[opt(
         name = "-tl",
         desc = "Set time limit for executable (user process time)",
-        value_desc = "<number>[unit]",
-        parser = "TimeValueParser"
+        value_desc = "<number>[unit]"
     )]
-    pub time_limit: f64,
+    pub time_limit: Duration,
 
     #[opt(
         name = "-d",
         desc = "Set time limit for executable (wall-clock time)",
-        value_desc = "<number>[unit]",
-        parser = "TimeValueParser"
+        value_desc = "<number>[unit]"
     )]
-    pub wall_clock_time_limit: f64,
+    pub wall_clock_time_limit: Duration,
 
     #[opt(
         name = "-ml",
@@ -105,10 +104,9 @@ pub struct SpawnerOptions {
     #[opt(
         name = "-y",
         desc = "Set idleness time limit for executable",
-        value_desc = "<number>[unit]",
-        parser = "TimeValueParser"
+        value_desc = "<number>[unit]"
     )]
-    pub idleness_time_limit: f64,
+    pub idleness_time_limit: Duration,
 
     #[opt(
         name = "-lr",
@@ -131,10 +129,9 @@ pub struct SpawnerOptions {
     #[opt(
         names("-mi", "--monitorInterval"),
         desc = "Sleep interval for a monitoring thread (default: 0.001s)",
-        value_desc = "<number>[unit]",
-        parser = "TimeValueParser"
+        value_desc = "<number>[unit]"
     )]
-    pub monitor_interval: f64,
+    pub monitor_interval: Duration,
 
     #[opt(name = "-wd", desc = "Set working directory", value_desc = "<dir>")]
     pub working_directory: Option<String>,
@@ -251,16 +248,16 @@ pub struct SpawnerOptions {
 impl Default for SpawnerOptions {
     fn default() -> Self {
         Self {
-            time_limit: f64::INFINITY,
-            wall_clock_time_limit: f64::INFINITY,
+            time_limit: Duration::from_secs(u64::MAX),
+            wall_clock_time_limit: Duration::from_secs(u64::MAX),
             memory_limit: f64::INFINITY,
             write_limit: f64::INFINITY,
             secure: false,
-            idleness_time_limit: f64::INFINITY,
+            idleness_time_limit: Duration::from_secs(u64::MAX),
             load_ratio: 5.0,
             hide_gui: true,
             debug: false,
-            monitor_interval: 0.001,
+            monitor_interval: Duration::from_millis(1),
             working_directory: None,
             hide_report: false,
             hide_output: false,

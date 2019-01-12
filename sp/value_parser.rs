@@ -3,9 +3,9 @@ use instance::{
     StdinRedirectList, StdioRedirect, StdioRedirectKind, StdioRedirectList, StdoutRedirectList,
 };
 use opts::OptionValueParser;
+use std::time::Duration;
 
 pub struct DefaultValueParser;
-pub struct TimeValueParser;
 pub struct MemValueParser;
 pub struct PercentValueParser;
 pub struct StdinRedirectParser;
@@ -87,12 +87,13 @@ impl OptionValueParser<EnvVars> for DefaultValueParser {
     }
 }
 
-impl OptionValueParser<f64> for TimeValueParser {
-    fn parse(opt: &mut f64, v: &str) -> Result<(), String> {
+impl OptionValueParser<Duration> for DefaultValueParser {
+    fn parse(opt: &mut Duration, v: &str) -> Result<(), String> {
         parse_value(v, parse_time_degree, parse_time_unit).map_or(
             Err(format!("Invalid value '{}'", v)),
             |(val, mult)| {
-                *opt = round6(val * mult.unwrap_or(1.0));
+                let usec = (round6(val * mult.unwrap_or(1.0)) * 1e6) as u64;
+                *opt = Duration::from_micros(usec);
                 Ok(())
             },
         )

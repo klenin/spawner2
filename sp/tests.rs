@@ -1,5 +1,10 @@
 use instance::*;
+use std::time::Duration;
 use value_parser::StdinRedirectParser;
+
+fn fsec2dur(s: f64) -> Duration {
+    Duration::from_micros((s * 1e6) as u64)
+}
 
 macro_rules! check_opt {
     ($argv:expr, $field:ident, $value:expr) => {{
@@ -11,24 +16,24 @@ macro_rules! check_opt {
 
 #[test]
 fn parse_opt_delimeters() {
-    check_opt!(&["-tl=10"], time_limit, 10.0);
-    check_opt!(&["-tl:10"], time_limit, 10.0);
-    check_opt!(&["-tl", "10"], time_limit, 10.0);
+    check_opt!(&["-tl=10"], time_limit, fsec2dur(10.0));
+    check_opt!(&["-tl:10"], time_limit, fsec2dur(10.0));
+    check_opt!(&["-tl", "10"], time_limit, fsec2dur(10.0));
 }
 
 #[test]
 fn parse_basic_opts() {
-    check_opt!(&["-tl=10"], time_limit, 10.0);
-    check_opt!(&["-d=10"], wall_clock_time_limit, 10.0);
+    check_opt!(&["-tl=10"], time_limit, fsec2dur(10.0));
+    check_opt!(&["-d=10"], wall_clock_time_limit, fsec2dur(10.0));
     check_opt!(&["-ml=10"], memory_limit, 10.0);
     check_opt!(&["-wl=10"], write_limit, 10.0);
     check_opt!(&["-s=1"], secure, true);
-    check_opt!(&["-y=10"], idleness_time_limit, 10.0);
+    check_opt!(&["-y=10"], idleness_time_limit, fsec2dur(10.0));
     check_opt!(&["-lr=10"], load_ratio, 10.0);
     check_opt!(&["-lr=10%"], load_ratio, 10.0);
     check_opt!(&["-sw=0"], hide_gui, false);
     check_opt!(&["--debug=1"], debug, true);
-    check_opt!(&["-mi=0.1"], monitor_interval, 0.1);
+    check_opt!(&["-mi=0.1"], monitor_interval, fsec2dur(0.1));
     check_opt!(&["-wd=asd"], working_directory, Some(String::from("asd")));
     check_opt!(&["-hr=1"], hide_report, true);
     check_opt!(&["-ho=1"], hide_output, true);
@@ -178,7 +183,7 @@ macro_rules! check_time_value {
     ($input:expr, $expected:expr) => {{
         let mut opts = SpawnerOptions::default();
         let _ = opts.parse(&["-tl", $input]);
-        assert_eq!(opts.time_limit, $expected);
+        assert_eq!(opts.time_limit, fsec2dur($expected));
     }};
 }
 
