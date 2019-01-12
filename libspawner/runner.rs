@@ -102,18 +102,18 @@ impl MonitoringLoop {
         }
     }
 
-    fn termination_reason(&self, info: &SummaryInfo) -> io::Result<TerminationReason> {
+    fn termination_reason(&self, info: &SummaryInfo) -> TerminationReason {
         let limits = &self.cmd.limits;
         if info.total_processes > limits.max_processes {
-            Ok(TerminationReason::Other)
+            TerminationReason::Other
         } else if info.total_user_time > limits.max_user_time {
-            Ok(TerminationReason::UserTimeLimitExceeded)
+            TerminationReason::UserTimeLimitExceeded
         } else if info.total_bytes_written > limits.max_output_size {
-            Ok(TerminationReason::WriteLimitExceeded)
+            TerminationReason::WriteLimitExceeded
         } else if info.peak_memory_used > limits.max_memory_usage {
-            Ok(TerminationReason::MemoryLimitExceeded)
+            TerminationReason::MemoryLimitExceeded
         } else {
-            Ok(TerminationReason::None)
+            TerminationReason::None
         }
     }
 
@@ -127,7 +127,7 @@ impl MonitoringLoop {
                 match pstree.lock().unwrap().status()? {
                     ProcessTreeStatus::Alive(info) => {
                         summary_info = info;
-                        termination_reason = self.termination_reason(&summary_info)?;
+                        termination_reason = self.termination_reason(&summary_info);
                         match termination_reason {
                             TerminationReason::None => {}
                             _ => break,
