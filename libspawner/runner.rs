@@ -1,8 +1,8 @@
 use command::Command;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Weak};
-use std::thread;
+use std::sync::{Arc, Weak};
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use std::u64;
 use sys::{ProcessTree, ProcessTreeStatus, SummaryInfo};
@@ -33,41 +33,27 @@ pub struct Runner {
 }
 
 pub(crate) struct WaitHandle {
-    pstree: Arc<Mutex<ProcessTree>>,
-    monitoring_thread: thread::JoinHandle<Report>,
+    monitoring_thread: JoinHandle<io::Result<Report>>,
     runner: Runner,
 }
 
 struct MonitoringLoop {
-    pstree: Weak<Mutex<ProcessTree>>,
     cmd: Command,
     is_killed: Arc<AtomicBool>,
 }
 
 pub(crate) fn run(cmd: Command) -> io::Result<WaitHandle> {
-    let pstree = Arc::new(Mutex::new(ProcessTree::spawn(&cmd.info)?));
-
-    let monitoring_loop = MonitoringLoop::new(Arc::downgrade(&pstree), cmd);
+    let monitoring_loop = MonitoringLoop::new(cmd);
     let is_killed = Arc::downgrade(&monitoring_loop.is_killed);
 
-    let thread_entry = move || match MonitoringLoop::start(monitoring_loop) {
-        Err(e) => panic!(e),
-        Ok(r) => r,
-    };
-
-    match thread::Builder::new().spawn(thread_entry) {
-        Ok(handle) => Ok(WaitHandle {
-            pstree: pstree,
+    thread::Builder::new()
+        .spawn(move || MonitoringLoop::start(monitoring_loop))
+        .map(|handle| WaitHandle {
             monitoring_thread: handle,
             runner: Runner {
                 is_killed: is_killed,
             },
-        }),
-        Err(e) => {
-            kill_pstree(pstree)?;
-            Err(e)
-        }
-    }
+        })
 }
 
 impl Runner {
@@ -84,19 +70,19 @@ impl WaitHandle {
     }
 
     pub(crate) fn wait(self) -> io::Result<Report> {
-        let result = self.monitoring_thread.join().map_err(|e| {
-            let err_ref = e.downcast_ref::<io::Error>().unwrap();
-            io::Error::new(err_ref.kind(), err_ref.to_string())
-        });
-        kill_pstree(self.pstree)?;
-        result
+        match self.monitoring_thread.join() {
+            Ok(result) => result,
+            Err(_) => Err(io::Error::new(
+                io::ErrorKind::Other,
+                "monitoring thread panicked",
+            )),
+        }
     }
 }
 
 impl MonitoringLoop {
-    fn new(tree: Weak<Mutex<ProcessTree>>, cmd: Command) -> Self {
+    fn new(cmd: Command) -> Self {
         Self {
-            pstree: tree,
             cmd: cmd,
             is_killed: Arc::new(AtomicBool::new(false)),
         }
@@ -121,10 +107,11 @@ impl MonitoringLoop {
         let mut summary_info = SummaryInfo::zeroed();
         let mut termination_reason = TerminationReason::None;
         let mut exit_code = 0;
+        let pstree = ProcessTree::spawn(&self.cmd.info)?;
 
         while !self.is_killed.load(Ordering::SeqCst) {
-            if let Some(pstree) = self.pstree.upgrade() {
-                match pstree.lock().unwrap().status()? {
+            match pstree.status() {
+                Ok(status) => match status {
                     ProcessTreeStatus::Alive(info) => {
                         summary_info = info;
                         termination_reason = self.termination_reason(&summary_info);
@@ -137,14 +124,16 @@ impl MonitoringLoop {
                         exit_code = c;
                         break;
                     }
+                },
+                Err(e) => {
+                    pstree.kill()?;
+                    return Err(e);
                 }
-                thread::sleep(self.cmd.monitor_interval);
-            } else {
-                // runner is dropped
-                break;
             }
+            thread::sleep(self.cmd.monitor_interval);
         }
 
+        pstree.kill()?;
         Ok(Report {
             cmd: self.cmd,
             termination_reason: termination_reason,
@@ -155,10 +144,4 @@ impl MonitoringLoop {
             exit_code: exit_code,
         })
     }
-}
-
-// assuming there is only one strong reference left
-fn kill_pstree(tree: Arc<Mutex<ProcessTree>>) -> io::Result<()> {
-    assert!(Arc::strong_count(&tree) == 1);
-    Arc::try_unwrap(tree).unwrap().into_inner().unwrap().kill()
 }
