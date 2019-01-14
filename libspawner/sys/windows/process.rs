@@ -1,3 +1,4 @@
+use command::CommandInner;
 use std::ffi::OsString;
 use std::fmt;
 use std::io;
@@ -6,7 +7,7 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
 use std::ptr;
 use std::time::Duration;
-pub use sys::process_common::{ProcessTreeStatus, StartupInfo, SummaryInfo};
+pub use sys::process_common::{ProcessTreeStatus, SummaryInfo};
 use sys::windows::common::{ok_neq_minus_one, ok_nonzero};
 use sys::windows::thread::ThreadIterator;
 use winapi::shared::minwindef::{DWORD, FALSE, TRUE, WORD};
@@ -35,8 +36,8 @@ pub struct ProcessTree {
 unsafe impl Send for ProcessTree {}
 
 impl ProcessTree {
-    pub fn spawn(info: &StartupInfo) -> io::Result<Self> {
-        let info = create_suspended_process(info)?;
+    pub(crate) fn spawn(cmd: &CommandInner) -> io::Result<Self> {
+        let info = create_suspended_process(cmd)?;
         let job = assign_process_to_new_job(info.hProcess).map_err(|e| {
             match unsafe { ok_nonzero(TerminateProcess(info.hProcess, 0)) } {
                 Ok(_) => e,
@@ -123,20 +124,20 @@ impl fmt::Debug for ProcessTree {
     }
 }
 
-fn create_suspended_process(info: &StartupInfo) -> io::Result<PROCESS_INFORMATION> {
-    let mut cmd = argv_to_cmd(info)?;
+fn create_suspended_process(cmd: &CommandInner) -> io::Result<PROCESS_INFORMATION> {
+    let mut cmdline = argv_to_cmd(&cmd.app, &cmd.args)?;
     let creation_flags = CREATE_SUSPENDED;
     let mut process_info: PROCESS_INFORMATION = unsafe { mem::zeroed() };
     let mut startup_info: STARTUPINFOW = unsafe { mem::zeroed() };
     startup_info.cb = mem::size_of_val(&startup_info) as DWORD;
     startup_info.dwFlags = STARTF_USESHOWWINDOW;
     startup_info.lpDesktop = ptr::null_mut();
-    startup_info.wShowWindow = if info.display_gui { SW_SHOW } else { SW_HIDE } as WORD;
+    startup_info.wShowWindow = if cmd.display_gui { SW_SHOW } else { SW_HIDE } as WORD;
 
     unsafe {
         ok_nonzero(CreateProcessW(
             /*lpApplicationName=*/ ptr::null(),
-            /*lpCommandLine=*/ cmd.as_mut_ptr(),
+            /*lpCommandLine=*/ cmdline.as_mut_ptr(),
             /*lpProcessAttributes=*/ ptr::null_mut(),
             /*lpThreadAttributes=*/ ptr::null_mut(),
             /*bInheritHandles=*/ TRUE,
@@ -169,17 +170,17 @@ fn resume_process(process_id: DWORD) -> io::Result<()> {
     Ok(())
 }
 
-fn argv_to_cmd(info: &StartupInfo) -> io::Result<Vec<u16>> {
-    let mut result = match Path::new(&info.app).canonicalize() {
+fn argv_to_cmd(app: &OsString, args: &Vec<OsString>) -> io::Result<Vec<u16>> {
+    let mut result = match Path::new(app).canonicalize() {
         Ok(buf) => quote(&buf.into_os_string()),
         Err(_) => {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
-                format!("cannot find {}", info.app.to_string_lossy()),
+                format!("cannot find {}", app.to_string_lossy()),
             ));
         }
     };
-    for arg in &info.args {
+    for arg in args {
         result.push(" ");
         result.push(quote(arg));
     }

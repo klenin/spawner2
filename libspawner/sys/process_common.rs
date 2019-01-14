@@ -1,13 +1,4 @@
-use std::ffi::OsString;
 use std::time::Duration;
-
-#[derive(Clone)]
-pub struct StartupInfo {
-    pub app: OsString,
-    pub args: Vec<OsString>,
-    pub cwd: OsString,
-    pub display_gui: bool,
-}
 
 pub struct SummaryInfo {
     /// the total amount of user-mode execution time for all active processes,

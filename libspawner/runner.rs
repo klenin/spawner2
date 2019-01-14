@@ -107,7 +107,7 @@ impl MonitoringLoop {
         let mut summary_info = SummaryInfo::zeroed();
         let mut termination_reason = TerminationReason::None;
         let mut exit_code = 0;
-        let pstree = ProcessTree::spawn(&self.cmd.info)?;
+        let pstree = ProcessTree::spawn(&self.cmd.inner)?;
 
         while !self.is_killed.load(Ordering::SeqCst) {
             match pstree.status() {

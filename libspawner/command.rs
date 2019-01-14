@@ -1,7 +1,6 @@
 use std::ffi::{OsStr, OsString};
 use std::time::Duration;
 use std::u64;
-use sys::process::StartupInfo;
 
 #[derive(Copy, Clone)]
 pub struct Limits {
@@ -16,8 +15,16 @@ pub struct Limits {
 }
 
 #[derive(Clone)]
+pub(crate) struct CommandInner {
+    pub(crate) app: OsString,
+    pub(crate) args: Vec<OsString>,
+    pub(crate) cwd: OsString,
+    pub(crate) display_gui: bool,
+}
+
+#[derive(Clone)]
 pub struct Command {
-    pub(crate) info: StartupInfo,
+    pub(crate) inner: CommandInner,
     pub(crate) limits: Limits,
     pub(crate) monitor_interval: Duration,
 }
@@ -25,7 +32,7 @@ pub struct Command {
 impl Command {
     pub fn new<S: AsRef<OsStr>>(app: S) -> Self {
         Self {
-            info: StartupInfo {
+            inner: CommandInner {
                 app: app.as_ref().to_os_string(),
                 args: Vec::new(),
                 cwd: OsString::new(),
@@ -37,11 +44,11 @@ impl Command {
     }
 
     pub fn app(&self) -> &OsStr {
-        &self.info.app.as_os_str()
+        &self.inner.app.as_os_str()
     }
 
     pub fn add_arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self {
-        self.info.args.push(arg.as_ref().to_os_string());
+        self.inner.args.push(arg.as_ref().to_os_string());
         self
     }
 
@@ -50,19 +57,19 @@ impl Command {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        self.info
+        self.inner
             .args
             .extend(args.into_iter().map(|x| x.as_ref().to_os_string()));
         self
     }
 
     pub fn set_cwd<S: AsRef<OsStr>>(&mut self, cwd: S) -> &mut Self {
-        self.info.cwd = cwd.as_ref().to_os_string();
+        self.inner.cwd = cwd.as_ref().to_os_string();
         self
     }
 
     pub fn set_display_gui(&mut self, v: bool) -> &mut Self {
-        self.info.display_gui = v;
+        self.inner.display_gui = v;
         self
     }
 
