@@ -1,7 +1,7 @@
 use std::ffi::{OsStr, OsString};
 use std::time::Duration;
 use std::u64;
-use sys::StartupInfo;
+use sys::process::StartupInfo;
 
 #[derive(Copy, Clone)]
 pub struct Limits {

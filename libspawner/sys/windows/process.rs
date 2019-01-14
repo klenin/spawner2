@@ -6,7 +6,7 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
 use std::ptr;
 use std::time::Duration;
-use sys::process_common::{ProcessTreeStatus, StartupInfo, SummaryInfo};
+pub use sys::process_common::{ProcessTreeStatus, StartupInfo, SummaryInfo};
 use sys::windows::common::{ok_neq_minus_one, ok_nonzero};
 use sys::windows::thread::ThreadIterator;
 use winapi::shared::minwindef::{DWORD, FALSE, TRUE, WORD};

@@ -5,7 +5,7 @@ use std::sync::{Arc, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use std::u64;
-use sys::{ProcessTree, ProcessTreeStatus, SummaryInfo};
+use sys::process::{ProcessTree, ProcessTreeStatus, SummaryInfo};
 
 #[derive(Copy, Clone)]
 pub enum TerminationReason {

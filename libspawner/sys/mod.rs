@@ -2,8 +2,6 @@ use cfg_if::cfg_if;
 
 mod process_common;
 
-pub use self::process_common::*;
-
 cfg_if! {
     if #[cfg(windows)] {
         extern crate winapi;
