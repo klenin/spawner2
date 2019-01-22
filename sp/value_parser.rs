@@ -130,7 +130,7 @@ macro_rules! check_redirect {
         if let StdioRedirectKind::Pipe(ref kind) = $redirect.kind {
             match kind {
                 PipeKind::$a(i) | PipeKind::$b(i) => Err(format!(
-                    "Expected '{}' but got '{}' insteat",
+                    "Expected '{}' but got '{}' instead",
                     PipeKind::$expected(*i).to_string(),
                     kind.to_string()
                 )),
