@@ -34,6 +34,7 @@ impl ThreadIterator {
                     x => x,
                 };
                 if Thread32First(self.snapshot, &mut self.entry) == FALSE {
+                    CloseHandle(self.snapshot);
                     return false;
                 }
             }
