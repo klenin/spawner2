@@ -58,7 +58,7 @@ impl MonitoringLoop {
         }
     }
 
-    fn is_limits_exceeded(&mut self) -> bool {
+    fn check_limits(&mut self) -> bool {
         let limits = &self.cmd.limits;
         let stats = &self.stats;
         let term_reason = if stats.total_processes > limits.max_processes {
@@ -81,7 +81,7 @@ impl MonitoringLoop {
         match process.status()? {
             Status::Alive(stats) => {
                 self.stats = stats;
-                Ok(self.is_limits_exceeded())
+                Ok(self.check_limits())
             }
             Status::Finished(code) => {
                 self.exit_status = Some(ExitStatus::Normal(code));
