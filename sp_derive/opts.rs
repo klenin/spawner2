@@ -273,13 +273,13 @@ impl<'a> OptContainer<'a> {
                 return Err(vec![Error::new(
                     self.ast.ident.span(),
                     "Derive for enums is not supported",
-                )])
+                )]);
             }
             Data::Union(_) => {
                 return Err(vec![Error::new(
                     self.ast.ident.span(),
                     "Derive for unions is not supported",
-                )])
+                )]);
             }
         };
 
