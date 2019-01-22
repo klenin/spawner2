@@ -20,4 +20,6 @@ winapi = { version = "0.3.6", features = [
     "handleapi",
     "winuser",
     "jobapi2",
-    "tlhelp32",] }
+    "tlhelp32",
+    "namedpipeapi",
+    "fileapi",] }

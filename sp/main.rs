@@ -8,11 +8,11 @@ mod value_parser;
 #[cfg(test)]
 mod tests;
 
-use instance::SpawnerOptions;
+use instance::{PipeKind, SpawnerOptions, StdioRedirectKind, StdioRedirectList};
 use opts::CmdLineOptions;
-use spawner::command::{Command, Limits};
-use spawner::runner::{Report, TerminationReason};
-use spawner::Spawner;
+use spawner::command::{self, Command};
+use spawner::runner::{ExitStatus, Report, TerminationReason};
+use spawner::{CommandStdio, IstreamSrc, OstreamDst, Session};
 use std::env;
 use std::io;
 use std::time::Duration;
@@ -61,27 +61,28 @@ fn mb2b(mb: f64) -> u64 {
 
 impl From<&SpawnerOptions> for Command {
     fn from(opts: &SpawnerOptions) -> Command {
-        let mut cmd = Command::new(opts.argv[0].clone());
-        cmd.add_args(opts.argv.iter().skip(1))
-            .set_limits(Limits {
-                max_user_time: opts.time_limit,
-                max_memory_usage: mb2b(opts.memory_limit),
-                max_output_size: mb2b(opts.write_limit),
-                max_processes: opts.process_count as u64,
-            })
-            .set_monitor_interval(opts.monitor_interval)
-            .set_display_gui(!opts.hide_gui);
-        cmd
+        command::Builder::new(opts.argv[0].clone())
+            .args(opts.argv.iter().skip(1))
+            .max_user_time(opts.time_limit)
+            .max_memory_usage(mb2b(opts.memory_limit))
+            .max_output_size(mb2b(opts.write_limit))
+            .max_processes(opts.process_count as u64)
+            .monitor_interval(opts.monitor_interval)
+            .show_gui(!opts.hide_gui)
+            .build()
     }
 }
 
-fn termination_reason_to_str(r: &TerminationReason) -> &str {
-    match r {
-        TerminationReason::None => "none",
-        TerminationReason::UserTimeLimitExceeded => "user time limit exceeded",
-        TerminationReason::WriteLimitExceeded => "write limit exceeded",
-        TerminationReason::MemoryLimitExceeded => "memory limit exceeded",
-        TerminationReason::Other => "other",
+fn exit_status_to_string(es: &ExitStatus) -> String {
+    match es {
+        ExitStatus::Normal(c) => c.to_string(),
+        ExitStatus::Terminated(r) => match r {
+            TerminationReason::UserTimeLimitExceeded => "user time limit exceeded",
+            TerminationReason::WriteLimitExceeded => "write limit exceeded",
+            TerminationReason::MemoryLimitExceeded => "memory limit exceeded",
+            TerminationReason::Other => "other",
+        }
+        .to_string(),
     }
 }
 
@@ -93,17 +94,21 @@ fn duration_to_string(dur: &Duration) -> String {
 fn print_report(report: &Report) {
     let labels = [
         "app",
-        "user time",
+        "total user time",
+        "total kernel time",
         "peak memory used",
-        "termination reason",
-        "exit code",
+        "total bytes written",
+        "total processes",
+        "exit status",
     ];
     let values = [
-        report.cmd.app().to_str().unwrap().to_string(),
-        duration_to_string(&report.user_time),
-        report.peak_memory_used.to_string(),
-        termination_reason_to_str(&report.termination_reason).to_string(),
-        report.exit_code.to_string(),
+        report.command.app.to_str().unwrap().to_string(),
+        duration_to_string(&report.statistics.total_user_time),
+        duration_to_string(&report.statistics.total_kernel_time),
+        report.statistics.peak_memory_used.to_string(),
+        report.statistics.total_bytes_written.to_string(),
+        report.statistics.total_processes.to_string(),
+        exit_status_to_string(&report.exit_status),
     ];
     let max_label_len = labels.iter().map(|x| x.len()).max().unwrap();
 
@@ -118,7 +123,58 @@ fn print_report(report: &Report) {
     println!("");
 }
 
-fn run(argv: &[String]) -> io::Result<()> {
+fn redirect_istream(
+    sess: &mut Session,
+    istream: usize,
+    stdio: &Vec<CommandStdio>,
+    redirect_list: &StdioRedirectList,
+) -> io::Result<()> {
+    for redirect in redirect_list.items.iter() {
+        match &redirect.kind {
+            StdioRedirectKind::File(s) => {
+                sess.connect_istream(istream, IstreamSrc::File(s.as_str()))?;
+            }
+            StdioRedirectKind::Pipe(pipe_kind) => match pipe_kind {
+                PipeKind::Null => { /* pipes are null by default */ }
+                PipeKind::Std => { /* todo */ }
+                PipeKind::Stdout(i) => {
+                    // check i
+                    sess.connect_istream(istream, IstreamSrc::Ostream(stdio[*i].stdout))?;
+                }
+                _ => {}
+            },
+        }
+    }
+    Ok(())
+}
+
+fn redirect_ostream(
+    sess: &mut Session,
+    ostream: usize,
+    stdio: &Vec<CommandStdio>,
+    redirect_list: &StdioRedirectList,
+) -> io::Result<()> {
+    for redirect in redirect_list.items.iter() {
+        match &redirect.kind {
+            StdioRedirectKind::File(_) => { /* todo */ }
+            StdioRedirectKind::Pipe(pipe_kind) => match pipe_kind {
+                PipeKind::Null => { /* pipes are null by default */ }
+                PipeKind::Std => { /* todo */ }
+                PipeKind::Stdin(i) => {
+                    // check i
+                    sess.connect_ostream(ostream, OstreamDst::Istream(stdio[*i].stdin))?;
+                }
+                PipeKind::Stderr(_) => {
+                    // todo: c++ spawner can redirect stderr to other stderr
+                }
+                _ => {}
+            },
+        }
+    }
+    Ok(())
+}
+
+fn run_spawner(argv: &[String]) -> io::Result<()> {
     let opts =
         parse_argv(argv).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))?;
     if opts.len() == 0 {
@@ -126,10 +182,22 @@ fn run(argv: &[String]) -> io::Result<()> {
         return Ok(());
     }
 
-    let reports = Spawner::spawn(opts.iter().map(|x| Command::from(x)))?.wait()?;
-    for report in &reports {
+    let mut sess = Session::new();
+    let stdio: Vec<CommandStdio> = opts
+        .iter()
+        .map(|x| sess.add_cmd(Command::from(x)))
+        .collect();
+
+    for (opt, opt_stdio) in opts.iter().zip(stdio.iter()) {
+        redirect_istream(&mut sess, opt_stdio.stdin, &stdio, &opt.stdin_redirect)?;
+        redirect_ostream(&mut sess, opt_stdio.stdout, &stdio, &opt.stdout_redirect)?;
+        redirect_ostream(&mut sess, opt_stdio.stderr, &stdio, &opt.stderr_redirect)?;
+    }
+
+    for report in sess.spawn()?.wait()?.iter() {
         print_report(report);
     }
+
     Ok(())
 }
 
@@ -138,7 +206,7 @@ fn main() {
     if args.len() == 1 {
         println!("{}", SpawnerOptions::help());
     } else {
-        if let Err(e) = run(&args[1..]) {
+        if let Err(e) = run_spawner(&args[1..]) {
             println!("{}", e.to_string());
         }
     }
