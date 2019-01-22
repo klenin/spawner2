@@ -5,7 +5,7 @@ authors = ["ptslog <hsfk@yandex.ru>"]
 
 [lib]
 path = "lib.rs"
-crate-type = ["proc-macro"]
+proc-macro = true
 
 [dependencies]
 proc-macro2 = "0.4"
