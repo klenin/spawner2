@@ -23,9 +23,9 @@ pub struct RedirectFlags {
 pub enum PipeKind {
     Null,
     Std,
-    Stdout(u32),
-    Stdin(u32),
-    Stderr(u32),
+    Stdout(usize),
+    Stdin(usize),
+    Stderr(usize),
 }
 
 #[derive(Clone)]

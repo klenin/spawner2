@@ -63,7 +63,7 @@ impl OptionValueParser<EnvType> for DefaultValueParser {
                 return Err(format!(
                     "Unknown envieronment type '{}' expected one of: clear, inherit, user-default",
                     v
-                ))
+                ));
             }
         }
         Ok(())
@@ -307,7 +307,7 @@ fn parse_redirect_flags(
 fn parse_pipe_redirect(s: &str, flags: RedirectFlags) -> Result<StdioRedirect, String> {
     if let Some(pos) = s.find(|c| c == '.') {
         let (num_str, pipe_kind) = (&s[0..pos], &s[pos + 1..s.len()]);
-        u32::from_str_radix(num_str, 10).ok().map_or(
+        usize::from_str_radix(num_str, 10).ok().map_or(
             Err(format!("Invalid pipe index '{}'", num_str)),
             |v| match pipe_kind {
                 "stdin" => Ok(StdioRedirect::pipe(PipeKind::Stdin(v), flags)),
