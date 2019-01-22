@@ -15,81 +15,17 @@ pub struct Limits {
 }
 
 #[derive(Clone)]
-pub(crate) struct CommandInner {
-    pub(crate) app: OsString,
-    pub(crate) args: Vec<OsString>,
-    pub(crate) cwd: OsString,
-    pub(crate) display_gui: bool,
-}
-
-#[derive(Clone)]
 pub struct Command {
-    pub(crate) inner: CommandInner,
-    pub(crate) limits: Limits,
-    pub(crate) monitor_interval: Duration,
+    pub app: OsString,
+    pub args: Vec<OsString>,
+    pub current_dir: OsString,
+    pub show_gui: bool,
+    pub limits: Limits,
+    pub monitor_interval: Duration,
 }
 
-impl Command {
-    pub fn new<S: AsRef<OsStr>>(app: S) -> Self {
-        Self {
-            inner: CommandInner {
-                app: app.as_ref().to_os_string(),
-                args: Vec::new(),
-                cwd: OsString::new(),
-                display_gui: false,
-            },
-            limits: Limits::none(),
-            monitor_interval: Duration::from_millis(1),
-        }
-    }
-
-    pub fn app(&self) -> &OsStr {
-        &self.inner.app.as_os_str()
-    }
-
-    pub fn add_arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self {
-        self.inner.args.push(arg.as_ref().to_os_string());
-        self
-    }
-
-    pub fn add_args<I, S>(&mut self, args: I) -> &mut Self
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<OsStr>,
-    {
-        self.inner
-            .args
-            .extend(args.into_iter().map(|x| x.as_ref().to_os_string()));
-        self
-    }
-
-    pub fn set_cwd<S: AsRef<OsStr>>(&mut self, cwd: S) -> &mut Self {
-        self.inner.cwd = cwd.as_ref().to_os_string();
-        self
-    }
-
-    pub fn set_display_gui(&mut self, v: bool) -> &mut Self {
-        self.inner.display_gui = v;
-        self
-    }
-
-    pub fn limits(&self) -> &Limits {
-        &self.limits
-    }
-
-    pub fn limits_mut(&mut self) -> &mut Limits {
-        &mut self.limits
-    }
-
-    pub fn set_limits(&mut self, l: Limits) -> &mut Self {
-        self.limits = l;
-        self
-    }
-
-    pub fn set_monitor_interval(&mut self, int: Duration) -> &mut Self {
-        self.monitor_interval = int;
-        self
-    }
+pub struct Builder {
+    cmd: Command,
 }
 
 impl Limits {
@@ -100,5 +36,81 @@ impl Limits {
             max_output_size: u64::MAX,
             max_processes: u64::MAX,
         }
+    }
+}
+
+impl Command {
+    pub fn new<S: AsRef<OsStr>>(app: S) -> Self {
+        Self {
+            app: app.as_ref().to_os_string(),
+            args: Vec::new(),
+            current_dir: OsString::new(),
+            show_gui: false,
+            limits: Limits::none(),
+            monitor_interval: Duration::from_millis(1),
+        }
+    }
+}
+
+impl Builder {
+    pub fn new<S: AsRef<OsStr>>(app: S) -> Self {
+        Self {
+            cmd: Command::new(app),
+        }
+    }
+
+    pub fn arg<S: AsRef<OsStr>>(mut self, arg: S) -> Self {
+        self.cmd.args.push(arg.as_ref().to_os_string());
+        self
+    }
+
+    pub fn args<I, S>(mut self, args: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        self.cmd
+            .args
+            .extend(args.into_iter().map(|x| x.as_ref().to_os_string()));
+        self
+    }
+
+    pub fn current_dir<S: AsRef<OsStr>>(mut self, dir: S) -> Self {
+        self.cmd.current_dir = dir.as_ref().to_os_string();
+        self
+    }
+
+    pub fn show_gui(mut self, show: bool) -> Self {
+        self.cmd.show_gui = show;
+        self
+    }
+
+    pub fn monitor_interval(mut self, int: Duration) -> Self {
+        self.cmd.monitor_interval = int;
+        self
+    }
+
+    pub fn max_user_time(mut self, t: Duration) -> Self {
+        self.cmd.limits.max_user_time = t;
+        self
+    }
+
+    pub fn max_memory_usage(mut self, bytes: u64) -> Self {
+        self.cmd.limits.max_memory_usage = bytes;
+        self
+    }
+
+    pub fn max_output_size(mut self, bytes: u64) -> Self {
+        self.cmd.limits.max_output_size = bytes;
+        self
+    }
+
+    pub fn max_processes(mut self, n: u64) -> Self {
+        self.cmd.limits.max_processes = n;
+        self
+    }
+
+    pub fn build(self) -> Command {
+        self.cmd
     }
 }
