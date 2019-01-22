@@ -185,17 +185,15 @@ impl Spawner {
 
 impl Drop for Spawner {
     fn drop(&mut self) {
-        for runner in self.runners.iter() {
+        for (runner, handle) in self.runners.drain(..).zip(self.runner_handles.drain(..)) {
             runner.kill();
+            let _ = handle.wait();
         }
         for sender in self.active_senders.drain(..) {
             let _ = sender.stop();
         }
         for receiver in self.active_receivers.drain(..) {
             let _ = receiver.stop();
-        }
-        for handle in self.runner_handles.drain(..) {
-            let _ = handle.wait();
         }
     }
 }
