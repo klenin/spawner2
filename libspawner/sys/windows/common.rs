@@ -1,4 +1,6 @@
+use std::ffi::OsStr;
 use std::io;
+use std::os::windows::ffi::OsStrExt;
 use std::u32;
 
 pub trait IsZero {
@@ -66,4 +68,8 @@ pub fn ok_neq_minus_one<T: IsMinusOne>(v: T) -> io::Result<T> {
     } else {
         Ok(v)
     }
+}
+
+pub fn to_utf16<S: AsRef<OsStr>>(s: S) -> Vec<u16> {
+    s.as_ref().encode_wide().chain(std::iter::once(0)).collect()
 }

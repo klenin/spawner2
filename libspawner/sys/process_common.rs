@@ -1,6 +1,14 @@
 use std::time::Duration;
+use sys::pipe::{ReadPipe, WritePipe};
 
-pub struct SummaryInfo {
+pub struct Stdio {
+    pub stdin: ReadPipe,
+    pub stdout: WritePipe,
+    pub stderr: WritePipe,
+}
+
+#[derive(Copy, Clone)]
+pub struct Statistics {
     /// the total amount of user-mode execution time for all active processes,
     /// as well as all terminated processes
     pub total_user_time: Duration,
@@ -15,12 +23,12 @@ pub struct SummaryInfo {
     pub total_processes: u64,
 }
 
-pub enum ProcessTreeStatus {
-    Alive(SummaryInfo),
+pub enum Status {
+    Alive(Statistics),
     Finished(i32),
 }
 
-impl SummaryInfo {
+impl Statistics {
     pub fn zeroed() -> Self {
         Self {
             total_user_time: Duration::from_nanos(0),
