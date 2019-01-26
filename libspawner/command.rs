@@ -1,4 +1,3 @@
-use std::ffi::{OsStr, OsString};
 use std::time::Duration;
 use std::u64;
 
@@ -16,9 +15,9 @@ pub struct Limits {
 
 #[derive(Clone)]
 pub struct Command {
-    pub app: OsString,
-    pub args: Vec<OsString>,
-    pub current_dir: OsString,
+    pub app: String,
+    pub args: Vec<String>,
+    pub current_dir: String,
     pub show_gui: bool,
     pub limits: Limits,
     pub monitor_interval: Duration,
@@ -40,11 +39,11 @@ impl Limits {
 }
 
 impl Command {
-    pub fn new<S: AsRef<OsStr>>(app: S) -> Self {
+    pub fn new<S: AsRef<str>>(app: S) -> Self {
         Self {
-            app: app.as_ref().to_os_string(),
+            app: app.as_ref().to_string(),
             args: Vec::new(),
-            current_dir: OsString::new(),
+            current_dir: String::new(),
             show_gui: false,
             limits: Limits::none(),
             monitor_interval: Duration::from_millis(1),
@@ -53,30 +52,30 @@ impl Command {
 }
 
 impl Builder {
-    pub fn new<S: AsRef<OsStr>>(app: S) -> Self {
+    pub fn new<S: AsRef<str>>(app: S) -> Self {
         Self {
             cmd: Command::new(app),
         }
     }
 
-    pub fn arg<S: AsRef<OsStr>>(mut self, arg: S) -> Self {
-        self.cmd.args.push(arg.as_ref().to_os_string());
+    pub fn arg<S: AsRef<str>>(mut self, arg: S) -> Self {
+        self.cmd.args.push(arg.as_ref().to_string());
         self
     }
 
     pub fn args<I, S>(mut self, args: I) -> Self
     where
         I: IntoIterator<Item = S>,
-        S: AsRef<OsStr>,
+        S: AsRef<str>,
     {
         self.cmd
             .args
-            .extend(args.into_iter().map(|x| x.as_ref().to_os_string()));
+            .extend(args.into_iter().map(|x| x.as_ref().to_string()));
         self
     }
 
-    pub fn current_dir<S: AsRef<OsStr>>(mut self, dir: S) -> Self {
-        self.cmd.current_dir = dir.as_ref().to_os_string();
+    pub fn current_dir<S: AsRef<str>>(mut self, dir: S) -> Self {
+        self.cmd.current_dir = dir.as_ref().to_string();
         self
     }
 
