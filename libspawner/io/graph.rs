@@ -1,8 +1,17 @@
-use internals::io::mpsc::{Receiver, Sender};
+use io::split_combine::{Combiner, Splitter};
 use pipe::{self, ReadPipe, WritePipe};
 use std::io;
 use std::mem;
 
+/// This structure handles initialization and connection of given i\o streams with as little
+/// splitters\combiners as possible.
+///
+/// In some cases (e.g: one-to-one) it is possible to create
+/// a single (ReadPipe, WritePipe) pair with zero overhead. If the ostream is file (ReadPipe)
+/// that goes to single istream, then it is possible to inline file into that istream.
+///
+/// If the relation between i\o streams is one-to-many or many-to-one then we need to initialize
+/// corresponding pipe splitters and combiners.
 pub struct Builder {
     graph: Graph,
 }
@@ -15,31 +24,31 @@ pub struct Graph {
 pub enum IstreamKind {
     Unknown,
     Pipe(ReadPipe),
-    PipeReceiver(ReadPipe, Receiver<WritePipe>),
+    PipeCombiner(ReadPipe, Combiner),
     File(WritePipe),
-    FileReceiver(Receiver<WritePipe>),
+    FileCombiner(Combiner),
     Inlined(usize),
 }
 
 pub struct Istream {
     pub incoming_ostreams: usize,
     pub kind: IstreamKind,
-    is_receiver: bool,
+    is_combiner_required: bool,
 }
 
 pub enum OstreamKind {
     Unknown,
     Pipe(WritePipe),
-    PipeSender(WritePipe, Sender<ReadPipe>),
+    PipeSplitter(WritePipe, Splitter),
     File(ReadPipe),
-    FileSender(Sender<ReadPipe>),
+    FileSplitter(Splitter),
     Inlined(usize),
 }
 
 pub struct Ostream {
     pub istreams: Vec<usize>,
     pub kind: OstreamKind,
-    is_sender: bool,
+    is_splitter_required: bool,
 }
 
 impl Builder {
@@ -58,7 +67,7 @@ impl Builder {
         self.graph.ostreams.push(Ostream {
             kind: kind,
             istreams: Vec::new(),
-            is_sender: false,
+            is_splitter_required: false,
         });
         ostream_no
     }
@@ -77,7 +86,7 @@ impl Builder {
         self.graph.istreams.push(Istream {
             kind: kind,
             incoming_ostreams: 0,
-            is_receiver: false,
+            is_combiner_required: false,
         });
         istream_no
     }
@@ -115,48 +124,46 @@ impl Builder {
     }
 
     pub fn build(mut self) -> io::Result<Graph> {
-        self.detect_senders_receivers();
+        self.detect_splitters_combiners();
         self.upgrade_iostreams()?;
         self.connect_iostreams()?;
         Ok(self.graph)
     }
 
-    fn detect_senders_receivers(&mut self) {
+    fn detect_splitters_combiners(&mut self) {
         let istreams = &mut self.graph.istreams;
         let ostreams = &mut self.graph.ostreams;
 
         for istream in istreams.iter_mut() {
             istream.kind.ensure_file_or_unknown();
-            istream.is_receiver = istream.incoming_ostreams > 1;
+            istream.is_combiner_required = istream.incoming_ostreams > 1;
         }
 
         for ostream in ostreams {
             ostream.kind.ensure_file_or_unknown();
 
-            let is_sender = ostream.istreams.len() > 1
-                || ostream
-                    .istreams
-                    .iter()
-                    .any(|istream| istreams[*istream].is_receiver);
+            let istreams_len = ostream.istreams.len();
+            let is_splitter_required = istreams_len > 1
+                || (istreams_len == 1 && istreams[ostream.istreams[0]].is_combiner_required);
 
-            if is_sender {
+            if is_splitter_required {
                 for istream in ostream.istreams.iter() {
-                    istreams[*istream].is_receiver = true;
+                    istreams[*istream].is_combiner_required = true;
                 }
             }
-            ostream.is_sender = is_sender;
+            ostream.is_splitter_required = is_splitter_required;
         }
     }
 
     fn upgrade_iostreams(&mut self) -> io::Result<()> {
         for istream in self.graph.istreams.iter_mut() {
-            if istream.is_receiver {
-                istream.kind.upgrade_to_receiver()?;
+            if istream.is_combiner_required {
+                istream.kind.upgrade_to_combiner()?;
             }
         }
         for ostream in self.graph.ostreams.iter_mut() {
-            if ostream.is_sender {
-                ostream.kind.upgrade_to_sender()?;
+            if ostream.is_splitter_required {
+                ostream.kind.upgrade_to_splitter()?;
             }
         }
         Ok(())
@@ -185,13 +192,13 @@ impl Builder {
                 let istream_no = ostream.istreams[0];
                 let istream = &mut self.graph.istreams[istream_no];
                 istream.take_file_from(ostream);
-            } else if let Some(sender) = ostream.kind.sender_mut() {
+            } else if let Some(splitter) = ostream.kind.splitter_opt() {
                 for istream in ostream.istreams.iter() {
                     self.graph.istreams[*istream]
                         .kind
-                        .receiver()
+                        .combiner_opt()
                         .unwrap()
-                        .receive_from(sender);
+                        .connect(splitter);
                 }
             }
         }
@@ -219,10 +226,10 @@ impl IstreamKind {
         }
     }
 
-    fn receiver(&self) -> Option<&Receiver<WritePipe>> {
+    fn combiner_opt(&self) -> Option<&Combiner> {
         match self {
-            IstreamKind::PipeReceiver(_, ref r) => Some(r),
-            IstreamKind::FileReceiver(ref r) => Some(r),
+            IstreamKind::PipeCombiner(_, ref c) => Some(c),
+            IstreamKind::FileCombiner(ref c) => Some(c),
             _ => None,
         }
     }
@@ -241,15 +248,15 @@ impl IstreamKind {
         }
     }
 
-    fn upgrade_to_receiver(&mut self) -> io::Result<()> {
+    fn upgrade_to_combiner(&mut self) -> io::Result<()> {
         self.ensure_file_or_unknown();
 
         let placeholder = IstreamKind::Unknown;
         *self = match mem::replace(self, placeholder) {
-            IstreamKind::File(f) => IstreamKind::FileReceiver(Receiver::new(f)),
+            IstreamKind::File(f) => IstreamKind::FileCombiner(Combiner::new(f)),
             IstreamKind::Unknown => {
                 let (r, w) = pipe::create()?;
-                IstreamKind::PipeReceiver(r, Receiver::new(w))
+                IstreamKind::PipeCombiner(r, Combiner::new(w))
             }
 
             _ => unreachable!(),
@@ -258,24 +265,24 @@ impl IstreamKind {
         Ok(())
     }
 
-    pub fn take_pipe(&mut self) -> (ReadPipe, Option<Receiver<WritePipe>>) {
+    pub fn take_pipe(&mut self) -> (ReadPipe, Option<Combiner>) {
         match mem::replace(self, IstreamKind::Unknown) {
             IstreamKind::Pipe(p) => (p, None),
-            IstreamKind::PipeReceiver(p, r) => (p, Some(r)),
+            IstreamKind::PipeCombiner(p, c) => (p, Some(c)),
             _ => unreachable!(),
         }
     }
 
-    pub fn is_file_receiver(&self) -> bool {
+    pub fn is_file_combiner(&self) -> bool {
         match self {
-            IstreamKind::FileReceiver(_) => true,
+            IstreamKind::FileCombiner(_) => true,
             _ => false,
         }
     }
 
-    pub fn take_file_receiver(&mut self) -> Receiver<WritePipe> {
+    pub fn take_file_combiner(&mut self) -> Combiner {
         match mem::replace(self, IstreamKind::Unknown) {
-            IstreamKind::FileReceiver(r) => r,
+            IstreamKind::FileCombiner(r) => r,
             _ => unreachable!(),
         }
     }
@@ -306,10 +313,10 @@ impl OstreamKind {
         }
     }
 
-    fn sender_mut(&mut self) -> Option<&mut Sender<ReadPipe>> {
+    fn splitter_opt(&mut self) -> Option<&mut Splitter> {
         match self {
-            OstreamKind::PipeSender(_, ref mut s) => Some(s),
-            OstreamKind::FileSender(ref mut s) => Some(s),
+            OstreamKind::PipeSplitter(_, ref mut s) => Some(s),
+            OstreamKind::FileSplitter(ref mut s) => Some(s),
             _ => None,
         }
     }
@@ -328,15 +335,15 @@ impl OstreamKind {
         }
     }
 
-    fn upgrade_to_sender(&mut self) -> io::Result<()> {
+    fn upgrade_to_splitter(&mut self) -> io::Result<()> {
         self.ensure_file_or_unknown();
 
         let placeholder = OstreamKind::Unknown;
         *self = match mem::replace(self, placeholder) {
-            OstreamKind::File(f) => OstreamKind::FileSender(Sender::new(f)),
+            OstreamKind::File(f) => OstreamKind::FileSplitter(Splitter::new(f)),
             OstreamKind::Unknown => {
                 let (r, w) = pipe::create()?;
-                OstreamKind::PipeSender(w, Sender::new(r))
+                OstreamKind::PipeSplitter(w, Splitter::new(r))
             }
 
             _ => unreachable!(),
@@ -345,24 +352,24 @@ impl OstreamKind {
         Ok(())
     }
 
-    pub fn take_pipe(&mut self) -> (WritePipe, Option<Sender<ReadPipe>>) {
+    pub fn take_pipe(&mut self) -> (WritePipe, Option<Splitter>) {
         match mem::replace(self, OstreamKind::Unknown) {
             OstreamKind::Pipe(p) => (p, None),
-            OstreamKind::PipeSender(p, s) => (p, Some(s)),
+            OstreamKind::PipeSplitter(p, s) => (p, Some(s)),
             _ => unreachable!(),
         }
     }
 
-    pub fn is_file_sender(&self) -> bool {
+    pub fn is_file_splitter(&self) -> bool {
         match self {
-            OstreamKind::FileSender(_) => true,
+            OstreamKind::FileSplitter(_) => true,
             _ => false,
         }
     }
 
-    pub fn take_file_sender(&mut self) -> Sender<ReadPipe> {
+    pub fn take_file_splitter(&mut self) -> Splitter {
         match mem::replace(self, OstreamKind::Unknown) {
-            OstreamKind::FileSender(s) => s,
+            OstreamKind::FileSplitter(s) => s,
             _ => unreachable!(),
         }
     }

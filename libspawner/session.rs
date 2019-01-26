@@ -1,10 +1,10 @@
 use command::Command;
-use internals::io::graph::Builder;
-use internals::io::mpsc::{Receiver, Sender, StopHandle};
-use internals::runner::{self, WaitHandle};
+use io::graph::Builder;
+use io::split_combine::{Combiner, Splitter, StopHandle};
 use pipe::{ReadPipe, WritePipe};
 use process::Stdio;
 use runner::{Report, Runner};
+use runner_private::{run, WaitHandle};
 use std::io;
 
 pub struct Session {
@@ -25,8 +25,8 @@ pub enum OstreamDst {
 }
 
 pub struct Spawner {
-    active_receivers: Vec<StopHandle>,
-    active_senders: Vec<StopHandle>,
+    active_combiners: Vec<StopHandle>,
+    active_splitters: Vec<StopHandle>,
     runner_handles: Vec<WaitHandle>,
     runners: Vec<Runner>,
 }
@@ -40,8 +40,8 @@ pub struct CommandStdio {
 
 struct SpawnerStartupInfo {
     cmds: Vec<Command>,
-    senders: Vec<Sender<ReadPipe>>,
-    receivers: Vec<Receiver<WritePipe>>,
+    splitters: Vec<Splitter>,
+    combiners: Vec<Combiner>,
     stdio_list: Vec<Stdio>,
 }
 
@@ -86,24 +86,24 @@ impl Session {
     pub fn spawn(self) -> io::Result<Spawner> {
         let mut startup_info = self.into_startup_info()?;
         let mut sp = Spawner {
-            active_receivers: Vec::new(),
-            active_senders: Vec::new(),
+            active_combiners: Vec::new(),
+            active_splitters: Vec::new(),
             runner_handles: Vec::new(),
             runners: Vec::new(),
         };
 
-        for receiver in startup_info.receivers.drain(..) {
-            sp.active_receivers.push(receiver.start()?);
+        for combiner in startup_info.combiners.drain(..) {
+            sp.active_combiners.push(combiner.start()?);
         }
-        for sender in startup_info.senders.drain(..) {
-            sp.active_senders.push(sender.start()?);
+        for splitter in startup_info.splitters.drain(..) {
+            sp.active_splitters.push(splitter.start()?);
         }
         for (cmd, stdio) in startup_info
             .cmds
             .drain(..)
             .zip(startup_info.stdio_list.drain(..))
         {
-            let handle = runner::run(cmd, stdio)?;
+            let handle = run(cmd, stdio)?;
             sp.runners.push(handle.runner().clone());
             sp.runner_handles.push(handle);
         }
@@ -116,23 +116,23 @@ impl Session {
         let mut istreams = graph.istreams;
         let mut ostreams = graph.ostreams;
 
-        let mut senders: Vec<Sender<ReadPipe>> = Vec::new();
-        let mut receivers: Vec<Receiver<WritePipe>> = Vec::new();
+        let mut splitters: Vec<Splitter> = Vec::new();
+        let mut combiners: Vec<Combiner> = Vec::new();
         let stdio_list: Vec<Stdio> = self
             .cmds_stdio
             .iter()
             .map(|streams| {
-                let (stdin, stdin_receiver) = istreams[streams.stdin].kind.take_pipe();
-                let (stdout, stdout_sender) = ostreams[streams.stdout].kind.take_pipe();
-                let (stderr, stderr_sender) = ostreams[streams.stderr].kind.take_pipe();
-                if let Some(r) = stdin_receiver {
-                    receivers.push(r);
+                let (stdin, stdin_combiner) = istreams[streams.stdin].kind.take_pipe();
+                let (stdout, stdout_splitter) = ostreams[streams.stdout].kind.take_pipe();
+                let (stderr, stderr_splitter) = ostreams[streams.stderr].kind.take_pipe();
+                if let Some(c) = stdin_combiner {
+                    combiners.push(c);
                 }
-                if let Some(s) = stdout_sender {
-                    senders.push(s);
+                if let Some(s) = stdout_splitter {
+                    splitters.push(s);
                 }
-                if let Some(s) = stderr_sender {
-                    senders.push(s);
+                if let Some(s) = stderr_splitter {
+                    splitters.push(s);
                 }
                 Stdio {
                     stdin: stdin,
@@ -143,21 +143,21 @@ impl Session {
             .collect();
 
         for istream in istreams.iter_mut() {
-            if istream.kind.is_file_receiver() {
-                receivers.push(istream.kind.take_file_receiver());
+            if istream.kind.is_file_combiner() {
+                combiners.push(istream.kind.take_file_combiner());
             }
         }
 
         for ostream in ostreams.iter_mut() {
-            if ostream.kind.is_file_sender() {
-                senders.push(ostream.kind.take_file_sender());
+            if ostream.kind.is_file_splitter() {
+                splitters.push(ostream.kind.take_file_splitter());
             }
         }
 
         Ok(SpawnerStartupInfo {
             cmds: self.cmds,
-            senders: senders,
-            receivers: receivers,
+            splitters: splitters,
+            combiners: combiners,
             stdio_list: stdio_list,
         })
     }
@@ -169,14 +169,20 @@ impl Spawner {
     }
 
     pub fn wait(mut self) -> io::Result<Vec<Report>> {
+        self.wait_impl()
+    }
+
+    fn wait_impl(&mut self) -> io::Result<Vec<Report>> {
         let mut reports: Vec<Report> = Vec::new();
         for runner in self.runner_handles.drain(..) {
             reports.push(runner.wait()?);
         }
-        for sender in self.active_senders.drain(..) {
-            sender.stop()?;
+        // It is (almost) impossible to hang on splitter\combiner deinitialization
+        // because all pipes (except user-provided ones) are dead at this point.
+        for splitter in self.active_splitters.drain(..) {
+            splitter.stop()?;
         }
-        for receiver in self.active_receivers.drain(..) {
+        for receiver in self.active_combiners.drain(..) {
             receiver.stop()?;
         }
         Ok(reports)
@@ -185,15 +191,9 @@ impl Spawner {
 
 impl Drop for Spawner {
     fn drop(&mut self) {
-        for (runner, handle) in self.runners.drain(..).zip(self.runner_handles.drain(..)) {
+        for runner in self.runners.drain(..) {
             runner.kill();
-            let _ = handle.wait();
         }
-        for sender in self.active_senders.drain(..) {
-            let _ = sender.stop();
-        }
-        for receiver in self.active_receivers.drain(..) {
-            let _ = receiver.stop();
-        }
+        let _ = self.wait_impl();
     }
 }
