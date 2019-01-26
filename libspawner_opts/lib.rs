@@ -1,4 +1,46 @@
-pub use sp_derive::*;
+//! This library contains `CmdLineOptions` and `OptionValueParser` traits along with
+//! some definitions used by `spawner_opts_macro` crate.
+//!
+//! # Examples
+//! ```
+//! use spawner_opts::*;
+//!
+//! #[derive(CmdLineOptions)]
+//! #[optcont(
+//!     delimeters = "=",
+//!     usage = "tool [options]",
+//! )]
+//! struct Opts {
+//!     #[flag(name = "-f", desc = "a flag")]
+//!     flag: bool,
+//!     
+//!     #[opt(
+//!         names("-v", "--v"),
+//!         desc = "an option",
+//!         value_desc = "<float>",
+//!         parser = "FloatingLiteralParser"
+//!     )]
+//!     opt: f64,
+//! }
+//!
+//! struct FloatingLiteralParser;
+//!
+//! impl OptionValueParser<f64> for FloatingLiteralParser {
+//!     fn parse(opt: &mut f64, v: &str) -> Result<(), String> {
+//!         match v.parse::<f64>() {
+//!             Ok(x) => {
+//!                 *opt = x;
+//!                 Ok(())
+//!             }
+//!             Err(_) => Err(format!("Invalid value '{}'", v)),
+//!         }
+//!     }
+//! }
+//! ```
+
+extern crate spawner_opts_macro;
+
+pub use spawner_opts_macro::*;
 use std::collections::HashMap;
 
 pub trait CmdLineOptions: Sized {

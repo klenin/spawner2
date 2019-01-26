@@ -1,0 +1,10 @@
+[package]
+name = "spawner_opts"
+version = "0.0.0"
+authors = ["ptslog <hsfk@yandex.ru>"]
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+spawner_opts_macro = { path = "../libspawner_opts_macro" }
