@@ -1,0 +1,23 @@
+[package]
+name = "spawner_tests"
+version = "0.0.0"
+authors = ["ptslog <hsfk@yandex.ru>"]
+
+[lib]
+path = "lib.rs"
+crate-type = ["lib"]
+
+[[bin]]
+name = "alloc"
+path = "bin/alloc.rs"
+
+[[bin]]
+name = "loop"
+path = "bin/loop.rs"
+
+[[bin]]
+name = "file_writer"
+path = "bin/file_writer.rs"
+
+[dependencies]
+spawner = { path = "../libspawner" }
