@@ -9,6 +9,7 @@ path = "lib.rs"
 crate-type = ["lib"]
 
 [dependencies]
+spawner_opts = { path = "../libspawner_opts" }
 cfg-if = "0.1.6"
 
 [target.'cfg(windows)'.dependencies]
