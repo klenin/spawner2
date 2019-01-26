@@ -38,9 +38,9 @@
 //! }
 //! ```
 
-extern crate spawner_opts_macro;
+extern crate spawner_opts_derive;
 
-pub use spawner_opts_macro::*;
+pub use spawner_opts_derive::*;
 use std::collections::HashMap;
 
 pub trait CmdLineOptions: Sized {

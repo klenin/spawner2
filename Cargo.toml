@@ -3,7 +3,7 @@
 members = [
 	"libspawner",
 	"libspawner_opts",
-	"libspawner_opts_macro",
+	"libspawner_opts_derive",
 	"libspawner_tests",
 	"sp",
 ]

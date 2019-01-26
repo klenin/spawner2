@@ -7,4 +7,4 @@ authors = ["ptslog <hsfk@yandex.ru>"]
 path = "lib.rs"
 
 [dependencies]
-spawner_opts_macro = { path = "../libspawner_opts_macro" }
+spawner_opts_derive = { path = "../libspawner_opts_derive" }

@@ -1,5 +1,5 @@
 [package]
-name = "spawner_opts_macro"
+name = "spawner_opts_derive"
 version = "0.0.0"
 authors = ["ptslog <hsfk@yandex.ru>"]
 
