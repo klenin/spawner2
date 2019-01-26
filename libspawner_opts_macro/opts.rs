@@ -433,7 +433,7 @@ impl<'a> OptContainer<'a> {
                 T: IntoIterator<Item = U>,
                 U: AsRef<str>
             {
-                use opts::OptParser;
+                use spawner_opts::OptParser;
                 fn assert_flag_type_is_bool(v: &bool) {}
 
                 let mut parser = OptParser::new(argv, #delimeters);
