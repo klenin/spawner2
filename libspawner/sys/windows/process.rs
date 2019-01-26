@@ -1,5 +1,4 @@
 use command::Command;
-use std::ffi::OsString;
 use std::fmt;
 use std::io;
 use std::mem;
@@ -196,31 +195,28 @@ fn resume_process(process_id: DWORD) -> io::Result<()> {
     Ok(())
 }
 
-fn argv_to_cmd(app: &OsString, args: &Vec<OsString>) -> io::Result<Vec<u16>> {
+fn argv_to_cmd(app: &String, args: &Vec<String>) -> io::Result<Vec<u16>> {
     let mut result = match Path::new(app).canonicalize() {
-        Ok(buf) => quote(&buf.into_os_string()),
+        Ok(buf) => quote(&buf.to_str().unwrap()),
         Err(_) => {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
-                format!("cannot find {}", app.to_string_lossy()),
+                format!("cannot find {}", app),
             ));
         }
     };
     for arg in args {
-        result.push(" ");
-        result.push(quote(arg));
+        result.push(' ');
+        result.push_str(quote(arg).as_str());
     }
     Ok(to_utf16(result))
 }
 
-fn quote(s: &OsString) -> OsString {
-    if s.to_string_lossy().find(' ').is_some() {
-        let mut quoted = OsString::new();
-        quoted.push("\"");
-        quoted.push(s);
-        quoted.push("\"");
-        quoted
+fn quote<S: AsRef<str>>(s: S) -> String {
+    let escaped = s.as_ref().replace("\"", "\\\"");
+    if escaped.find(' ').is_some() {
+        format!("\"{}\"", escaped)
     } else {
-        s.clone()
+        escaped
     }
 }
