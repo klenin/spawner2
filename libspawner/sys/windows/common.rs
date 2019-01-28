@@ -1,5 +1,5 @@
+use crate::{Error, Result};
 use std::ffi::OsStr;
-use std::io;
 use std::os::windows::ffi::OsStrExt;
 use std::u32;
 
@@ -53,18 +53,18 @@ impl IsMinusOne for u32 {
 }
 
 /// returns last os error if the value is zero
-pub fn ok_nonzero<T: IsZero>(v: T) -> io::Result<T> {
+pub fn ok_nonzero<T: IsZero>(v: T) -> Result<T> {
     if v.is_zero() {
-        Err(io::Error::last_os_error())
+        Err(Error::last_os_error())
     } else {
         Ok(v)
     }
 }
 
 /// returns last os error if the value is minus one
-pub fn ok_neq_minus_one<T: IsMinusOne>(v: T) -> io::Result<T> {
+pub fn ok_neq_minus_one<T: IsMinusOne>(v: T) -> Result<T> {
     if v.is_minus_one() {
-        Err(io::Error::last_os_error())
+        Err(Error::last_os_error())
     } else {
         Ok(v)
     }

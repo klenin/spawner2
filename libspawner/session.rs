@@ -1,3 +1,4 @@
+use crate::Result;
 use command::Command;
 use io::graph::Builder;
 use io::split_combine::{Combiner, Splitter, StopHandle};
@@ -5,7 +6,6 @@ use pipe::{ReadPipe, WritePipe};
 use process::Stdio;
 use runner::{Report, Runner};
 use runner_private::{run, WaitHandle};
-use std::io;
 
 pub struct Session {
     cmds: Vec<Command>,
@@ -65,17 +65,16 @@ impl Session {
         stdio
     }
 
-    pub fn connect_istream(&mut self, istream: usize, src: IstreamSrc) -> io::Result<()> {
+    pub fn connect_istream(&mut self, istream: usize, src: IstreamSrc) -> Result<()> {
         let ostream = match src {
             IstreamSrc::Pipe(p) => self.builder.add_file_ostream(p),
             IstreamSrc::File(f) => self.builder.add_file_ostream(ReadPipe::open(f)?),
             IstreamSrc::Ostream(i) => i,
         };
-
         self.builder.connect(istream, ostream)
     }
 
-    pub fn connect_ostream(&mut self, ostream: usize, dst: OstreamDst) -> io::Result<()> {
+    pub fn connect_ostream(&mut self, ostream: usize, dst: OstreamDst) -> Result<()> {
         let istream = match dst {
             OstreamDst::Pipe(p) => self.builder.add_file_istream(p),
             OstreamDst::Istream(i) => i,
@@ -83,7 +82,7 @@ impl Session {
         self.builder.connect(istream, ostream)
     }
 
-    pub fn spawn(self) -> io::Result<Spawner> {
+    pub fn spawn(self) -> Result<Spawner> {
         let mut startup_info = self.into_startup_info()?;
         let mut sp = Spawner {
             active_combiners: Vec::new(),
@@ -111,7 +110,7 @@ impl Session {
         Ok(sp)
     }
 
-    fn into_startup_info(self) -> io::Result<SpawnerStartupInfo> {
+    fn into_startup_info(self) -> Result<SpawnerStartupInfo> {
         let graph = self.builder.build()?;
         let mut istreams = graph.istreams;
         let mut ostreams = graph.ostreams;
@@ -168,11 +167,11 @@ impl Spawner {
         &self.runners
     }
 
-    pub fn wait(mut self) -> io::Result<Vec<Report>> {
+    pub fn wait(mut self) -> Result<Vec<Report>> {
         self.wait_impl()
     }
 
-    fn wait_impl(&mut self) -> io::Result<Vec<Report>> {
+    fn wait_impl(&mut self) -> Result<Vec<Report>> {
         let mut reports: Vec<Report> = Vec::new();
         for runner in self.runner_handles.drain(..) {
             reports.push(runner.wait()?);

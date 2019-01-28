@@ -1,3 +1,4 @@
+use crate::{Error, Result};
 use pipe::{ReadPipe, WritePipe};
 use std::io::{self, Read, Write};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
@@ -45,7 +46,7 @@ impl Splitter {
         self.channels.push(combiner.sender.clone());
     }
 
-    pub fn start(self) -> io::Result<StopHandle> {
+    pub fn start(self) -> Result<StopHandle> {
         Ok(StopHandle {
             thread: thread::Builder::new().spawn(move || Self::main_loop(self))?,
         })
@@ -185,10 +186,10 @@ impl CombinerInner {
 }
 
 impl StopHandle {
-    pub fn stop(self) -> io::Result<()> {
+    pub fn stop(self) -> Result<()> {
         self.thread
             .join()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "monitoring thread panicked"))
+            .map_err(|_| Error::from("monitoring thread panicked"))
     }
 }
 

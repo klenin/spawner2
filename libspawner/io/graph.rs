@@ -1,6 +1,6 @@
+use crate::{Error, Result};
 use io::split_combine::{Combiner, Splitter};
 use pipe::{self, ReadPipe, WritePipe};
-use std::io;
 use std::mem;
 
 /// This structure handles initialization and connection of given i\o streams with as little
@@ -99,18 +99,18 @@ impl Builder {
         self.add_istream(IstreamKind::File(file))
     }
 
-    pub fn connect(&mut self, istream_no: usize, ostream_no: usize) -> io::Result<()> {
+    pub fn connect(&mut self, istream_no: usize, ostream_no: usize) -> Result<()> {
         if istream_no > self.graph.istreams.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("istream index '{}' is out of range", istream_no),
-            ));
+            return Err(Error::from(format!(
+                "istream index '{}' is out of range",
+                istream_no
+            )));
         }
         if ostream_no > self.graph.ostreams.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("ostream index '{}' is out of range", ostream_no),
-            ));
+            return Err(Error::from(format!(
+                "ostream index '{}' is out of range",
+                ostream_no
+            )));
         }
 
         let istream = &mut self.graph.istreams[istream_no];
@@ -123,7 +123,7 @@ impl Builder {
         Ok(())
     }
 
-    pub fn build(mut self) -> io::Result<Graph> {
+    pub fn build(mut self) -> Result<Graph> {
         self.detect_splitters_combiners();
         self.upgrade_iostreams()?;
         self.connect_iostreams()?;
@@ -155,7 +155,7 @@ impl Builder {
         }
     }
 
-    fn upgrade_iostreams(&mut self) -> io::Result<()> {
+    fn upgrade_iostreams(&mut self) -> Result<()> {
         for istream in self.graph.istreams.iter_mut() {
             if istream.is_combiner_required {
                 istream.kind.upgrade_to_combiner()?;
@@ -169,7 +169,7 @@ impl Builder {
         Ok(())
     }
 
-    fn connect_iostreams(&mut self) -> io::Result<()> {
+    fn connect_iostreams(&mut self) -> Result<()> {
         for (index, ostream) in self.graph.ostreams.iter_mut().enumerate() {
             let istreams_len = ostream.istreams.len();
             if ostream.kind.is_unknown() && istreams_len == 0 {
@@ -248,7 +248,7 @@ impl IstreamKind {
         }
     }
 
-    fn upgrade_to_combiner(&mut self) -> io::Result<()> {
+    fn upgrade_to_combiner(&mut self) -> Result<()> {
         self.ensure_file_or_unknown();
 
         let placeholder = IstreamKind::Unknown;
@@ -258,7 +258,6 @@ impl IstreamKind {
                 let (r, w) = pipe::create()?;
                 IstreamKind::PipeCombiner(r, Combiner::new(w))
             }
-
             _ => unreachable!(),
         };
 
@@ -335,7 +334,7 @@ impl OstreamKind {
         }
     }
 
-    fn upgrade_to_splitter(&mut self) -> io::Result<()> {
+    fn upgrade_to_splitter(&mut self) -> Result<()> {
         self.ensure_file_or_unknown();
 
         let placeholder = OstreamKind::Unknown;

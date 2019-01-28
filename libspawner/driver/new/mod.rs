@@ -4,17 +4,17 @@ mod value_parser;
 #[cfg(test)]
 mod tests;
 
+use crate::{Error, Result};
 use command::{self, Command};
 use driver::new::opts::{Options, PipeKind, StdioRedirectKind, StdioRedirectList};
 use driver::prelude::*;
 use runner::{ExitStatus, Report, TerminationReason};
 use session::{CommandStdio, IstreamSrc, OstreamDst, Session};
 use std::env;
-use std::io;
 use std::time::Duration;
 use std::u64;
 
-fn parse_argv(argv: Vec<String>) -> io::Result<Vec<Options>> {
+fn parse_argv(argv: Vec<String>) -> Result<Vec<Options>> {
     let mut default_opts = Options::default();
     let mut pos = 0;
     let mut result: Vec<Options> = Vec::new();
@@ -23,7 +23,7 @@ fn parse_argv(argv: Vec<String>) -> io::Result<Vec<Options>> {
         let mut opts = default_opts.clone();
         let num_opts = match opts.parse(&argv[pos..]) {
             Ok(n) => n,
-            Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidInput, e)),
+            Err(s) => return Err(Error::from(s)),
         };
         pos += num_opts;
 
@@ -52,7 +52,7 @@ fn redirect_istream(
     istream: usize,
     stdio: &Vec<CommandStdio>,
     redirect_list: &StdioRedirectList,
-) -> io::Result<()> {
+) -> Result<()> {
     for redirect in redirect_list.items.iter() {
         match &redirect.kind {
             StdioRedirectKind::File(s) => {
@@ -77,7 +77,7 @@ fn redirect_ostream(
     ostream: usize,
     stdio: &Vec<CommandStdio>,
     redirect_list: &StdioRedirectList,
-) -> io::Result<()> {
+) -> Result<()> {
     for redirect in redirect_list.items.iter() {
         match &redirect.kind {
             StdioRedirectKind::File(_) => { /* todo */ }
@@ -170,7 +170,7 @@ fn print_report(report: &Report) {
     println!("");
 }
 
-pub fn run<T, U>(argv: T) -> io::Result<Vec<Report>>
+pub fn run<T, U>(argv: T) -> Result<Vec<Report>>
 where
     T: IntoIterator<Item = U>,
     U: AsRef<str>,
@@ -202,7 +202,7 @@ pub fn main() {
     } else {
         let reports = match run(&args[1..]) {
             Err(e) => {
-                println!("{}", e.to_string());
+                println!("{}", e);
                 return;
             }
             Ok(x) => x,

@@ -1,13 +1,13 @@
+use crate::{Error, Result};
 use command::Command;
 use process::{Process, Statistics, Status, Stdio};
 use runner::{ExitStatus, Report, Runner, TerminationReason};
-use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 pub struct WaitHandle {
-    monitoring_thread: JoinHandle<io::Result<Report>>,
+    monitoring_thread: JoinHandle<Result<Report>>,
     runner: Runner,
 }
 
@@ -18,12 +18,13 @@ struct MonitoringLoop {
     is_killed: Arc<AtomicBool>,
 }
 
-pub fn run(cmd: Command, stdio: Stdio) -> io::Result<WaitHandle> {
+pub fn run(cmd: Command, stdio: Stdio) -> Result<WaitHandle> {
     let monitoring_loop = MonitoringLoop::new(cmd);
     let is_killed = Arc::downgrade(&monitoring_loop.is_killed);
 
     thread::Builder::new()
         .spawn(move || MonitoringLoop::start(monitoring_loop, stdio))
+        .map_err(|e| Error::from(e))
         .map(|handle| WaitHandle {
             monitoring_thread: handle,
             runner: Runner {
@@ -37,13 +38,10 @@ impl WaitHandle {
         &self.runner
     }
 
-    pub fn wait(self) -> io::Result<Report> {
+    pub fn wait(self) -> Result<Report> {
         match self.monitoring_thread.join() {
             Ok(result) => result,
-            Err(_) => Err(io::Error::new(
-                io::ErrorKind::Other,
-                "monitoring thread panicked",
-            )),
+            Err(_) => Err(Error::from("monitoring thread panicked")),
         }
     }
 }
@@ -77,7 +75,7 @@ impl MonitoringLoop {
         true
     }
 
-    fn should_terminate(&mut self, process: &Process) -> io::Result<bool> {
+    fn should_terminate(&mut self, process: &Process) -> Result<bool> {
         match process.status()? {
             Status::Alive(stats) => {
                 self.stats = stats;
@@ -90,7 +88,7 @@ impl MonitoringLoop {
         }
     }
 
-    fn start(mut self, stdio: Stdio) -> io::Result<Report> {
+    fn start(mut self, stdio: Stdio) -> Result<Report> {
         let process = Process::spawn(&self.cmd, stdio)?;
         while !self.is_killed.load(Ordering::SeqCst) {
             match self.should_terminate(&process) {

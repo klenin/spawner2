@@ -1,6 +1,6 @@
+use crate::{Error, Result};
 use command::Command;
 use std::fmt;
-use std::io;
 use std::mem;
 use std::path::Path;
 use std::ptr;
@@ -41,7 +41,7 @@ unsafe impl Send for Process {}
 
 impl Process {
     /// Spawns process from given command and stdio streams
-    pub fn spawn(cmd: &Command, stdio: Stdio) -> io::Result<Self> {
+    pub fn spawn(cmd: &Command, stdio: Stdio) -> Result<Self> {
         let (handle, id) = create_suspended_process(cmd, &stdio)?;
         let job = match assign_process_to_new_job(handle) {
             Ok(x) => x,
@@ -72,7 +72,7 @@ impl Process {
         }
     }
 
-    pub fn status(&self) -> io::Result<Status> {
+    pub fn status(&self) -> Result<Status> {
         let mut exit_code: DWORD = 0;
         unsafe {
             ok_nonzero(GetExitCodeProcess(self.handle, &mut exit_code))?;
@@ -84,7 +84,7 @@ impl Process {
         }
     }
 
-    fn statistics(&self) -> io::Result<Statistics> {
+    fn statistics(&self) -> Result<Statistics> {
         unsafe {
             let mut basic_and_io_info: JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION =
                 mem::zeroed();
@@ -136,7 +136,7 @@ impl fmt::Debug for Process {
     }
 }
 
-fn create_suspended_process(cmd: &Command, stdio: &Stdio) -> io::Result<(HANDLE, DWORD)> {
+fn create_suspended_process(cmd: &Command, stdio: &Stdio) -> Result<(HANDLE, DWORD)> {
     let mut cmdline = argv_to_cmd(&cmd.app, &cmd.args)?;
     let creation_flags = CREATE_SUSPENDED;
     let mut process_info: PROCESS_INFORMATION = unsafe { mem::zeroed() };
@@ -168,7 +168,7 @@ fn create_suspended_process(cmd: &Command, stdio: &Stdio) -> io::Result<(HANDLE,
     Ok((process_info.hProcess, process_info.dwProcessId))
 }
 
-fn assign_process_to_new_job(process: HANDLE) -> io::Result<HANDLE> {
+fn assign_process_to_new_job(process: HANDLE) -> Result<HANDLE> {
     unsafe {
         let job = ok_nonzero(CreateJobObjectW(ptr::null_mut(), ptr::null()))?;
         match ok_nonzero(AssignProcessToJobObject(job, process)) {
@@ -181,7 +181,7 @@ fn assign_process_to_new_job(process: HANDLE) -> io::Result<HANDLE> {
     }
 }
 
-fn resume_process(process_id: DWORD) -> io::Result<()> {
+fn resume_process(process_id: DWORD) -> Result<()> {
     for id in ThreadIterator::new(process_id) {
         unsafe {
             let handle = ok_nonzero(OpenThread(THREAD_SUSPEND_RESUME, FALSE, id))?;
@@ -195,15 +195,10 @@ fn resume_process(process_id: DWORD) -> io::Result<()> {
     Ok(())
 }
 
-fn argv_to_cmd(app: &String, args: &Vec<String>) -> io::Result<Vec<u16>> {
+fn argv_to_cmd(app: &String, args: &Vec<String>) -> Result<Vec<u16>> {
     let mut result = match Path::new(app).canonicalize() {
         Ok(buf) => quote(&buf.to_str().unwrap()),
-        Err(_) => {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("cannot find {}", app),
-            ));
-        }
+        Err(e) => return Err(Error::from(e)),
     };
     for arg in args {
         result.push(' ');

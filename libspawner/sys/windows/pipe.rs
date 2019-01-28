@@ -1,3 +1,4 @@
+use crate::{Error, Result};
 use std::io::{self, Read, Write};
 use std::mem;
 use std::path::Path;
@@ -23,7 +24,7 @@ pub struct WritePipe {
     pub(crate) handle: HANDLE,
 }
 
-pub fn create() -> io::Result<(ReadPipe, WritePipe)> {
+pub fn create() -> Result<(ReadPipe, WritePipe)> {
     let mut attrs = SECURITY_ATTRIBUTES {
         nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as DWORD,
         bInheritHandle: TRUE,
@@ -52,13 +53,13 @@ pub fn create() -> io::Result<(ReadPipe, WritePipe)> {
 }
 
 impl ReadPipe {
-    pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         Ok(Self {
             handle: open_file(path, GENERIC_READ, OPEN_EXISTING, false)?,
         })
     }
 
-    pub fn null() -> io::Result<Self> {
+    pub fn null() -> Result<Self> {
         let (r, _) = create()?;
         Ok(r)
     }
@@ -84,20 +85,21 @@ impl Read for ReadPipe {
                 buf.len() as DWORD,
                 &mut bytes_read,
                 ptr::null_mut(),
-            ))?;
+            ))
+            .map_err(|e| e.into_io_error())?;
         }
         Ok(bytes_read as usize)
     }
 }
 
 impl WritePipe {
-    pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         Ok(Self {
             handle: open_file(path, GENERIC_WRITE, CREATE_ALWAYS, false)?,
         })
     }
 
-    pub fn null() -> io::Result<Self> {
+    pub fn null() -> Result<Self> {
         let (_, w) = create()?;
         Ok(w)
     }
@@ -115,14 +117,15 @@ impl Write for WritePipe {
                 buf.len() as DWORD,
                 &mut bytes_written,
                 ptr::null_mut(),
-            ))?;
+            ))
+            .map_err(|e| e.into_io_error())?;
         }
         Ok(bytes_written as usize)
     }
 
     fn flush(&mut self) -> io::Result<()> {
         unsafe {
-            ok_nonzero(FlushFileBuffers(self.handle))?;
+            ok_nonzero(FlushFileBuffers(self.handle)).map_err(|e| e.into_io_error())?;
         }
         Ok(())
     }
@@ -141,7 +144,7 @@ fn open_file<P: AsRef<Path>>(
     access: DWORD,
     creation_disposition: DWORD,
     exclusive: bool,
-) -> io::Result<HANDLE> {
+) -> Result<HANDLE> {
     let mut file = to_utf16(path.as_ref().canonicalize()?);
     let share_mode = if exclusive {
         0
@@ -162,7 +165,7 @@ fn open_file<P: AsRef<Path>>(
     };
 
     if handle == INVALID_HANDLE_VALUE {
-        return Err(io::Error::last_os_error());
+        return Err(Error::last_os_error());
     }
 
     unsafe {
