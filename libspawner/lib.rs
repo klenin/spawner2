@@ -22,6 +22,6 @@ pub use error::*;
 pub type Result<T> = std::result::Result<T, self::Error>;
 
 mod error;
-mod io;
 mod runner_private;
+mod stdio;
 mod sys;

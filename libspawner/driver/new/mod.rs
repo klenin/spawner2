@@ -9,7 +9,7 @@ use command::{self, Command};
 use driver::new::opts::{Options, PipeKind, StdioRedirectKind, StdioRedirectList};
 use driver::prelude::*;
 use runner::{ExitStatus, Report, TerminationReason};
-use session::{CommandStdio, IstreamSrc, OstreamDst, Session};
+use session::{IstreamSrc, OstreamDst, Session, StdioMapping};
 use std::env;
 use std::time::Duration;
 use std::u64;
@@ -50,7 +50,7 @@ fn parse_argv(argv: Vec<String>) -> Result<Vec<Options>> {
 fn redirect_istream(
     sess: &mut Session,
     istream: usize,
-    stdio: &Vec<CommandStdio>,
+    stdio_mappings: &Vec<StdioMapping>,
     redirect_list: &StdioRedirectList,
 ) -> Result<()> {
     for redirect in redirect_list.items.iter() {
@@ -63,7 +63,7 @@ fn redirect_istream(
                 PipeKind::Std => { /* todo */ }
                 PipeKind::Stdout(i) => {
                     // check i
-                    sess.connect_istream(istream, IstreamSrc::Ostream(stdio[*i].stdout))?;
+                    sess.connect_istream(istream, IstreamSrc::Ostream(stdio_mappings[*i].stdout))?;
                 }
                 _ => {}
             },
@@ -75,7 +75,7 @@ fn redirect_istream(
 fn redirect_ostream(
     sess: &mut Session,
     ostream: usize,
-    stdio: &Vec<CommandStdio>,
+    stdio_mappings: &Vec<StdioMapping>,
     redirect_list: &StdioRedirectList,
 ) -> Result<()> {
     for redirect in redirect_list.items.iter() {
@@ -88,7 +88,7 @@ fn redirect_ostream(
                 PipeKind::Std => { /* todo */ }
                 PipeKind::Stdin(i) => {
                     // check i
-                    sess.connect_ostream(ostream, OstreamDst::Istream(stdio[*i].stdin))?;
+                    sess.connect_ostream(ostream, OstreamDst::Istream(stdio_mappings[*i].stdin))?;
                 }
                 PipeKind::Stderr(_) => {
                     // todo: c++ spawner can redirect stderr to other stderr
@@ -188,15 +188,30 @@ where
     }
 
     let mut sess = Session::new();
-    let stdio: Vec<CommandStdio> = opts
+    let stdio_mappings: Vec<StdioMapping> = opts
         .iter()
         .map(|x| sess.add_cmd(Command::from(x)))
         .collect();
 
-    for (opt, opt_stdio) in opts.iter().zip(stdio.iter()) {
-        redirect_istream(&mut sess, opt_stdio.stdin, &stdio, &opt.stdin_redirect)?;
-        redirect_ostream(&mut sess, opt_stdio.stdout, &stdio, &opt.stdout_redirect)?;
-        redirect_ostream(&mut sess, opt_stdio.stderr, &stdio, &opt.stderr_redirect)?;
+    for (opt, mapping) in opts.iter().zip(stdio_mappings.iter()) {
+        redirect_istream(
+            &mut sess,
+            mapping.stdin,
+            &stdio_mappings,
+            &opt.stdin_redirect,
+        )?;
+        redirect_ostream(
+            &mut sess,
+            mapping.stdout,
+            &stdio_mappings,
+            &opt.stdout_redirect,
+        )?;
+        redirect_ostream(
+            &mut sess,
+            mapping.stderr,
+            &stdio_mappings,
+            &opt.stderr_redirect,
+        )?;
     }
 
     sess.spawn()?.wait()

@@ -6,21 +6,23 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-pub struct Splitter {
+/// This structure splits the `ReadPipe` allowing multiple readers to receive data from it.
+pub struct ReadHub {
     src: ReadPipe,
     channels: Vec<Sender<Message>>,
     buffer_size: usize,
 }
 
-struct CombinerInner {
+struct WriteHubInner {
     dst: WritePipe,
     receiver: Receiver<Message>,
     buffer: Vec<u8>,
     buffer_size: usize,
 }
 
-pub struct Combiner {
-    inner: CombinerInner,
+/// This structure splits the `WritePipe` allowing multiple writers to send data to it.
+pub struct WriteHub {
+    inner: WriteHubInner,
     sender: Sender<Message>,
 }
 
@@ -33,7 +35,7 @@ struct Message {
     content: Arc<Vec<u8>>,
 }
 
-impl Splitter {
+impl ReadHub {
     pub fn new(src: ReadPipe) -> Self {
         Self {
             src: src,
@@ -42,8 +44,8 @@ impl Splitter {
         }
     }
 
-    pub fn connect(&mut self, combiner: &Combiner) {
-        self.channels.push(combiner.sender.clone());
+    pub fn connect(&mut self, wh: &WriteHub) {
+        self.channels.push(wh.sender.clone());
     }
 
     pub fn start(self) -> Result<StopHandle> {
@@ -85,11 +87,11 @@ impl Splitter {
     }
 }
 
-impl Combiner {
+impl WriteHub {
     pub fn new(dst: WritePipe) -> Self {
         let (s, r) = channel::<Message>();
         Self {
-            inner: CombinerInner {
+            inner: WriteHubInner {
                 dst: dst,
                 receiver: r,
                 buffer: Vec::new(),
@@ -99,8 +101,8 @@ impl Combiner {
         }
     }
 
-    pub fn connect(&self, splitter: &mut Splitter) {
-        splitter.connect(self);
+    pub fn connect(&self, rh: &mut ReadHub) {
+        rh.connect(self);
     }
 
     pub fn start(self) -> io::Result<StopHandle> {
@@ -109,12 +111,12 @@ impl Combiner {
         let inner = self.inner;
         let _sender = self.sender;
         Ok(StopHandle {
-            thread: thread::Builder::new().spawn(move || CombinerInner::main_loop(inner))?,
+            thread: thread::Builder::new().spawn(move || WriteHubInner::main_loop(inner))?,
         })
     }
 }
 
-impl CombinerInner {
+impl WriteHubInner {
     fn finish_buffer(&mut self) -> bool {
         let mut written = 0;
         while written != self.buffer.len() {
