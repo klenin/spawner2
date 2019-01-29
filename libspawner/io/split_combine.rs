@@ -104,8 +104,12 @@ impl Combiner {
     }
 
     pub fn start(self) -> io::Result<StopHandle> {
+        // Split self into inner and _sender, so we can drop the sender.
+        // If we don't do that we'll hang on recv() call since there will be always one sender left.
+        let inner = self.inner;
+        let _sender = self.sender;
         Ok(StopHandle {
-            thread: thread::Builder::new().spawn(move || CombinerInner::main_loop(self.inner))?,
+            thread: thread::Builder::new().spawn(move || CombinerInner::main_loop(inner))?,
         })
     }
 }
@@ -139,7 +143,7 @@ impl CombinerInner {
                 }
                 Err(e) => {
                     if e == RecvTimeoutError::Disconnected {
-                        return false;
+                        break;
                     }
                 }
             }
