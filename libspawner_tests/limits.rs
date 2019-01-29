@@ -1,35 +1,11 @@
+use crate::{assert_approx_eq, exe};
+use common::TmpDir;
 use spawner::driver::new::run;
 use spawner::runner::{ExitStatus, TerminationReason};
-use std::ops::{Add, Sub};
-
-macro_rules! test_file {
-    ($s:expr) => {
-        concat!("../target/debug/", $s)
-    };
-}
-
-macro_rules! exe {
-    ($s:expr) => {
-        concat!("../target/debug/", $s, ".exe")
-    };
-}
-
-fn approx_eq<T>(a: T, b: T, diff: T) -> bool
-where
-    T: Add<Output = T> + Sub<Output = T> + PartialOrd + Copy,
-{
-    (a > (b - diff)) && (a < (b + diff))
-}
-
-macro_rules! assert_approx_eq {
-    ($a:expr, $b:expr, $diff:expr) => {
-        assert!(approx_eq($a, $b, $diff))
-    };
-}
 
 const MEM_ERR: u64 = 2 * 1024 * 1024; // 2MB
 const TIME_ERR: u32 = 5; // 5 ms
-const WRITE_ERR: u64 = 512 * 1024; // 0.5MB
+const WRITE_ERR: u64 = 2 * 1024 * 1024;
 
 #[test]
 fn test_mem_limit() {
@@ -61,11 +37,12 @@ fn test_user_time_limit() {
 
 #[test]
 fn test_write_limit() {
+    let tmp = TmpDir::new();
     let reports = run(&[
-        "-wl=9",
+        "-wl=10",
         exe!("file_writer"),
-        test_file!("test_write_limit.txt"),
-        "10240",
+        tmp.file("file.txt").as_str(),
+        format!("{}", 20 * 1024).as_str(),
     ])
     .unwrap();
     assert_eq!(
@@ -74,7 +51,7 @@ fn test_write_limit() {
     );
     assert_approx_eq!(
         reports[0].statistics.total_bytes_written,
-        9 * 1024 * 1024,
+        10 * 1024 * 1024,
         WRITE_ERR
     );
 }

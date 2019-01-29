@@ -19,5 +19,14 @@ path = "bin/loop.rs"
 name = "file_writer"
 path = "bin/file_writer.rs"
 
+[[bin]]
+name = "stdout_writer"
+path = "bin/stdout_writer.rs"
+
+[[bin]]
+name = "stdin_to_stdout"
+path = "bin/stdin_to_stdout.rs"
+
 [dependencies]
+rand = "0.6.5"
 spawner = { path = "../libspawner" }
