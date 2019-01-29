@@ -96,28 +96,21 @@ impl MonitoringLoop {
         true
     }
 
-    fn should_terminate(&mut self, process: &Process) -> Result<bool> {
-        match process.status()? {
-            Status::Alive(stats) => Ok(self.check_limits(stats)),
-            Status::Finished(code) => {
-                self.exit_status = Some(ExitStatus::Normal(code));
-                Ok(true)
-            }
-        }
-    }
-
     fn start(mut self, stdio: Stdio) -> Result<Report> {
         let process = Process::spawn(&self.cmd, stdio)?;
         self.process_creation_time = Instant::now();
 
         while !self.is_killed.load(Ordering::SeqCst) {
-            match self.should_terminate(&process) {
-                Ok(terminate) => {
-                    if terminate {
+            match process.status()? {
+                Status::Alive(stats) => {
+                    if self.check_limits(stats) {
                         break;
                     }
                 }
-                Err(e) => return Err(e),
+                Status::Finished(code) => {
+                    self.exit_status = Some(ExitStatus::Normal(code));
+                    break;
+                }
             }
             thread::sleep(self.cmd.monitor_interval);
         }
