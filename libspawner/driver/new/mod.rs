@@ -129,6 +129,7 @@ fn exit_status_to_string(es: &ExitStatus) -> String {
             TerminationReason::UserTimeLimitExceeded => "user time limit exceeded",
             TerminationReason::WriteLimitExceeded => "write limit exceeded",
             TerminationReason::MemoryLimitExceeded => "memory limit exceeded",
+            TerminationReason::ProcessLimitExceeded => "process limit exceeded",
             TerminationReason::Other => "other",
         }
         .to_string(),

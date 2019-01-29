@@ -60,7 +60,7 @@ impl MonitoringLoop {
         let limits = &self.cmd.limits;
         let stats = &self.stats;
         let term_reason = if stats.total_processes > limits.max_processes {
-            TerminationReason::Other
+            TerminationReason::ProcessLimitExceeded
         } else if stats.total_user_time > limits.max_user_time {
             TerminationReason::UserTimeLimitExceeded
         } else if stats.total_bytes_written > limits.max_output_size {

@@ -55,3 +55,12 @@ fn test_write_limit() {
         WRITE_ERR
     );
 }
+
+#[test]
+fn test_process_limit() {
+    let reports = run(&["-process-count=1", exe!("two_proc")]).unwrap();
+    assert_eq!(
+        reports[0].exit_status,
+        ExitStatus::Terminated(TerminationReason::ProcessLimitExceeded)
+    );
+}

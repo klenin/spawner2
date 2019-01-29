@@ -8,6 +8,7 @@ pub enum TerminationReason {
     UserTimeLimitExceeded,
     WriteLimitExceeded,
     MemoryLimitExceeded,
+    ProcessLimitExceeded,
     Other,
 }
 

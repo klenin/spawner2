@@ -27,6 +27,11 @@ path = "bin/stdout_writer.rs"
 name = "stdin_to_stdout"
 path = "bin/stdin_to_stdout.rs"
 
+[[bin]]
+name = "two_proc"
+path = "bin/two_proc.rs"
+
+
 [dependencies]
 rand = "0.6.5"
 spawner = { path = "../libspawner" }
