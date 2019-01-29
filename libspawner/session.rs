@@ -19,8 +19,9 @@ pub enum IstreamSrc<'a> {
     Ostream(usize),
 }
 
-pub enum OstreamDst {
+pub enum OstreamDst<'a> {
     Pipe(WritePipe),
+    File(&'a str),
     Istream(usize),
 }
 
@@ -77,6 +78,7 @@ impl Session {
     pub fn connect_ostream(&mut self, ostream: usize, dst: OstreamDst) -> Result<()> {
         let istream = match dst {
             OstreamDst::Pipe(p) => self.builder.add_file_istream(p),
+            OstreamDst::File(f) => self.builder.add_file_istream(WritePipe::open(f)?),
             OstreamDst::Istream(i) => i,
         };
         self.builder.connect(istream, ostream)

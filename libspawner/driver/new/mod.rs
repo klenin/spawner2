@@ -80,7 +80,9 @@ fn redirect_ostream(
 ) -> Result<()> {
     for redirect in redirect_list.items.iter() {
         match &redirect.kind {
-            StdioRedirectKind::File(_) => { /* todo */ }
+            StdioRedirectKind::File(s) => {
+                sess.connect_ostream(ostream, OstreamDst::File(s.as_str()))?;
+            }
             StdioRedirectKind::Pipe(pipe_kind) => match pipe_kind {
                 PipeKind::Null => { /* pipes are null by default */ }
                 PipeKind::Std => { /* todo */ }
