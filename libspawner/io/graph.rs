@@ -173,11 +173,11 @@ impl Builder {
         for (index, ostream) in self.graph.ostreams.iter_mut().enumerate() {
             let istreams_len = ostream.istreams.len();
             if ostream.kind.is_unknown() && istreams_len == 0 {
-                // nobody reads from this ostream, so initialize it with null
+                // Nobody reads from this ostream, so initialize it with null.
                 ostream.kind = OstreamKind::Pipe(WritePipe::null()?);
             } else if ostream.kind.is_unknown() && istreams_len == 1 {
-                // there are one reader, if the reader is file then inline it into ostream
-                // otherwise connect ostream and reader through pipe
+                // There are one reader, if the reader is file then inline it into ostream,
+                // otherwise connect ostream and reader through pipe.
                 let istream = &mut self.graph.istreams[ostream.istreams[0]];
                 istream.kind.ensure_file_or_unknown();
                 if istream.kind.is_unknown() {
@@ -188,7 +188,7 @@ impl Builder {
                     ostream.take_file_from(index, istream);
                 }
             } else if ostream.kind.is_file() && istreams_len == 1 {
-                // there are one reader, if it reads file then inline file into it
+                // There are one reader, if it reads file then inline file into it.
                 let istream_no = ostream.istreams[0];
                 let istream = &mut self.graph.istreams[istream_no];
                 istream.take_file_from(ostream);
@@ -209,7 +209,7 @@ impl Builder {
             .iter_mut()
             .filter(|x| x.kind.is_unknown())
         {
-            // at this point only unused istreams are left
+            // At this point only unused istreams are left.
             assert!(istream.incoming_ostreams == 0);
             istream.kind = IstreamKind::Pipe(ReadPipe::null()?);
         }

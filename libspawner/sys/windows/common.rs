@@ -52,7 +52,7 @@ impl IsMinusOne for u32 {
     }
 }
 
-/// returns last os error if the value is zero
+/// Returns last os error if the value is zero.
 pub fn ok_nonzero<T: IsZero>(v: T) -> Result<T> {
     if v.is_zero() {
         Err(Error::last_os_error())
@@ -61,7 +61,7 @@ pub fn ok_nonzero<T: IsZero>(v: T) -> Result<T> {
     }
 }
 
-/// returns last os error if the value is minus one
+/// Returns last os error if the value is minus one.
 pub fn ok_neq_minus_one<T: IsMinusOne>(v: T) -> Result<T> {
     if v.is_minus_one() {
         Err(Error::last_os_error())

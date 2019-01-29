@@ -3,13 +3,13 @@ use std::u64;
 
 #[derive(Copy, Clone)]
 pub struct Limits {
-    /// the maximum allowed amount of user-mode execution time for target
+    /// The maximum allowed amount of user-mode execution time for target.
     pub max_user_time: Duration,
-    /// the maximum allowed memory usage, in bytes
+    /// The maximum allowed memory usage, in bytes.
     pub max_memory_usage: u64,
-    /// the maximum allowed amount of bytes written by target
+    /// The maximum allowed amount of bytes written by target.
     pub max_output_size: u64,
-    /// the maximum allowed number of processes created
+    /// The maximum allowed number of processes created.
     pub max_processes: u64,
 }
 

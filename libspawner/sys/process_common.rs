@@ -9,17 +9,17 @@ pub struct Stdio {
 
 #[derive(Copy, Clone)]
 pub struct Statistics {
-    /// the total amount of user-mode execution time for all active processes,
-    /// as well as all terminated processes
+    /// The total amount of user-mode execution time for all active processes,
+    /// as well as all terminated processes.
     pub total_user_time: Duration,
-    /// the total amount of kernel-mode execution time for all active processes,
-    /// as well as all terminated processes
+    /// The total amount of kernel-mode execution time for all active processes,
+    /// as well as all terminated processes.
     pub total_kernel_time: Duration,
-    /// the peak memory usage of all active processes, in bytes
+    /// The peak memory usage of all active processes, in bytes.
     pub peak_memory_used: u64,
-    /// total bytes written by a process
+    /// Total bytes written by a process.
     pub total_bytes_written: u64,
-    /// the total number of processes created
+    /// The total number of processes created.
     pub total_processes: u64,
 }
 
