@@ -11,14 +11,14 @@ enum ErrorKind {
 #[derive(Debug)]
 pub struct Error {
     kind: ErrorKind,
-    call_stack: String,
+    backtrace: Backtrace,
 }
 
 impl Error {
     fn new(k: ErrorKind) -> Self {
         Self {
             kind: k,
-            call_stack: format!("{:?}", Backtrace::new()),
+            backtrace: Backtrace::new(),
         }
     }
 
@@ -27,7 +27,7 @@ impl Error {
     }
 
     pub fn call_stack(&self) -> String {
-        self.call_stack.clone()
+        format!("{:?}", self.backtrace)
     }
 
     pub fn into_io_error(self) -> io::Error {
