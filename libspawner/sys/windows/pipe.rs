@@ -145,7 +145,7 @@ fn open_file<P: AsRef<Path>>(
     creation_disposition: DWORD,
     exclusive: bool,
 ) -> Result<HANDLE> {
-    let mut file = to_utf16(path.as_ref().canonicalize()?);
+    let mut file = to_utf16(path.as_ref());
     let share_mode = if exclusive {
         0
     } else {
