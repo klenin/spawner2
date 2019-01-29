@@ -5,6 +5,8 @@ use std::sync::Weak;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TerminationReason {
+    WallClockTimeLimitExceeded,
+    IdleTimeLimitExceeded,
     UserTimeLimitExceeded,
     WriteLimitExceeded,
     MemoryLimitExceeded,

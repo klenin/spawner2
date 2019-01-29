@@ -3,11 +3,15 @@ use std::u64;
 
 #[derive(Copy, Clone)]
 pub struct Limits {
-    /// The maximum allowed amount of user-mode execution time for target.
+    /// The maximum allowed amount of time for a command.
+    pub max_wall_clock_time: Duration,
+    /// Idle time is wall clock time - user time.
+    pub max_idle_time: Duration,
+    /// The maximum allowed amount of user-mode execution time for a command.
     pub max_user_time: Duration,
     /// The maximum allowed memory usage, in bytes.
     pub max_memory_usage: u64,
-    /// The maximum allowed amount of bytes written by target.
+    /// The maximum allowed amount of bytes written by a command.
     pub max_output_size: u64,
     /// The maximum allowed number of processes created.
     pub max_processes: u64,
@@ -30,6 +34,8 @@ pub struct Builder {
 impl Limits {
     pub fn none() -> Self {
         Self {
+            max_wall_clock_time: Duration::from_secs(u64::MAX),
+            max_idle_time: Duration::from_secs(u64::MAX),
             max_user_time: Duration::from_secs(u64::MAX),
             max_memory_usage: u64::MAX,
             max_output_size: u64::MAX,
@@ -86,6 +92,16 @@ impl Builder {
 
     pub fn monitor_interval(mut self, int: Duration) -> Self {
         self.cmd.monitor_interval = int;
+        self
+    }
+
+    pub fn max_wall_clock_time(mut self, t: Duration) -> Self {
+        self.cmd.limits.max_wall_clock_time = t;
+        self
+    }
+
+    pub fn max_idle_time(mut self, t: Duration) -> Self {
+        self.cmd.limits.max_idle_time = t;
         self
     }
 

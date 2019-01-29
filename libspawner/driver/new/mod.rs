@@ -112,6 +112,8 @@ impl From<&Options> for Command {
     fn from(opts: &Options) -> Command {
         command::Builder::new(opts.argv[0].clone())
             .args(opts.argv.iter().skip(1))
+            .max_wall_clock_time(opts.wall_clock_time_limit)
+            .max_idle_time(opts.idleness_time_limit)
             .max_user_time(opts.time_limit)
             .max_memory_usage(mb2b(opts.memory_limit))
             .max_output_size(mb2b(opts.write_limit))
@@ -126,6 +128,8 @@ fn exit_status_to_string(es: &ExitStatus) -> String {
     match es {
         ExitStatus::Normal(c) => c.to_string(),
         ExitStatus::Terminated(r) => match r {
+            TerminationReason::WallClockTimeLimitExceeded => "wall clock time limit exceeded",
+            TerminationReason::IdleTimeLimitExceeded => "idle time limit exceeded",
             TerminationReason::UserTimeLimitExceeded => "user time limit exceeded",
             TerminationReason::WriteLimitExceeded => "write limit exceeded",
             TerminationReason::MemoryLimitExceeded => "memory limit exceeded",

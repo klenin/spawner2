@@ -64,3 +64,30 @@ fn test_process_limit() {
         ExitStatus::Terminated(TerminationReason::ProcessLimitExceeded)
     );
 }
+
+#[test]
+fn test_idle_time_limit() {
+    let reports = run(&["-y=0.2", exe!("sleep"), "1"]).unwrap();
+    assert_eq!(
+        reports[0].exit_status,
+        ExitStatus::Terminated(TerminationReason::IdleTimeLimitExceeded)
+    );
+}
+
+#[test]
+fn test_wall_clock_time_limit_using_sleep() {
+    let reports = run(&["-d=0.2", exe!("sleep"), "1"]).unwrap();
+    assert_eq!(
+        reports[0].exit_status,
+        ExitStatus::Terminated(TerminationReason::WallClockTimeLimitExceeded)
+    );
+}
+
+#[test]
+fn test_wall_clock_time_limit_using_loop() {
+    let reports = run(&["-d=0.2", exe!("loop")]).unwrap();
+    assert_eq!(
+        reports[0].exit_status,
+        ExitStatus::Terminated(TerminationReason::WallClockTimeLimitExceeded)
+    );
+}

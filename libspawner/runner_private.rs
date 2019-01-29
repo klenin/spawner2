@@ -5,6 +5,7 @@ use runner::{ExitStatus, Report, Runner, TerminationReason};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 pub struct WaitHandle {
     monitoring_thread: JoinHandle<Result<Report>>,
@@ -14,6 +15,9 @@ pub struct WaitHandle {
 struct MonitoringLoop {
     cmd: Command,
     stats: Statistics,
+    process_creation_time: Instant,
+    last_check_time: Option<Instant>,
+    total_idle_time: Duration,
     exit_status: Option<ExitStatus>,
     is_killed: Arc<AtomicBool>,
 }
@@ -51,22 +55,39 @@ impl MonitoringLoop {
         Self {
             cmd: cmd,
             stats: Statistics::zeroed(),
+            process_creation_time: Instant::now(),
+            last_check_time: None,
+            total_idle_time: Duration::from_millis(0),
             exit_status: None,
             is_killed: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    fn check_limits(&mut self) -> bool {
+    fn check_limits(&mut self, new_stats: Statistics) -> bool {
+        if let Some(last_check_time) = self.last_check_time {
+            let dt = last_check_time.elapsed();
+            let mut d_user = new_stats.total_user_time - self.stats.total_user_time;
+            if d_user > dt {
+                d_user = dt;
+            }
+            self.total_idle_time += dt - d_user;
+        }
+        self.last_check_time = Some(Instant::now());
+        self.stats = new_stats;
+
         let limits = &self.cmd.limits;
-        let stats = &self.stats;
-        let term_reason = if stats.total_processes > limits.max_processes {
-            TerminationReason::ProcessLimitExceeded
-        } else if stats.total_user_time > limits.max_user_time {
+        let term_reason = if self.process_creation_time.elapsed() > limits.max_wall_clock_time {
+            TerminationReason::WallClockTimeLimitExceeded
+        } else if self.total_idle_time > limits.max_idle_time {
+            TerminationReason::IdleTimeLimitExceeded
+        } else if self.stats.total_user_time > limits.max_user_time {
             TerminationReason::UserTimeLimitExceeded
-        } else if stats.total_bytes_written > limits.max_output_size {
+        } else if self.stats.total_bytes_written > limits.max_output_size {
             TerminationReason::WriteLimitExceeded
-        } else if stats.peak_memory_used > limits.max_memory_usage {
+        } else if self.stats.peak_memory_used > limits.max_memory_usage {
             TerminationReason::MemoryLimitExceeded
+        } else if self.stats.total_processes > limits.max_processes {
+            TerminationReason::ProcessLimitExceeded
         } else {
             return false;
         };
@@ -77,10 +98,7 @@ impl MonitoringLoop {
 
     fn should_terminate(&mut self, process: &Process) -> Result<bool> {
         match process.status()? {
-            Status::Alive(stats) => {
-                self.stats = stats;
-                Ok(self.check_limits())
-            }
+            Status::Alive(stats) => Ok(self.check_limits(stats)),
             Status::Finished(code) => {
                 self.exit_status = Some(ExitStatus::Normal(code));
                 Ok(true)
@@ -90,6 +108,8 @@ impl MonitoringLoop {
 
     fn start(mut self, stdio: Stdio) -> Result<Report> {
         let process = Process::spawn(&self.cmd, stdio)?;
+        self.process_creation_time = Instant::now();
+
         while !self.is_killed.load(Ordering::SeqCst) {
             match self.should_terminate(&process) {
                 Ok(terminate) => {
