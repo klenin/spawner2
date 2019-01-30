@@ -117,24 +117,11 @@ impl WriteHub {
 }
 
 impl WriteHubInner {
-    fn finish_buffer(&mut self) -> bool {
-        let mut written = 0;
-        while written != self.buffer.len() {
-            let remaining_data = &self.buffer[written..];
-            written += match write_and_flush(&mut self.dst, remaining_data) {
-                Ok(bytes) => bytes,
-                Err(_) => return false,
-            };
-        }
-        self.buffer.clear();
-        true
-    }
-
     fn bufferize(&mut self, msg: Message) {
         self.buffer.extend_from_slice(msg.get());
     }
 
-    fn try_fill_buffer(&mut self) -> bool {
+    fn try_fill_buffer(&mut self) {
         for _ in 0..50 {
             match self.receiver.recv_timeout(Duration::from_millis(1)) {
                 Ok(msg) => {
@@ -150,41 +137,26 @@ impl WriteHubInner {
                 }
             }
         }
-        true
-    }
-
-    fn write(&mut self, msg: Message) -> bool {
-        let data = msg.get();
-        let bytes_written = match write_and_flush(&mut self.dst, data) {
-            Ok(x) => x,
-            Err(_) => return false,
-        };
-        if bytes_written != data.len() {
-            self.buffer.extend_from_slice(&data[bytes_written..]);
-        }
-        true
     }
 
     fn main_loop(mut self) {
         self.buffer = Vec::with_capacity(self.buffer_size);
         loop {
-            if !self.finish_buffer() {
-                return;
-            }
-
+            self.buffer.clear();
             let msg = match self.receiver.recv() {
                 Ok(x) => x,
                 Err(_) => return,
             };
 
-            let succeeded = if msg.get().len() == self.buffer_size {
-                self.write(msg)
+            let data = if msg.get().len() == self.buffer_size {
+                msg.get()
             } else {
                 self.bufferize(msg);
-                self.try_fill_buffer()
+                self.try_fill_buffer();
+                &self.buffer
             };
 
-            if !succeeded {
+            if self.dst.write_all(data).is_err() || self.dst.flush().is_err() {
                 return;
             }
         }
@@ -209,10 +181,4 @@ impl Message {
     pub fn get(&self) -> &[u8] {
         self.content.as_slice()
     }
-}
-
-fn write_and_flush(pipe: &mut WritePipe, data: &[u8]) -> io::Result<usize> {
-    let bytes = pipe.write(data)?;
-    pipe.flush()?;
-    Ok(bytes)
 }
