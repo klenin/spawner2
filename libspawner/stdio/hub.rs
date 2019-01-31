@@ -1,6 +1,6 @@
 use crate::{Error, Result};
 use pipe::{ReadPipe, WritePipe};
-use std::io::{self, Read, Write};
+use std::io::{Read, Write};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -105,7 +105,7 @@ impl WriteHub {
         rh.connect(self);
     }
 
-    pub fn start(self) -> io::Result<StopHandle> {
+    pub fn start(self) -> Result<StopHandle> {
         // Split self into inner and _sender, so we can drop the sender.
         // If we don't do that we'll hang on recv() call since there will be always one sender left.
         let inner = self.inner;
