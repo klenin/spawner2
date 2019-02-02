@@ -15,7 +15,6 @@ pub struct WaitHandle {
 struct MonitoringLoop {
     cmd: Command,
     stats: Statistics,
-    process_creation_time: Instant,
     last_check_time: Option<Instant>,
     total_idle_time: Duration,
     exit_status: Option<ExitStatus>,
@@ -55,7 +54,6 @@ impl MonitoringLoop {
         Self {
             cmd: cmd,
             stats: Statistics::zeroed(),
-            process_creation_time: Instant::now(),
             last_check_time: None,
             total_idle_time: Duration::from_millis(0),
             exit_status: None,
@@ -67,6 +65,17 @@ impl MonitoringLoop {
         if let Some(last_check_time) = self.last_check_time {
             let dt = last_check_time.elapsed();
             let mut d_user = new_stats.total_user_time - self.stats.total_user_time;
+            // FIXME: total_user_time contains user times of all processes created, therefore
+            // it can be greater than the wall-clock time. Currently it is possible for 2 processes
+            // to avoid idle time limit. Consider:
+            // First process:
+            //     int main() { while (1) { } }
+            // Second process:
+            //     int main() { sleep(1000000); }
+            //
+            // In this case d_user will be equal to dt, therefore 0 idle time will be added.
+            // One way to fix this is computing the idle time for each active process e.g:
+            // total_idle_time += dt * active_procesess - user_time_of_all_active_processes
             if d_user > dt {
                 d_user = dt;
             }
@@ -76,7 +85,7 @@ impl MonitoringLoop {
         self.stats = new_stats;
 
         let limits = &self.cmd.limits;
-        let term_reason = if self.process_creation_time.elapsed() > limits.max_wall_clock_time {
+        let term_reason = if self.stats.wall_clock_time > limits.max_wall_clock_time {
             TerminationReason::WallClockTimeLimitExceeded
         } else if self.total_idle_time > limits.max_idle_time {
             TerminationReason::IdleTimeLimitExceeded
@@ -98,7 +107,6 @@ impl MonitoringLoop {
 
     fn start(mut self, stdio: Stdio) -> Result<Report> {
         let process = Process::spawn(&self.cmd, stdio)?;
-        self.process_creation_time = Instant::now();
 
         while !self.is_killed.load(Ordering::SeqCst) {
             match process.status()? {
@@ -108,7 +116,7 @@ impl MonitoringLoop {
                     }
                 }
                 Status::Finished(code) => {
-                    self.exit_status = Some(ExitStatus::Normal(code));
+                    self.exit_status = Some(ExitStatus::Finished(code));
                     break;
                 }
             }

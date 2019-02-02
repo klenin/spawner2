@@ -5,6 +5,7 @@ use std::mem;
 use std::path::Path;
 use std::ptr;
 use std::time::Duration;
+use std::time::Instant;
 pub use sys::process_common::{Statistics, Status, Stdio};
 use sys::windows::common::{ok_neq_minus_one, ok_nonzero, to_utf16};
 use sys::windows::thread::ThreadIterator;
@@ -34,6 +35,7 @@ pub struct Process {
     handle: HANDLE,
     id: DWORD,
     job: HANDLE,
+    creation_time: Instant,
     _stdio: Stdio,
 }
 
@@ -59,6 +61,7 @@ impl Process {
                 handle: handle,
                 id: id,
                 job: job,
+                creation_time: Instant::now(),
                 _stdio: stdio,
             }),
             Err(e) => {
@@ -111,6 +114,7 @@ impl Process {
             let kernel_time = *basic_and_io_info.BasicInfo.TotalKernelTime.QuadPart() as u64;
 
             Ok(Statistics {
+                wall_clock_time: self.creation_time.elapsed(),
                 total_user_time: Duration::from_nanos(user_time * 100),
                 total_kernel_time: Duration::from_nanos(kernel_time * 100),
                 peak_memory_used: ext_info.PeakJobMemoryUsed as u64,

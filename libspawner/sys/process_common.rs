@@ -9,6 +9,8 @@ pub struct Stdio {
 
 #[derive(Copy, Clone)]
 pub struct Statistics {
+    /// The amount of time elapsed since process creation.
+    pub wall_clock_time: Duration,
     /// The total amount of user-mode execution time for all active processes,
     /// as well as all terminated processes.
     pub total_user_time: Duration,
@@ -31,6 +33,7 @@ pub enum Status {
 impl Statistics {
     pub fn zeroed() -> Self {
         Self {
+            wall_clock_time: Duration::from_nanos(0),
             total_user_time: Duration::from_nanos(0),
             total_kernel_time: Duration::from_nanos(0),
             peak_memory_used: 0,
