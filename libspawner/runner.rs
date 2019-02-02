@@ -1,7 +1,9 @@
 use command::Command;
 use process::Statistics;
+use std::fmt::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Weak;
+use std::time::Duration;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TerminationReason {
@@ -16,7 +18,7 @@ pub enum TerminationReason {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExitStatus {
-    Normal(i32),
+    Finished(i32),
     Terminated(TerminationReason),
 }
 

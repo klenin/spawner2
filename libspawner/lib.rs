@@ -1,5 +1,6 @@
 extern crate backtrace;
 extern crate cfg_if;
+extern crate json;
 extern crate spawner_opts;
 
 #[cfg(windows)]
