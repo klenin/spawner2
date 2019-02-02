@@ -68,21 +68,21 @@ pub type StderrRedirectList = StdioRedirectList;
 pub struct Options {
     #[opt(
         name = "-tl",
-        desc = "Set time limit for executable (user process time)",
+        desc = "Set the time limit for an executable (user time)",
         value_desc = "<number>[unit]"
     )]
     pub time_limit: Duration,
 
     #[opt(
         name = "-d",
-        desc = "Set time limit for executable (wall-clock time)",
+        desc = "Set the time limit for an executable (wall-clock time)",
         value_desc = "<number>[unit]"
     )]
     pub wall_clock_time_limit: Duration,
 
     #[opt(
         name = "-ml",
-        desc = "Set memory limit for executable",
+        desc = "Set the memory limit for an executable",
         value_desc = "<number>[unit]",
         parser = "MemValueParser"
     )]
@@ -90,7 +90,7 @@ pub struct Options {
 
     #[opt(
         name = "-wl",
-        desc = "Set write limit for executable",
+        desc = "Set the write limit for an executable",
         value_desc = "<number>[unit]",
         parser = "MemValueParser"
     )]
@@ -98,21 +98,21 @@ pub struct Options {
 
     #[opt(
         name = "-s",
-        desc = "Set security level to 0 or 1",
+        desc = "Set the security level to 0 or 1",
         value_desc = "{0|1}"
     )]
     pub secure: bool,
 
     #[opt(
         name = "-y",
-        desc = "Set idleness time limit for executable",
+        desc = "Set the idle time limit for an executable (idle time = wall-clock time - user time)",
         value_desc = "<number>[unit]"
     )]
-    pub idleness_time_limit: Duration,
+    pub idle_time_limit: Duration,
 
     #[opt(
         name = "-lr",
-        desc = "Required load of the processor for this executable not to be considered idle (default 5%)",
+        desc = "The required load of the processor for this executable not to be considered idle (default 5%)",
         value_desc = "<number>[%]",
         parser = "PercentValueParser"
     )]
@@ -130,12 +130,12 @@ pub struct Options {
 
     #[opt(
         names("-mi", "--monitorInterval"),
-        desc = "Sleep interval for a monitoring thread (default: 0.001s)",
+        desc = "The sleep interval for a monitoring thread (default: 0.001s)",
         value_desc = "<number>[unit]"
     )]
     pub monitor_interval: Duration,
 
-    #[opt(name = "-wd", desc = "Set working directory", value_desc = "<dir>")]
+    #[opt(name = "-wd", desc = "Set the working directory", value_desc = "<dir>")]
     pub working_directory: Option<String>,
 
     #[opt(
@@ -171,7 +171,7 @@ pub struct Options {
 
     #[flag(
         names("-c", "--systempath"),
-        desc = "Search for executable in system path"
+        desc = "Search for an executable in system path"
     )]
     pub use_syspath: bool,
 
@@ -180,14 +180,14 @@ pub struct Options {
 
     #[opt(
         name = "-env",
-        desc = "Set environment variables for executable (default: inherit)",
+        desc = "Set environment variables for an executable (default: inherit)",
         value_desc = "{inherit|user-default|clear}"
     )]
     pub env: EnvType,
 
     #[opt(
         name = "-D",
-        desc = "Define additional environment variable for executable",
+        desc = "Define an additional environment variable for an executable",
         value_desc = "<var>"
     )]
     pub env_vars: EnvVars,
@@ -227,15 +227,19 @@ pub struct Options {
 
     #[opt(
         name = "--separator",
-        desc = "Use <sep> to separate executables",
+        desc = "Use '--<sep>' to separate executables",
         value_desc = "<sep>"
     )]
     pub separator: Option<String>,
 
-    #[opt(name = "-process-count", value_desc = "<number>[unit]")]
+    #[opt(
+        name = "-process-count",
+        desc = "The maximum allowed number of processes created",
+        value_desc = "<number>[unit]"
+    )]
     pub process_count: u32,
 
-    #[flag(name = "--controller", desc = "Mark executable as controller")]
+    #[flag(name = "--controller", desc = "Mark an executable as controller")]
     pub controller: bool,
 
     #[opt(name = "--shared-memory", value_desc = "<value>")]
