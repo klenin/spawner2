@@ -29,7 +29,7 @@ fn parse_basic_opts() {
     check_opt!(&["-ml=10"], memory_limit, 10.0);
     check_opt!(&["-wl=10"], write_limit, 10.0);
     check_opt!(&["-s=1"], secure, true);
-    check_opt!(&["-y=10"], idleness_time_limit, fsec2dur(10.0));
+    check_opt!(&["-y=10"], idle_time_limit, fsec2dur(10.0));
     check_opt!(&["-lr=10"], load_ratio, 10.0);
     check_opt!(&["-lr=10%"], load_ratio, 10.0);
     check_opt!(&["-sw=0"], hide_gui, false);

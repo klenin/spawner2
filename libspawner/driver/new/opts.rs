@@ -255,7 +255,7 @@ impl Default for Options {
             memory_limit: f64::INFINITY,
             write_limit: f64::INFINITY,
             secure: false,
-            idleness_time_limit: Duration::from_secs(u64::MAX),
+            idle_time_limit: Duration::from_secs(u64::MAX),
             load_ratio: 5.0,
             hide_gui: true,
             debug: false,
