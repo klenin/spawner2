@@ -1,8 +1,8 @@
-use crate::{Error, Result};
+use crate::Result;
 use command::Command;
 use std::fmt;
+use std::fmt::Write;
 use std::mem;
-use std::path::Path;
 use std::ptr;
 use std::time::Duration;
 use std::time::Instant;
@@ -141,7 +141,7 @@ impl fmt::Debug for Process {
 }
 
 fn create_suspended_process(cmd: &Command, stdio: &Stdio) -> Result<(HANDLE, DWORD)> {
-    let mut cmdline = argv_to_cmd(&cmd.app, &cmd.args)?;
+    let mut cmdline = argv_to_cmd(&cmd.app, &cmd.args);
     let current_dir = if cmd.current_dir.len() != 0 {
         to_utf16(&cmd.current_dir).as_mut_ptr()
     } else {
@@ -204,16 +204,12 @@ fn resume_process(process_id: DWORD) -> Result<()> {
     Ok(())
 }
 
-fn argv_to_cmd(app: &String, args: &Vec<String>) -> Result<Vec<u16>> {
-    let mut result = match Path::new(app).canonicalize() {
-        Ok(buf) => quote(&buf.to_str().unwrap()),
-        Err(e) => return Err(Error::from(e)),
-    };
+fn argv_to_cmd(app: &String, args: &Vec<String>) -> Vec<u16> {
+    let mut cmd = quote(app);
     for arg in args {
-        result.push(' ');
-        result.push_str(quote(arg).as_str());
+        write!(&mut cmd, " {}", quote(arg)).unwrap();
     }
-    Ok(to_utf16(result))
+    to_utf16(cmd)
 }
 
 fn quote<S: AsRef<str>>(s: S) -> String {
