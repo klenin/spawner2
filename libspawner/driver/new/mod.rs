@@ -234,6 +234,8 @@ impl From<&Options> for Command {
                 Some(ref d) => d.clone(),
                 None => String::new(),
             })
+            .env_kind(opts.env)
+            .env_vars(&opts.env_vars)
             .max_wall_clock_time(opts.wall_clock_time_limit)
             .max_idle_time(opts.idle_time_limit)
             .max_user_time(opts.time_limit)

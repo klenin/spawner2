@@ -1,6 +1,7 @@
+use command::{EnvKind, EnvVar};
 use driver::new::opts::{
-    EnvType, EnvVar, EnvVars, Options, PipeKind, RedirectFlags, StderrRedirectList,
-    StdinRedirectList, StdioRedirect, StdioRedirectKind, StdioRedirectList, StdoutRedirectList,
+    Options, PipeKind, RedirectFlags, StderrRedirectList, StdinRedirectList, StdioRedirect,
+    StdioRedirectKind, StdioRedirectList, StdoutRedirectList,
 };
 use driver::prelude::OptionValueParser;
 use std::time::Duration;
@@ -53,12 +54,12 @@ impl OptionValueParser<Option<String>> for DefaultValueParser {
     }
 }
 
-impl OptionValueParser<EnvType> for DefaultValueParser {
-    fn parse(env: &mut EnvType, v: &str) -> Result<(), String> {
+impl OptionValueParser<EnvKind> for DefaultValueParser {
+    fn parse(env: &mut EnvKind, v: &str) -> Result<(), String> {
         match v {
-            "clear" => *env = EnvType::Clear,
-            "inherit" => *env = EnvType::Inherit,
-            "user-default" => *env = EnvType::UserDefault,
+            "clear" => *env = EnvKind::Clear,
+            "inherit" => *env = EnvKind::Inherit,
+            "user-default" => *env = EnvKind::UserDefault,
             _ => {
                 return Err(format!(
                     "Unknown envieronment type '{}' expected one of: clear, inherit, user-default",
@@ -70,13 +71,13 @@ impl OptionValueParser<EnvType> for DefaultValueParser {
     }
 }
 
-impl OptionValueParser<EnvVars> for DefaultValueParser {
-    fn parse(vars: &mut EnvVars, v: &str) -> Result<(), String> {
+impl OptionValueParser<Vec<EnvVar>> for DefaultValueParser {
+    fn parse(vars: &mut Vec<EnvVar>, v: &str) -> Result<(), String> {
         if let Some(pos) = v.find(|x| x == '=') {
-            vars.push(EnvVar::new(
-                v[0..pos].to_string(),
-                v[pos + 1..v.len()].to_string(),
-            ));
+            vars.push(EnvVar {
+                name: v[0..pos].to_string(),
+                val: v[pos + 1..v.len()].to_string(),
+            });
             Ok(())
         } else {
             Err(format!(

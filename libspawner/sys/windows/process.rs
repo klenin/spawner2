@@ -8,6 +8,7 @@ use std::time::Duration;
 use std::time::Instant;
 pub use sys::process_common::{Statistics, Status, Stdio};
 use sys::windows::common::{ok_neq_minus_one, ok_nonzero, to_utf16};
+use sys::windows::env;
 use sys::windows::thread::ThreadIterator;
 use winapi::shared::minwindef::{DWORD, FALSE, TRUE, WORD};
 use winapi::um::handleapi::CloseHandle;
@@ -19,7 +20,9 @@ use winapi::um::processthreadsapi::{
     CreateProcessW, GetExitCodeProcess, OpenThread, ResumeThread, TerminateProcess,
     PROCESS_INFORMATION, STARTUPINFOW,
 };
-use winapi::um::winbase::{CREATE_SUSPENDED, STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES};
+use winapi::um::winbase::{
+    CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES,
+};
 use winapi::um::winnt::{
     JobObjectBasicAndIoAccountingInformation, JobObjectExtendedLimitInformation, HANDLE,
     JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
@@ -147,7 +150,8 @@ fn create_suspended_process(cmd: &Command, stdio: &Stdio) -> Result<(HANDLE, DWO
     } else {
         ptr::null()
     };
-    let creation_flags = CREATE_SUSPENDED;
+    let creation_flags = CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT;
+    let mut env = env::create(cmd.env_kind, &cmd.env_vars)?;
     let mut process_info: PROCESS_INFORMATION = unsafe { mem::zeroed() };
     let mut startup_info: STARTUPINFOW = unsafe { mem::zeroed() };
     startup_info.cb = mem::size_of_val(&startup_info) as DWORD;
@@ -166,7 +170,7 @@ fn create_suspended_process(cmd: &Command, stdio: &Stdio) -> Result<(HANDLE, DWO
             /*lpThreadAttributes=*/ ptr::null_mut(),
             /*bInheritHandles=*/ TRUE,
             /*dwCreationFlags=*/ creation_flags,
-            /*lpEnvironment=*/ ptr::null_mut(),
+            /*lpEnvironment=*/ mem::transmute(env.as_mut_ptr()),
             /*lpCurrentDirectory=*/ current_dir,
             /*lpStartupInfo=*/ &mut startup_info,
             /*lpProcessInformation=*/ &mut process_info,

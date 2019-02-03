@@ -1,3 +1,4 @@
+use command::EnvKind;
 use driver::new::opts::*;
 use driver::new::value_parser::StdinRedirectParser;
 use driver::prelude::*;
@@ -58,19 +59,19 @@ fn parse_env_type() {
     let mut opts = Options::default();
     let _ = opts.parse(&["-env=clear"]);
     match opts.env {
-        EnvType::Clear => {}
+        EnvKind::Clear => {}
         _ => unreachable!(),
     }
 
     let _ = opts.parse(&["-env=inherit"]);
     match opts.env {
-        EnvType::Inherit => {}
+        EnvKind::Inherit => {}
         _ => unreachable!(),
     }
 
     let _ = opts.parse(&["-env=user-default"]);
     match opts.env {
-        EnvType::UserDefault => {}
+        EnvKind::UserDefault => {}
         _ => unreachable!(),
     }
 }
@@ -81,10 +82,10 @@ fn parse_env_var() {
     let _ = opts.parse(&["-D:a=b", "-D:c=d"]);
     let v0 = &opts.env_vars[0];
     assert_eq!(v0.name, "a");
-    assert_eq!(v0.value, "b");
+    assert_eq!(v0.val, "b");
     let v1 = &opts.env_vars[1];
     assert_eq!(v1.name, "c");
-    assert_eq!(v1.value, "d");
+    assert_eq!(v1.val, "d");
 }
 
 macro_rules! check_file_flags {

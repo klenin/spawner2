@@ -1,3 +1,4 @@
+use command::{EnvKind, EnvVar};
 use driver::new::value_parser::{
     DefaultValueParser, FileFlagsParser, MemValueParser, PercentValueParser, StderrRedirectParser,
     StdinRedirectParser, StdoutRedirectParser,
@@ -7,13 +8,6 @@ use std::f64;
 use std::time::Duration;
 use std::u32;
 use std::u64;
-
-#[derive(Clone)]
-pub enum EnvType {
-    Inherit,
-    UserDefault,
-    Clear,
-}
 
 #[derive(Copy, Clone)]
 pub struct RedirectFlags {
@@ -48,13 +42,6 @@ pub struct StdioRedirectList {
     pub default_flags: RedirectFlags,
 }
 
-#[derive(Clone)]
-pub struct EnvVar {
-    pub name: String,
-    pub value: String,
-}
-
-pub type EnvVars = Vec<EnvVar>;
 pub type StdinRedirectList = StdioRedirectList;
 pub type StdoutRedirectList = StdioRedirectList;
 pub type StderrRedirectList = StdioRedirectList;
@@ -183,14 +170,14 @@ pub struct Options {
         desc = "Set environment variables for an executable (default: inherit)",
         value_desc = "{inherit|user-default|clear}"
     )]
-    pub env: EnvType,
+    pub env: EnvKind,
 
     #[opt(
         name = "-D",
         desc = "Define an additional environment variable for an executable",
         value_desc = "<var>"
     )]
-    pub env_vars: EnvVars,
+    pub env_vars: Vec<EnvVar>,
 
     #[opt(
         names("-i", "--in"),
@@ -272,8 +259,8 @@ impl Default for Options {
             password: None,
             use_syspath: false,
             output_file: None,
-            env: EnvType::Inherit,
-            env_vars: EnvVars::new(),
+            env: EnvKind::Inherit,
+            env_vars: Vec::new(),
             stdin_redirect: StdioRedirectList::default(),
             stdout_redirect: StdioRedirectList::default(),
             stderr_redirect: StdioRedirectList::default(),
@@ -297,15 +284,6 @@ impl Options {
         flush: true,
         exclusive: false,
     };
-}
-
-impl EnvVar {
-    pub fn new(name: String, value: String) -> Self {
-        Self {
-            name: name,
-            value: value,
-        }
-    }
 }
 
 impl StdioRedirect {

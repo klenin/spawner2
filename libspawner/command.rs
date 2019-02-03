@@ -17,6 +17,19 @@ pub struct Limits {
     pub max_processes: u64,
 }
 
+#[derive(Copy, Clone)]
+pub enum EnvKind {
+    Clear,
+    Inherit,
+    UserDefault,
+}
+
+#[derive(Clone)]
+pub struct EnvVar {
+    pub name: String,
+    pub val: String,
+}
+
 #[derive(Clone)]
 pub struct Command {
     pub app: String,
@@ -25,6 +38,8 @@ pub struct Command {
     pub show_gui: bool,
     pub limits: Limits,
     pub monitor_interval: Duration,
+    pub env_kind: EnvKind,
+    pub env_vars: Vec<EnvVar>,
 }
 
 pub struct Builder {
@@ -53,6 +68,8 @@ impl Command {
             show_gui: false,
             limits: Limits::none(),
             monitor_interval: Duration::from_millis(1),
+            env_kind: EnvKind::Inherit,
+            env_vars: Vec::new(),
         }
     }
 }
@@ -125,7 +142,37 @@ impl Builder {
         self
     }
 
+    pub fn env_kind(mut self, kind: EnvKind) -> Self {
+        self.cmd.env_kind = kind;
+        self
+    }
+
+    pub fn env_var(mut self, name: String, val: String) -> Self {
+        self.cmd.env_vars.push(EnvVar {
+            name: name,
+            val: val,
+        });
+        self
+    }
+
+    pub fn env_vars<I, V>(mut self, vars: I) -> Self
+    where
+        I: IntoIterator<Item = V>,
+        V: AsRef<EnvVar>,
+    {
+        self.cmd
+            .env_vars
+            .extend(vars.into_iter().map(|v| v.as_ref().clone()));
+        self
+    }
+
     pub fn build(self) -> Command {
         self.cmd
+    }
+}
+
+impl AsRef<EnvVar> for EnvVar {
+    fn as_ref(&self) -> &EnvVar {
+        self
     }
 }
