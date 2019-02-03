@@ -123,7 +123,7 @@ pub struct Options {
         desc = "Display program window on the screen",
         value_desc = "{0|1}"
     )]
-    pub hide_gui: bool,
+    pub show_window: bool,
 
     #[opt(name = "--debug", value_desc = "{0|1}")]
     pub debug: bool,
@@ -261,7 +261,7 @@ impl Default for Options {
             secure: false,
             idle_time_limit: Duration::from_secs(u64::MAX),
             load_ratio: 5.0,
-            hide_gui: true,
+            show_window: false,
             debug: false,
             monitor_interval: Duration::from_millis(1),
             working_directory: None,

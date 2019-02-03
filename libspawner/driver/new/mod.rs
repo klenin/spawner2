@@ -241,7 +241,7 @@ impl From<&Options> for Command {
             .max_output_size(mb2b(opts.write_limit))
             .max_processes(opts.process_count as u64)
             .monitor_interval(opts.monitor_interval)
-            .show_gui(!opts.hide_gui)
+            .show_gui(opts.show_window)
             .build()
     }
 }

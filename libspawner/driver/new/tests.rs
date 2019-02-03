@@ -32,7 +32,7 @@ fn parse_basic_opts() {
     check_opt!(&["-y=10"], idle_time_limit, fsec2dur(10.0));
     check_opt!(&["-lr=10"], load_ratio, 10.0);
     check_opt!(&["-lr=10%"], load_ratio, 10.0);
-    check_opt!(&["-sw=0"], hide_gui, false);
+    check_opt!(&["-sw=1"], show_window, true);
     check_opt!(&["--debug=1"], debug, true);
     check_opt!(&["-mi=0.1"], monitor_interval, fsec2dur(0.1));
     check_opt!(&["-wd=asd"], working_directory, Some(String::from("asd")));
