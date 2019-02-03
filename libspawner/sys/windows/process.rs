@@ -142,6 +142,11 @@ impl fmt::Debug for Process {
 
 fn create_suspended_process(cmd: &Command, stdio: &Stdio) -> Result<(HANDLE, DWORD)> {
     let mut cmdline = argv_to_cmd(&cmd.app, &cmd.args)?;
+    let current_dir = if cmd.current_dir.len() != 0 {
+        to_utf16(&cmd.current_dir).as_mut_ptr()
+    } else {
+        ptr::null()
+    };
     let creation_flags = CREATE_SUSPENDED;
     let mut process_info: PROCESS_INFORMATION = unsafe { mem::zeroed() };
     let mut startup_info: STARTUPINFOW = unsafe { mem::zeroed() };
@@ -162,7 +167,7 @@ fn create_suspended_process(cmd: &Command, stdio: &Stdio) -> Result<(HANDLE, DWO
             /*bInheritHandles=*/ TRUE,
             /*dwCreationFlags=*/ creation_flags,
             /*lpEnvironment=*/ ptr::null_mut(),
-            /*lpCurrentDirectory=*/ ptr::null(),
+            /*lpCurrentDirectory=*/ current_dir,
             /*lpStartupInfo=*/ &mut startup_info,
             /*lpProcessInformation=*/ &mut process_info,
         ))?;

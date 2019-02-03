@@ -230,6 +230,10 @@ impl From<&Options> for Command {
     fn from(opts: &Options) -> Command {
         command::Builder::new(opts.argv[0].clone())
             .args(opts.argv.iter().skip(1))
+            .current_dir(match opts.working_directory {
+                Some(ref d) => d.clone(),
+                None => String::new(),
+            })
             .max_wall_clock_time(opts.wall_clock_time_limit)
             .max_idle_time(opts.idle_time_limit)
             .max_user_time(opts.time_limit)
