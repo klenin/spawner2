@@ -58,13 +58,13 @@ impl Process {
                 return Err(e);
             }
         };
-
+        let creation_time = Instant::now();
         match resume_process(id) {
             Ok(_) => Ok(Self {
                 handle: handle,
                 id: id,
                 job: job,
-                creation_time: Instant::now(),
+                creation_time: creation_time,
                 _stdio: stdio,
             }),
             Err(e) => {
