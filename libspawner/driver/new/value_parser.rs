@@ -3,6 +3,7 @@ use driver::new::opts::{
     Options, PipeKind, RedirectFlags, StderrRedirectList, StdinRedirectList, StdioRedirect,
     StdioRedirectKind, StdioRedirectList, StdoutRedirectList,
 };
+use driver::new::round6;
 use driver::prelude::OptionValueParser;
 use std::time::Duration;
 
@@ -273,10 +274,6 @@ where
             )
         })
     })
-}
-
-fn round6(v: f64) -> f64 {
-    (v * 1e6).round() / 1e6
 }
 
 fn parse_redirect_flags(
