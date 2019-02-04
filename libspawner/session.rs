@@ -4,12 +4,15 @@ use pipe::{ReadPipe, WritePipe};
 use process::Stdio;
 use runner::{Report, Runner};
 use runner_private::{run, WaitHandle};
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 use stdio::router::{self, Builder};
 
 pub struct Session {
     cmds: Vec<Command>,
     stdio_mappings: Vec<StdioMapping>,
     builder: Builder,
+    output_files: HashMap<String, usize>,
 }
 
 pub enum IstreamSrc<'a> {
@@ -43,6 +46,7 @@ impl Session {
             cmds: Vec::new(),
             stdio_mappings: Vec::new(),
             builder: Builder::new(),
+            output_files: HashMap::new(),
         }
     }
 
@@ -69,7 +73,10 @@ impl Session {
     pub fn connect_ostream(&mut self, ostream: usize, dst: OstreamDst) -> Result<()> {
         let istream = match dst {
             OstreamDst::Pipe(p) => self.builder.add_file_istream(p),
-            OstreamDst::File(f) => self.builder.add_file_istream(WritePipe::open(f)?),
+            OstreamDst::File(f) => match self.output_files.entry(f.to_string()) {
+                Entry::Occupied(e) => *e.get(),
+                Entry::Vacant(e) => *e.insert(self.builder.add_file_istream(WritePipe::open(f)?)),
+            },
             OstreamDst::Istream(i) => i,
         };
         self.builder.connect(istream, ostream)
