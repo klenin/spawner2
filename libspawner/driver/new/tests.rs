@@ -127,8 +127,6 @@ fn parse_mem_value() {
     check_mem_value!("10", 10.0);
     check_mem_value!("0.123456", 0.123456);
     check_mem_value!("0.000001", 0.000001);
-    check_mem_value!("0.0000001", 0.0);
-    check_mem_value!("0.0000001", 0.0);
 }
 
 #[test]
@@ -156,7 +154,7 @@ fn parse_mem_value_degree() {
     check_mem_value!("1000000000000000f", 0.0);
     check_mem_value!("10%", 0.0);
 
-    check_mem_value!("1000k", 0.976563);
+    check_mem_value!("1024k", 1.0);
     check_mem_value!("10M", 10.0);
     check_mem_value!("10G", 10240.0);
     check_mem_value!("10T", 10485760.0);
@@ -165,8 +163,8 @@ fn parse_mem_value_degree() {
 
 #[test]
 fn parse_mem_value_unit() {
-    check_mem_value!("1000000B", 0.953674);
-    check_mem_value!("100000000b", 11.920929);
+    check_mem_value!("1048576B", 1.0);
+    check_mem_value!("8388608b", 1.0);
 }
 
 #[test]
@@ -213,7 +211,7 @@ fn parse_time_value_suffix() {
     check_time_value!("1dm", 6.0);
     check_time_value!("1cm", 0.6);
     check_time_value!("1mm", 0.06);
-    check_time_value!("1um", 0.000060);
+    check_time_value!("10um", 0.00060);
     check_time_value!("1nd", 0.000086);
     check_time_value!("1000pd", 0.000086);
     check_time_value!("1000000fd", 0.000086);

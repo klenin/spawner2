@@ -174,10 +174,6 @@ impl Driver {
     }
 }
 
-pub(crate) fn round6(v: f64) -> f64 {
-    (v * 1e6).round() / 1e6
-}
-
 fn redirect_istream(
     sess: &mut Session,
     istream: usize,

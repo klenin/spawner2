@@ -3,7 +3,6 @@ use driver::new::opts::{
     Options, PipeKind, RedirectFlags, StderrRedirectList, StdinRedirectList, StdioRedirect,
     StdioRedirectKind, StdioRedirectList, StdoutRedirectList,
 };
-use driver::new::round6;
 use driver::prelude::OptionValueParser;
 use std::time::Duration;
 
@@ -94,7 +93,7 @@ impl OptionValueParser<Duration> for DefaultValueParser {
         parse_value(v, parse_time_degree, parse_time_unit).map_or(
             Err(format!("Invalid value '{}'", v)),
             |(val, mult)| {
-                let usec = (round6(val * mult.unwrap_or(1.0)) * 1e6) as u64;
+                let usec = (val * mult.unwrap_or(1.0) * 1e6) as u64;
                 *opt = Duration::from_micros(usec);
                 Ok(())
             },
@@ -107,7 +106,7 @@ impl OptionValueParser<f64> for MemValueParser {
         parse_value(v, parse_mem_degree, parse_mem_unit).map_or(
             Err(format!("Invalid value '{}'", v)),
             |(val, mult)| {
-                *opt = round6(val * mult.map_or(1.0, |m| m / f64::powf(2.0, 20.0)));
+                *opt = val * mult.map_or(1.0, |m| m / f64::powf(2.0, 20.0));
                 Ok(())
             },
         )
@@ -202,7 +201,7 @@ fn parse_mem_unit(c: char) -> Option<f64> {
 
 fn parse_mem_degree(c: char) -> Option<f64> {
     match c {
-        // c++ spawner sets value to 0 on these degrees
+        // C++ spawner sets value to 0 on these degrees.
         'd' => Some(0.0),
         'c' => Some(0.0),
         'm' => Some(0.0),
