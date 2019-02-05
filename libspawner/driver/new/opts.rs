@@ -68,6 +68,13 @@ pub struct Options {
     pub wall_clock_time_limit: Duration,
 
     #[opt(
+        name = "-y",
+        desc = "Set the idle time limit for an executable (idle time = wall-clock time - user time)",
+        value_desc = "<number>[unit]"
+    )]
+    pub idle_time_limit: Duration,
+
+    #[opt(
         name = "-ml",
         desc = "Set the memory limit for an executable",
         value_desc = "<number>[unit]",
@@ -84,26 +91,33 @@ pub struct Options {
     pub write_limit: f64,
 
     #[opt(
-        name = "-s",
-        desc = "Set the security level to 0 or 1",
-        value_desc = "{0|1}"
-    )]
-    pub secure: bool,
-
-    #[opt(
-        name = "-y",
-        desc = "Set the idle time limit for an executable (idle time = wall-clock time - user time)",
-        value_desc = "<number>[unit]"
-    )]
-    pub idle_time_limit: Duration,
-
-    #[opt(
         name = "-lr",
         desc = "The required load of the processor for this executable not to be considered idle (default 5%)",
         value_desc = "<number>[%]",
         parser = "PercentValueParser"
     )]
     pub load_ratio: f64,
+
+    #[opt(
+        name = "-process-count",
+        desc = "The maximum allowed number of processes created",
+        value_desc = "<number>[unit]"
+    )]
+    pub process_count: u32,
+
+    #[opt(
+        names("-mi", "--monitorInterval"),
+        desc = "The sleep interval for a monitoring thread (default: 0.001s)",
+        value_desc = "<number>[unit]"
+    )]
+    pub monitor_interval: Duration,
+
+    #[opt(
+        name = "-s",
+        desc = "Set the security level to 0 or 1",
+        value_desc = "{0|1}"
+    )]
+    pub secure: bool,
 
     #[opt(
         name = "-sw",
@@ -114,13 +128,6 @@ pub struct Options {
 
     #[opt(name = "--debug", value_desc = "{0|1}")]
     pub debug: bool,
-
-    #[opt(
-        names("-mi", "--monitorInterval"),
-        desc = "The sleep interval for a monitoring thread (default: 0.001s)",
-        value_desc = "<number>[unit]"
-    )]
-    pub monitor_interval: Duration,
 
     #[opt(name = "-wd", desc = "Set the working directory", value_desc = "<dir>")]
     pub working_directory: Option<String>,
@@ -219,13 +226,6 @@ pub struct Options {
     )]
     pub separator: Option<String>,
 
-    #[opt(
-        name = "-process-count",
-        desc = "The maximum allowed number of processes created",
-        value_desc = "<number>[unit]"
-    )]
-    pub process_count: u32,
-
     #[flag(name = "--controller", desc = "Mark an executable as controller")]
     pub controller: bool,
 
@@ -243,14 +243,15 @@ impl Default for Options {
         Self {
             time_limit: Duration::from_secs(u64::MAX),
             wall_clock_time_limit: Duration::from_secs(u64::MAX),
+            idle_time_limit: Duration::from_secs(u64::MAX),
             memory_limit: f64::INFINITY,
             write_limit: f64::INFINITY,
-            secure: false,
-            idle_time_limit: Duration::from_secs(u64::MAX),
             load_ratio: 5.0,
+            process_count: u32::MAX,
+            monitor_interval: Duration::from_millis(1),
+            secure: false,
             show_window: false,
             debug: false,
-            monitor_interval: Duration::from_millis(1),
             working_directory: None,
             hide_report: false,
             hide_output: false,
@@ -265,7 +266,6 @@ impl Default for Options {
             stdout_redirect: StdioRedirectList::default(),
             stderr_redirect: StdioRedirectList::default(),
             separator: None,
-            process_count: u32::MAX,
             controller: false,
             shared_memory: None,
             use_json: false,
