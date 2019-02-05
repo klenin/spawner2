@@ -1,5 +1,6 @@
-use crate::Result;
+use crate::{Error, Result};
 use command::Command;
+use std::alloc::{alloc_zeroed, dealloc, Layout};
 use std::fmt;
 use std::fmt::Write;
 use std::mem;
@@ -10,6 +11,7 @@ pub use sys::process_common::{Statistics, Status, Stdio};
 use sys::windows::common::{ok_neq_minus_one, ok_nonzero, to_utf16};
 use sys::windows::env;
 use sys::windows::thread::ThreadIterator;
+use winapi::shared::basetsd::{DWORD_PTR, SIZE_T};
 use winapi::shared::minwindef::{DWORD, FALSE, TRUE, WORD};
 use winapi::um::handleapi::CloseHandle;
 use winapi::um::jobapi2::{
@@ -17,11 +19,13 @@ use winapi::um::jobapi2::{
 };
 use winapi::um::minwinbase::STILL_ACTIVE;
 use winapi::um::processthreadsapi::{
-    CreateProcessW, GetExitCodeProcess, OpenThread, ResumeThread, TerminateProcess,
-    PROCESS_INFORMATION, STARTUPINFOW,
+    CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
+    InitializeProcThreadAttributeList, OpenThread, ResumeThread, TerminateProcess,
+    UpdateProcThreadAttribute, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_LIST,
 };
 use winapi::um::winbase::{
-    CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES,
+    CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT,
+    STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
 use winapi::um::winnt::{
     JobObjectBasicAndIoAccountingInformation, JobObjectExtendedLimitInformation, HANDLE,
@@ -32,14 +36,13 @@ use winapi::um::winuser::{SW_HIDE, SW_SHOW};
 
 /// This structure is used to represent and manage root process and all its descendants.
 /// The `status` method will query information about parent process and all
-/// its childred. Note that `Status::Finished` does not guarantee that all child processes
+/// its children. Note that `Status::Finished` does not guarantee that all child processes
 /// are finished.
 pub struct Process {
     handle: HANDLE,
     id: DWORD,
     job: HANDLE,
     creation_time: Instant,
-    _stdio: Stdio,
 }
 
 unsafe impl Send for Process {}
@@ -47,7 +50,7 @@ unsafe impl Send for Process {}
 impl Process {
     /// Spawns process from given command and stdio streams
     pub fn spawn(cmd: &Command, stdio: Stdio) -> Result<Self> {
-        let (handle, id) = create_suspended_process(cmd, &stdio)?;
+        let (handle, id) = create_suspended_process(cmd, stdio)?;
         let job = match assign_process_to_new_job(handle) {
             Ok(x) => x,
             Err(e) => {
@@ -65,7 +68,6 @@ impl Process {
                 id: id,
                 job: job,
                 creation_time: creation_time,
-                _stdio: stdio,
             }),
             Err(e) => {
                 unsafe {
@@ -143,27 +145,23 @@ impl fmt::Debug for Process {
     }
 }
 
-fn create_suspended_process(cmd: &Command, stdio: &Stdio) -> Result<(HANDLE, DWORD)> {
+fn create_suspended_process(cmd: &Command, stdio: Stdio) -> Result<(HANDLE, DWORD)> {
     let mut cmdline = argv_to_cmd(&cmd.app, &cmd.args);
     let current_dir = if cmd.current_dir.len() != 0 {
         to_utf16(&cmd.current_dir).as_mut_ptr()
     } else {
         ptr::null()
     };
-    let creation_flags = CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT;
+    let creation_flags =
+        CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
     let mut env = env::create(cmd.env_kind, &cmd.env_vars)?;
     let mut process_info: PROCESS_INFORMATION = unsafe { mem::zeroed() };
-    let mut startup_info: STARTUPINFOW = unsafe { mem::zeroed() };
-    startup_info.cb = mem::size_of_val(&startup_info) as DWORD;
-    startup_info.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
-    startup_info.lpDesktop = ptr::null_mut();
-    startup_info.wShowWindow = if cmd.show_gui { SW_SHOW } else { SW_HIDE } as WORD;
-    startup_info.hStdInput = stdio.stdin.handle;
-    startup_info.hStdOutput = stdio.stdout.handle;
-    startup_info.hStdError = stdio.stderr.handle;
+    let mut inherited_handles = vec![stdio.stdin.handle, stdio.stdout.handle, stdio.stderr.handle];
+    let (mut startup_info, att_list_size) =
+        create_startup_info(cmd, &stdio, &mut inherited_handles)?;
 
     unsafe {
-        ok_nonzero(CreateProcessW(
+        let result = ok_nonzero(CreateProcessW(
             /*lpApplicationName=*/ ptr::null(),
             /*lpCommandLine=*/ cmdline.as_mut_ptr(),
             /*lpProcessAttributes=*/ ptr::null_mut(),
@@ -172,13 +170,88 @@ fn create_suspended_process(cmd: &Command, stdio: &Stdio) -> Result<(HANDLE, DWO
             /*dwCreationFlags=*/ creation_flags,
             /*lpEnvironment=*/ mem::transmute(env.as_mut_ptr()),
             /*lpCurrentDirectory=*/ current_dir,
-            /*lpStartupInfo=*/ &mut startup_info,
+            /*lpStartupInfo=*/ mem::transmute(&mut startup_info),
             /*lpProcessInformation=*/ &mut process_info,
-        ))?;
+        ));
+        DeleteProcThreadAttributeList(startup_info.lpAttributeList);
+        dealloc_att_list(startup_info.lpAttributeList, att_list_size);
+        result?;
+
         CloseHandle(process_info.hThread);
     }
 
+    drop(stdio);
     Ok((process_info.hProcess, process_info.dwProcessId))
+}
+
+fn create_startup_info(
+    cmd: &Command,
+    stdio: &Stdio,
+    inherited_handles: &mut Vec<HANDLE>,
+) -> Result<(STARTUPINFOEXW, SIZE_T)> {
+    let mut info: STARTUPINFOEXW = unsafe { mem::zeroed() };
+    info.StartupInfo.cb = mem::size_of_val(&info) as DWORD;
+    info.StartupInfo.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+    info.StartupInfo.lpDesktop = ptr::null_mut();
+    info.StartupInfo.wShowWindow = if cmd.show_gui { SW_SHOW } else { SW_HIDE } as WORD;
+    info.StartupInfo.hStdInput = stdio.stdin.handle;
+    info.StartupInfo.hStdOutput = stdio.stdout.handle;
+    info.StartupInfo.hStdError = stdio.stderr.handle;
+
+    let mut size: SIZE_T = 0;
+    unsafe {
+        // Unfortunately, winapi-rs does not define this.
+        // Tested on windows 10 only.
+        const PROC_THREAD_ATTRIBUTE_HANDLE_LIST: DWORD_PTR = 131074;
+
+        InitializeProcThreadAttributeList(ptr::null_mut(), 1, 0, &mut size);
+        info.lpAttributeList = alloc_att_list(size)?;
+        let result = ok_nonzero(InitializeProcThreadAttributeList(
+            /*lpAttributeList=*/ info.lpAttributeList,
+            /*dwAttributeCount=*/ 1,
+            /*dwFlags=*/ 0,
+            /*lpSize=*/ &mut size,
+        ))
+        .and_then(|_| {
+            ok_nonzero(UpdateProcThreadAttribute(
+                /*lpAttributeList=*/ info.lpAttributeList,
+                /*dwFlags=*/ 0,
+                /*Attribute=*/ PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                /*lpValue=*/ mem::transmute(inherited_handles.as_mut_ptr()),
+                /*cbSize=*/ inherited_handles.len() * mem::size_of::<HANDLE>(),
+                /*lpPreviousValue=*/ ptr::null_mut(),
+                /*lpReturnSize=*/ ptr::null_mut(),
+            ))
+        });
+        if let Err(e) = result {
+            dealloc_att_list(info.lpAttributeList, size);
+            return Err(e);
+        }
+    }
+
+    Ok((info, size))
+}
+
+fn alloc_att_list(size: SIZE_T) -> Result<*mut PROC_THREAD_ATTRIBUTE_LIST> {
+    unsafe {
+        let list = alloc_zeroed(Layout::from_size_align_unchecked(size, 4));
+        if list == ptr::null_mut() {
+            Err(Error::from(
+                "cannot allocate memory for PROC_THREAD_ATTRIBUTE_LIST",
+            ))
+        } else {
+            Ok(mem::transmute(list))
+        }
+    }
+}
+
+fn dealloc_att_list(list: *mut PROC_THREAD_ATTRIBUTE_LIST, size: SIZE_T) {
+    unsafe {
+        dealloc(
+            mem::transmute(list),
+            Layout::from_size_align_unchecked(size, 4),
+        );
+    }
 }
 
 fn assign_process_to_new_job(process: HANDLE) -> Result<HANDLE> {
