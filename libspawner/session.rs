@@ -3,7 +3,7 @@ use command::Command;
 use pipe::{ReadPipe, WritePipe};
 use process::Stdio;
 use runner::{Report, Runner};
-use runner_private::{run, WaitHandle};
+use runner_private::{self, RunnerThread};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use stdio::router::{self, Router};
@@ -29,7 +29,7 @@ pub enum OstreamDst<'a> {
 
 pub struct Spawner {
     router: Router,
-    runner_handles: Vec<WaitHandle>,
+    runner_threads: Vec<RunnerThread>,
     runners: Vec<Runner>,
 }
 
@@ -87,11 +87,11 @@ impl Session {
         let mut sp = Spawner {
             router: router,
             runners: Vec::new(),
-            runner_handles: Vec::new(),
+            runner_threads: Vec::new(),
         };
 
         for (cmd, mapping) in self.cmds.drain(..).zip(self.stdio_mappings.drain(..)) {
-            let handle = run(
+            let thread = runner_private::spawn(
                 cmd,
                 Stdio {
                     stdin: list.istreams[mapping.stdin].take(),
@@ -99,8 +99,8 @@ impl Session {
                     stderr: list.ostreams[mapping.stderr].take(),
                 },
             )?;
-            sp.runners.push(handle.runner().clone());
-            sp.runner_handles.push(handle);
+            sp.runners.push(thread.runner().clone());
+            sp.runner_threads.push(thread);
         }
 
         Ok(sp)
@@ -118,8 +118,8 @@ impl Spawner {
 
     fn wait_impl(&mut self) -> Result<Vec<Report>> {
         let mut reports: Vec<Report> = Vec::new();
-        for runner in self.runner_handles.drain(..) {
-            reports.push(runner.wait()?);
+        for thread in self.runner_threads.drain(..) {
+            reports.push(thread.join()?);
         }
 
         // It is (almost) impossible to hang on this because all pipes

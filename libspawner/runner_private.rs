@@ -7,12 +7,12 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-pub struct WaitHandle {
-    monitoring_thread: JoinHandle<Result<Report>>,
+pub struct RunnerThread {
+    handle: JoinHandle<Result<Report>>,
     runner: Runner,
 }
 
-struct MonitoringLoop {
+struct RunnerImpl {
     cmd: Command,
     stats: Statistics,
     last_check_time: Option<Instant>,
@@ -21,35 +21,35 @@ struct MonitoringLoop {
     is_killed: Arc<AtomicBool>,
 }
 
-pub fn run(cmd: Command, stdio: Stdio) -> Result<WaitHandle> {
-    let monitoring_loop = MonitoringLoop::new(cmd);
+pub fn spawn(cmd: Command, stdio: Stdio) -> Result<RunnerThread> {
+    let monitoring_loop = RunnerImpl::new(cmd);
     let is_killed = Arc::downgrade(&monitoring_loop.is_killed);
 
     thread::Builder::new()
-        .spawn(move || MonitoringLoop::start(monitoring_loop, stdio))
+        .spawn(move || RunnerImpl::spawn(monitoring_loop, stdio))
         .map_err(|e| Error::from(e))
-        .map(|handle| WaitHandle {
-            monitoring_thread: handle,
+        .map(|handle| RunnerThread {
+            handle: handle,
             runner: Runner {
                 is_killed: is_killed,
             },
         })
 }
 
-impl WaitHandle {
+impl RunnerThread {
     pub fn runner(&self) -> &Runner {
         &self.runner
     }
 
-    pub fn wait(self) -> Result<Report> {
-        match self.monitoring_thread.join() {
+    pub fn join(self) -> Result<Report> {
+        match self.handle.join() {
             Ok(result) => result,
             Err(_) => Err(Error::from("monitoring thread panicked")),
         }
     }
 }
 
-impl MonitoringLoop {
+impl RunnerImpl {
     fn new(cmd: Command) -> Self {
         Self {
             cmd: cmd,
@@ -109,7 +109,7 @@ impl MonitoringLoop {
         true
     }
 
-    fn start(mut self, stdio: Stdio) -> Result<Report> {
+    fn spawn(mut self, stdio: Stdio) -> Result<Report> {
         let process = Process::spawn(&self.cmd, stdio)?;
 
         loop {
