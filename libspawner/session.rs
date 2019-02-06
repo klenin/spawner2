@@ -6,108 +6,56 @@ use runner::{Report, Runner};
 use runner_private::{self, RunnerThread};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use stdio::router::{self, Router};
 
 pub struct Session {
-    cmds: Vec<Command>,
-    stdio_mappings: Vec<StdioMapping>,
-    builder: router::Builder,
-    output_files: HashMap<String, usize>,
-}
-
-pub enum IstreamSrc<'a> {
-    Pipe(ReadPipe),
-    File(&'a str),
-    Ostream(usize),
-}
-
-pub enum OstreamDst<'a> {
-    Pipe(WritePipe),
-    File(&'a str),
-    Istream(usize),
-}
-
-pub struct Spawner {
     router: Router,
     runner_threads: Vec<RunnerThread>,
     runners: Vec<Runner>,
 }
 
 #[derive(Copy, Clone)]
+pub struct IstreamIndex(usize);
+
+#[derive(Copy, Clone)]
+pub struct OstreamIndex(usize);
+
+enum IstreamSrcKind {
+    Pipe(ReadPipe),
+    File(PathBuf),
+    Ostream(OstreamIndex),
+}
+
+pub struct IstreamSrc {
+    kind: IstreamSrcKind,
+}
+
+pub enum OstreamDstKind {
+    Pipe(WritePipe),
+    File(PathBuf),
+    Istream(IstreamIndex),
+}
+
+pub struct OstreamDst {
+    kind: OstreamDstKind,
+}
+
+#[derive(Copy, Clone)]
 pub struct StdioMapping {
-    pub stdin: usize,
-    pub stdout: usize,
-    pub stderr: usize,
+    pub stdin: IstreamIndex,
+    pub stdout: OstreamIndex,
+    pub stderr: OstreamIndex,
+}
+
+pub struct Builder {
+    cmds: Vec<Command>,
+    stdio_mappings: Vec<StdioMapping>,
+    builder: router::Builder,
+    output_files: HashMap<PathBuf, usize>,
 }
 
 impl Session {
-    pub fn new() -> Self {
-        Self {
-            cmds: Vec::new(),
-            stdio_mappings: Vec::new(),
-            builder: router::Builder::new(),
-            output_files: HashMap::new(),
-        }
-    }
-
-    pub fn add_cmd(&mut self, cmd: Command) -> StdioMapping {
-        let stdio = StdioMapping {
-            stdin: self.builder.add_istream(None),
-            stdout: self.builder.add_ostream(None),
-            stderr: self.builder.add_ostream(None),
-        };
-        self.stdio_mappings.push(stdio);
-        self.cmds.push(cmd);
-        stdio
-    }
-
-    pub fn connect_istream(&mut self, istream: usize, src: IstreamSrc) -> Result<()> {
-        let ostream = match src {
-            IstreamSrc::Pipe(p) => self.builder.add_ostream(Some(p)),
-            IstreamSrc::File(f) => self.builder.add_ostream(Some(ReadPipe::open(f)?)),
-            IstreamSrc::Ostream(i) => i,
-        };
-        self.builder.connect(istream, ostream)
-    }
-
-    pub fn connect_ostream(&mut self, ostream: usize, dst: OstreamDst) -> Result<()> {
-        let istream = match dst {
-            OstreamDst::Pipe(p) => self.builder.add_istream(Some(p)),
-            OstreamDst::File(f) => match self.output_files.entry(f.to_string()) {
-                Entry::Occupied(e) => *e.get(),
-                Entry::Vacant(e) => *e.insert(self.builder.add_istream(Some(WritePipe::open(f)?))),
-            },
-            OstreamDst::Istream(i) => i,
-        };
-        self.builder.connect(istream, ostream)
-    }
-
-    pub fn spawn(mut self) -> Result<Spawner> {
-        let (router, mut list) = self.builder.spawn()?;
-        let mut sp = Spawner {
-            router: router,
-            runners: Vec::new(),
-            runner_threads: Vec::new(),
-        };
-
-        for (cmd, mapping) in self.cmds.drain(..).zip(self.stdio_mappings.drain(..)) {
-            let thread = runner_private::spawn(
-                cmd,
-                Stdio {
-                    stdin: list.istreams[mapping.stdin].take(),
-                    stdout: list.ostreams[mapping.stdout].take(),
-                    stderr: list.ostreams[mapping.stderr].take(),
-                },
-            )?;
-            sp.runners.push(thread.runner().clone());
-            sp.runner_threads.push(thread);
-        }
-
-        Ok(sp)
-    }
-}
-
-impl Spawner {
     pub fn runners(&self) -> &Vec<Runner> {
         &self.runners
     }
@@ -129,11 +77,121 @@ impl Spawner {
     }
 }
 
-impl Drop for Spawner {
+impl Drop for Session {
     fn drop(&mut self) {
         for runner in self.runners.drain(..) {
             runner.kill();
         }
         let _ = self.wait_impl();
+    }
+}
+
+impl IstreamSrc {
+    pub fn pipe(p: ReadPipe) -> Self {
+        Self {
+            kind: IstreamSrcKind::Pipe(p),
+        }
+    }
+
+    pub fn ostream(ostream: OstreamIndex) -> Self {
+        Self {
+            kind: IstreamSrcKind::Ostream(ostream),
+        }
+    }
+
+    pub fn file<P: AsRef<Path>>(path: P) -> Self {
+        Self {
+            kind: IstreamSrcKind::File(path.as_ref().to_path_buf()),
+        }
+    }
+}
+
+impl OstreamDst {
+    pub fn pipe(p: WritePipe) -> Self {
+        Self {
+            kind: OstreamDstKind::Pipe(p),
+        }
+    }
+
+    pub fn istream(istream: IstreamIndex) -> Self {
+        Self {
+            kind: OstreamDstKind::Istream(istream),
+        }
+    }
+
+    pub fn file<P: AsRef<Path>>(path: P) -> Self {
+        Self {
+            kind: OstreamDstKind::File(path.as_ref().to_path_buf()),
+        }
+    }
+}
+
+impl Builder {
+    pub fn new() -> Self {
+        Self {
+            cmds: Vec::new(),
+            stdio_mappings: Vec::new(),
+            builder: router::Builder::new(),
+            output_files: HashMap::new(),
+        }
+    }
+
+    pub fn add_cmd(&mut self, cmd: Command) -> StdioMapping {
+        let stdio = StdioMapping {
+            stdin: IstreamIndex(self.builder.add_istream(None)),
+            stdout: OstreamIndex(self.builder.add_ostream(None)),
+            stderr: OstreamIndex(self.builder.add_ostream(None)),
+        };
+        self.stdio_mappings.push(stdio);
+        self.cmds.push(cmd);
+        stdio
+    }
+
+    pub fn add_istream_src(&mut self, istream: IstreamIndex, src: IstreamSrc) -> Result<()> {
+        let ostream = match src.kind {
+            IstreamSrcKind::Pipe(p) => self.builder.add_ostream(Some(p)),
+            IstreamSrcKind::File(f) => self.builder.add_ostream(Some(ReadPipe::open(f)?)),
+            IstreamSrcKind::Ostream(i) => i.0,
+        };
+        self.builder.connect(istream.0, ostream)
+    }
+
+    pub fn add_ostream_dst(&mut self, ostream: OstreamIndex, dst: OstreamDst) -> Result<()> {
+        let istream = match dst.kind {
+            OstreamDstKind::Pipe(p) => self.builder.add_istream(Some(p)),
+            OstreamDstKind::File(f) => match self.output_files.entry(f) {
+                Entry::Occupied(e) => *e.get(),
+                Entry::Vacant(e) => {
+                    let pipe = WritePipe::open(e.key())?;
+                    *e.insert(self.builder.add_istream(Some(pipe)))
+                }
+            },
+            OstreamDstKind::Istream(i) => i.0,
+        };
+        self.builder.connect(ostream.0, istream)
+    }
+
+    pub fn spawn(mut self) -> Result<Session> {
+        let (router, mut iolist) = self.builder.spawn()?;
+        let mut sess = Session {
+            router: router,
+            runners: Vec::new(),
+            runner_threads: Vec::new(),
+        };
+
+        for (cmd, mapping) in self.cmds.drain(..).zip(self.stdio_mappings.drain(..)) {
+            let thread = runner_private::spawn(
+                cmd,
+                Stdio {
+                    stdin: iolist.istreams[mapping.stdin.0].take(),
+                    stdout: iolist.ostreams[mapping.stdout.0].take(),
+                    stderr: iolist.ostreams[mapping.stderr.0].take(),
+                },
+            )?;
+            sess.runners.push(thread.runner().clone());
+            sess.runner_threads.push(thread);
+        }
+
+        Ok(sess)
     }
 }

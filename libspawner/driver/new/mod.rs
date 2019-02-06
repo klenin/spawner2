@@ -12,7 +12,7 @@ use command::{self, Command, Limits};
 use driver::prelude::*;
 use json::{stringify_pretty, JsonValue};
 use runner::Report;
-use session::{IstreamSrc, OstreamDst, Session, StdioMapping};
+use session::{self, IstreamIndex, IstreamSrc, OstreamDst, OstreamIndex, Session, StdioMapping};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -142,55 +142,58 @@ impl Driver {
             return Ok(Vec::new());
         }
 
-        let mut sess = Session::new();
+        let mut builder = session::Builder::new();
         let stdio_mappings: Vec<StdioMapping> = self
             .cmds
             .iter()
-            .map(|x| sess.add_cmd(Command::from(x)))
+            .map(|x| builder.add_cmd(Command::from(x)))
             .collect();
 
         for (opt, mapping) in self.cmds.iter().zip(stdio_mappings.iter()) {
             redirect_istream(
-                &mut sess,
+                &mut builder,
                 mapping.stdin,
                 &stdio_mappings,
                 &opt.stdin_redirect,
             )?;
             redirect_ostream(
-                &mut sess,
+                &mut builder,
                 mapping.stdout,
                 &stdio_mappings,
                 &opt.stdout_redirect,
             )?;
             redirect_ostream(
-                &mut sess,
+                &mut builder,
                 mapping.stderr,
                 &stdio_mappings,
                 &opt.stderr_redirect,
             )?;
         }
 
-        sess.spawn()?.wait()
+        builder.spawn()?.wait()
     }
 }
 
 fn redirect_istream(
-    sess: &mut Session,
-    istream: usize,
+    builder: &mut session::Builder,
+    istream: IstreamIndex,
     stdio_mappings: &Vec<StdioMapping>,
     redirect_list: &StdioRedirectList,
 ) -> Result<()> {
     for redirect in redirect_list.items.iter() {
         match &redirect.kind {
             StdioRedirectKind::File(s) => {
-                sess.connect_istream(istream, IstreamSrc::File(s.as_str()))?;
+                builder.add_istream_src(istream, IstreamSrc::file(s))?;
             }
             StdioRedirectKind::Pipe(pipe_kind) => match pipe_kind {
                 PipeKind::Null => { /* pipes are null by default */ }
                 PipeKind::Std => { /* todo */ }
                 PipeKind::Stdout(i) => {
-                    // check i
-                    sess.connect_istream(istream, IstreamSrc::Ostream(stdio_mappings[*i].stdout))?;
+                    if *i > stdio_mappings.len() {
+                        return Err(Error::from(format!("stdout index {} is out of range", i)));
+                    }
+                    builder
+                        .add_istream_src(istream, IstreamSrc::ostream(stdio_mappings[*i].stdout))?;
                 }
                 _ => {}
             },
@@ -200,22 +203,25 @@ fn redirect_istream(
 }
 
 fn redirect_ostream(
-    sess: &mut Session,
-    ostream: usize,
+    builder: &mut session::Builder,
+    ostream: OstreamIndex,
     stdio_mappings: &Vec<StdioMapping>,
     redirect_list: &StdioRedirectList,
 ) -> Result<()> {
     for redirect in redirect_list.items.iter() {
         match &redirect.kind {
             StdioRedirectKind::File(s) => {
-                sess.connect_ostream(ostream, OstreamDst::File(s.as_str()))?;
+                builder.add_ostream_dst(ostream, OstreamDst::file(s))?;
             }
             StdioRedirectKind::Pipe(pipe_kind) => match pipe_kind {
                 PipeKind::Null => { /* pipes are null by default */ }
                 PipeKind::Std => { /* todo */ }
                 PipeKind::Stdin(i) => {
-                    // check i
-                    sess.connect_ostream(ostream, OstreamDst::Istream(stdio_mappings[*i].stdin))?;
+                    if *i > stdio_mappings.len() {
+                        return Err(Error::from(format!("stdin index {} is out of range", i)));
+                    }
+                    builder
+                        .add_ostream_dst(ostream, OstreamDst::istream(stdio_mappings[*i].stdin))?;
                 }
                 PipeKind::Stderr(_) => {
                     // todo: c++ spawner can redirect stderr to other stderr
