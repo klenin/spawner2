@@ -6,12 +6,12 @@ use runner::{Report, Runner};
 use runner_private::{run, WaitHandle};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use stdio::router::{self, Builder};
+use stdio::router::{self, Router};
 
 pub struct Session {
     cmds: Vec<Command>,
     stdio_mappings: Vec<StdioMapping>,
-    builder: Builder,
+    builder: router::Builder,
     output_files: HashMap<String, usize>,
 }
 
@@ -28,7 +28,7 @@ pub enum OstreamDst<'a> {
 }
 
 pub struct Spawner {
-    router: router::StopHandle,
+    router: Router,
     runner_handles: Vec<WaitHandle>,
     runners: Vec<Runner>,
 }
@@ -45,16 +45,16 @@ impl Session {
         Self {
             cmds: Vec::new(),
             stdio_mappings: Vec::new(),
-            builder: Builder::new(),
+            builder: router::Builder::new(),
             output_files: HashMap::new(),
         }
     }
 
     pub fn add_cmd(&mut self, cmd: Command) -> StdioMapping {
         let stdio = StdioMapping {
-            stdin: self.builder.add_unknown_istream(),
-            stdout: self.builder.add_unknown_ostream(),
-            stderr: self.builder.add_unknown_ostream(),
+            stdin: self.builder.add_istream(None),
+            stdout: self.builder.add_ostream(None),
+            stderr: self.builder.add_ostream(None),
         };
         self.stdio_mappings.push(stdio);
         self.cmds.push(cmd);
@@ -63,8 +63,8 @@ impl Session {
 
     pub fn connect_istream(&mut self, istream: usize, src: IstreamSrc) -> Result<()> {
         let ostream = match src {
-            IstreamSrc::Pipe(p) => self.builder.add_file_ostream(p),
-            IstreamSrc::File(f) => self.builder.add_file_ostream(ReadPipe::open(f)?),
+            IstreamSrc::Pipe(p) => self.builder.add_ostream(Some(p)),
+            IstreamSrc::File(f) => self.builder.add_ostream(Some(ReadPipe::open(f)?)),
             IstreamSrc::Ostream(i) => i,
         };
         self.builder.connect(istream, ostream)
@@ -72,10 +72,10 @@ impl Session {
 
     pub fn connect_ostream(&mut self, ostream: usize, dst: OstreamDst) -> Result<()> {
         let istream = match dst {
-            OstreamDst::Pipe(p) => self.builder.add_file_istream(p),
+            OstreamDst::Pipe(p) => self.builder.add_istream(Some(p)),
             OstreamDst::File(f) => match self.output_files.entry(f.to_string()) {
                 Entry::Occupied(e) => *e.get(),
-                Entry::Vacant(e) => *e.insert(self.builder.add_file_istream(WritePipe::open(f)?)),
+                Entry::Vacant(e) => *e.insert(self.builder.add_istream(Some(WritePipe::open(f)?))),
             },
             OstreamDst::Istream(i) => i,
         };
@@ -83,9 +83,9 @@ impl Session {
     }
 
     pub fn spawn(mut self) -> Result<Spawner> {
-        let (router, mut list) = self.builder.build()?;
+        let (router, mut list) = self.builder.spawn()?;
         let mut sp = Spawner {
-            router: router.start()?,
+            router: router,
             runners: Vec::new(),
             runner_handles: Vec::new(),
         };
