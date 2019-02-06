@@ -23,10 +23,6 @@ pub struct WriteHub {
     sender: Sender<Message>,
 }
 
-pub struct StopHandle {
-    thread: JoinHandle<()>,
-}
-
 #[derive(Clone)]
 struct Message {
     content: Arc<Vec<u8>>,
@@ -45,10 +41,10 @@ impl ReadHub {
         self.channels.push(wh.sender.clone());
     }
 
-    pub fn start(self) -> Result<StopHandle> {
-        Ok(StopHandle {
-            thread: thread::Builder::new().spawn(move || Self::main_loop(self))?,
-        })
+    pub fn spawn(self) -> Result<JoinHandle<()>> {
+        thread::Builder::new()
+            .spawn(move || Self::main_loop(self))
+            .map_err(|e| Error::from(e))
     }
 
     fn main_loop(mut self) {
@@ -100,14 +96,15 @@ impl WriteHub {
         rh.connect(self);
     }
 
-    pub fn start(self) -> Result<StopHandle> {
+    pub fn spawn(self) -> Result<JoinHandle<()>> {
         // Split self into inner and _sender, so we can drop the sender.
         // If we don't do that we'll hang on recv() call since there will be always one sender left.
         let inner = self.inner;
         let _sender = self.sender;
-        Ok(StopHandle {
-            thread: thread::Builder::new().spawn(move || WriteHubInner::main_loop(inner))?,
-        })
+
+        thread::Builder::new()
+            .spawn(move || WriteHubInner::main_loop(inner))
+            .map_err(|e| Error::from(e))
     }
 }
 
@@ -122,14 +119,6 @@ impl WriteHubInner {
                 return;
             }
         }
-    }
-}
-
-impl StopHandle {
-    pub fn stop(self) -> Result<()> {
-        self.thread
-            .join()
-            .map_err(|_| Error::from("monitoring thread panicked"))
     }
 }
 

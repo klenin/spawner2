@@ -1,11 +1,12 @@
 use crate::{Error, Result};
 use pipe::{self, ReadPipe, WritePipe};
 use std::mem;
-use stdio::hub::{self, ReadHub, WriteHub};
+use std::thread::JoinHandle;
+use stdio::hub::{ReadHub, WriteHub};
 
 pub struct Router {
-    read_hubs: Vec<hub::StopHandle>,
-    write_hubs: Vec<hub::StopHandle>,
+    read_hub_threads: Vec<JoinHandle<()>>,
+    write_hub_threads: Vec<JoinHandle<()>>,
 }
 
 pub enum Istream {
@@ -67,11 +68,14 @@ enum OstreamKind {
 
 impl Router {
     pub fn stop(&mut self) -> Result<()> {
-        for hub in self.read_hubs.drain(..) {
-            hub.stop()?;
-        }
-        for hub in self.write_hubs.drain(..) {
-            hub.stop()?;
+        for thread in self
+            .read_hub_threads
+            .drain(..)
+            .chain(self.write_hub_threads.drain(..))
+        {
+            thread
+                .join()
+                .map_err(|_| Error::from("unexpected panic!(...) in thread"))?;
         }
         Ok(())
     }
@@ -158,8 +162,8 @@ impl Builder {
         self.connect_iostreams()?;
 
         let mut router = Router {
-            read_hubs: Vec::new(),
-            write_hubs: Vec::new(),
+            read_hub_threads: Vec::new(),
+            write_hub_threads: Vec::new(),
         };
         let mut iolist = IoList {
             istreams: Vec::new(),
@@ -172,14 +176,14 @@ impl Builder {
                     iolist.istreams.push(Istream::Pipe(rp));
                 }
                 IstreamKind::PipeHub(rp, wh) => {
-                    router.write_hubs.push(wh.start()?);
+                    router.write_hub_threads.push(wh.spawn()?);
                     iolist.istreams.push(Istream::Pipe(rp));
                 }
                 IstreamKind::File(_) | IstreamKind::InlinedFile => {
                     iolist.istreams.push(Istream::Empty);
                 }
                 IstreamKind::FileHub(wh) => {
-                    router.write_hubs.push(wh.start()?);
+                    router.write_hub_threads.push(wh.spawn()?);
                 }
             }
         }
@@ -190,14 +194,14 @@ impl Builder {
                     iolist.ostreams.push(Ostream::Pipe(wp));
                 }
                 OstreamKind::PipeHub(wp, rh) => {
-                    router.read_hubs.push(rh.start()?);
+                    router.read_hub_threads.push(rh.spawn()?);
                     iolist.ostreams.push(Ostream::Pipe(wp));
                 }
                 OstreamKind::File(_) | OstreamKind::InlinedFile => {
                     iolist.ostreams.push(Ostream::Empty);
                 }
                 OstreamKind::FileHub(rh) => {
-                    router.read_hubs.push(rh.start()?);
+                    router.read_hub_threads.push(rh.spawn()?);
                 }
             }
         }
