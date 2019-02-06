@@ -22,7 +22,7 @@ pub struct Statistics {
     /// Total bytes written by a process.
     pub total_bytes_written: u64,
     /// The total number of processes created.
-    pub total_processes: u64,
+    pub total_processes: usize,
 }
 
 pub enum Status {

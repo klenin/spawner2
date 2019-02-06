@@ -18,19 +18,19 @@ macro_rules! check_opt {
 
 #[test]
 fn parse_opt_delimeters() {
-    check_opt!(&["-tl=10"], time_limit, fsec2dur(10.0));
-    check_opt!(&["-tl:10"], time_limit, fsec2dur(10.0));
-    check_opt!(&["-tl", "10"], time_limit, fsec2dur(10.0));
+    check_opt!(&["-tl=10"], time_limit, Some(fsec2dur(10.0)));
+    check_opt!(&["-tl:10"], time_limit, Some(fsec2dur(10.0)));
+    check_opt!(&["-tl", "10"], time_limit, Some(fsec2dur(10.0)));
 }
 
 #[test]
 fn parse_basic_opts() {
-    check_opt!(&["-tl=10"], time_limit, fsec2dur(10.0));
-    check_opt!(&["-d=10"], wall_clock_time_limit, fsec2dur(10.0));
-    check_opt!(&["-ml=10"], memory_limit, 10.0);
-    check_opt!(&["-wl=10"], write_limit, 10.0);
+    check_opt!(&["-tl=10"], time_limit, Some(fsec2dur(10.0)));
+    check_opt!(&["-d=10"], wall_clock_time_limit, Some(fsec2dur(10.0)));
+    check_opt!(&["-ml=10"], memory_limit, Some(10.0));
+    check_opt!(&["-wl=10"], write_limit, Some(10.0));
     check_opt!(&["-s=1"], secure, true);
-    check_opt!(&["-y=10"], idle_time_limit, fsec2dur(10.0));
+    check_opt!(&["-y=10"], idle_time_limit, Some(fsec2dur(10.0)));
     check_opt!(&["-lr=10"], load_ratio, 10.0);
     check_opt!(&["-lr=10%"], load_ratio, 10.0);
     check_opt!(&["-sw=1"], show_window, true);
@@ -47,7 +47,7 @@ fn parse_basic_opts() {
     check_opt!(&["--systempath"], use_syspath, true);
     check_opt!(&["-sr=file"], output_file, Some(String::from("file")));
     check_opt!(&["--separator=sep"], separator, Some(String::from("sep")));
-    check_opt!(&["-process-count=10"], process_count, 10);
+    check_opt!(&["-process-count=10"], process_count, Some(10));
     check_opt!(&["--controller"], controller, true);
     check_opt!(&["-j"], use_json, true);
     // todo: shared_memory
@@ -116,7 +116,7 @@ macro_rules! check_mem_value {
     ($input:expr, $expected:expr) => {{
         let mut opts = Options::default();
         let _ = opts.parse(&["-ml", $input]);
-        assert_eq!(opts.memory_limit, $expected);
+        assert_eq!(opts.memory_limit, Some($expected));
     }};
 }
 
@@ -183,7 +183,7 @@ macro_rules! check_time_value {
     ($input:expr, $expected:expr) => {{
         let mut opts = Options::default();
         let _ = opts.parse(&["-tl", $input]);
-        assert_eq!(opts.time_limit, fsec2dur($expected));
+        assert_eq!(opts.time_limit, Some(fsec2dur($expected)));
     }};
 }
 

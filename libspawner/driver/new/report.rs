@@ -50,24 +50,18 @@ macro_rules! swrite {
     };
 }
 
-macro_rules! tlimit {
-    ($opts:ident, $default:ident, $field:ident) => {
-        if $opts.$field != $default.$field {
-            format!("{:.6} (sec)", dur_to_fsec(&$opts.$field))
-        } else {
-            "Infinity".to_string()
-        }
-    };
+fn fsecs_or_inf(val: &Option<Duration>) -> String {
+    match val {
+        Some(v) => format!("{:.6} (sec)", dur_to_fsec(v)),
+        None => "Infinity".to_string(),
+    }
 }
 
-macro_rules! mlimit {
-    ($opts:ident, $default:ident, $field:ident) => {
-        if $opts.$field != $default.$field {
-            format!("{:.6} (Mb)", $opts.$field)
-        } else {
-            "Infinity".to_string()
-        }
-    };
+fn mb_or_inf(val: &Option<f64>) -> String {
+    match val {
+        Some(v) => format!("{:.6} (Mb)", v),
+        None => "Infinity".to_string(),
+    }
 }
 
 fn legacy_report(reports: &Result<Vec<Report>>, idx: usize, opts: &Options) -> String {
@@ -85,11 +79,10 @@ fn legacy_report(reports: &Result<Vec<Report>>, idx: usize, opts: &Options) -> S
     swrite!(s, "CreateProcessMethod:       CreateProcess\n");
     swrite!(s, "UserName:                  \n");
 
-    let default_opts = Options::default();
-    let user_time_limit = tlimit!(opts, default_opts, time_limit);
-    let deadline = tlimit!(opts, default_opts, wall_clock_time_limit);
-    let mem_limit = mlimit!(opts, default_opts, memory_limit);
-    let write_limit = mlimit!(opts, default_opts, write_limit);
+    let user_time_limit = fsecs_or_inf(&opts.time_limit);
+    let deadline = fsecs_or_inf(&opts.wall_clock_time_limit);
+    let mem_limit = mb_or_inf(&opts.memory_limit);
+    let write_limit = mb_or_inf(&opts.write_limit);
     swrite!(s, "UserTimeLimit:             {}\n", user_time_limit);
     swrite!(s, "DeadLine:                  {}\n", deadline);
     swrite!(s, "MemoryLimit:               {}\n", mem_limit);
@@ -214,25 +207,24 @@ fn dur_to_fsec(d: &Duration) -> f64 {
 }
 
 fn json_limits(opts: &Options) -> JsonValue {
-    let default_opts = Options::default();
     let mut limits = JsonValue::new_object();
-    if opts.time_limit != default_opts.time_limit {
-        limits["Time"] = dur_to_fsec(&opts.time_limit).into();
+    if let Some(v) = &opts.time_limit {
+        limits["Time"] = dur_to_fsec(v).into();
     }
-    if opts.wall_clock_time_limit != default_opts.wall_clock_time_limit {
-        limits["WallClockTime"] = dur_to_fsec(&opts.wall_clock_time_limit).into();
+    if let Some(v) = &opts.wall_clock_time_limit {
+        limits["WallClockTime"] = dur_to_fsec(v).into();
     }
-    if opts.memory_limit != default_opts.memory_limit {
-        limits["Memory"] = mb2b(opts.memory_limit).into();
+    if let Some(v) = opts.memory_limit {
+        limits["Memory"] = mb2b(v).into();
     }
-    if opts.secure != default_opts.secure {
-        limits["SecurityLevel"] = (opts.secure as u32).into();
+    if opts.secure {
+        limits["SecurityLevel"] = 1.into();
     }
-    if opts.write_limit != default_opts.write_limit {
-        limits["IOBytes"] = mb2b(opts.write_limit).into();
+    if let Some(v) = opts.write_limit {
+        limits["IOBytes"] = mb2b(v).into();
     }
-    if opts.idle_time_limit != default_opts.idle_time_limit {
-        limits["IdlenessTime"] = dur_to_fsec(&opts.idle_time_limit).into();
+    if let Some(v) = &opts.idle_time_limit {
+        limits["IdlenessTime"] = dur_to_fsec(v).into();
     }
 
     // The "IdlenessProcessorLoad" seems to be always present in c++ spawner.

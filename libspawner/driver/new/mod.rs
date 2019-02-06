@@ -8,7 +8,7 @@ mod tests;
 use self::opts::{Options, PipeKind, StdioRedirectKind, StdioRedirectList};
 use self::report::ReportKind;
 use crate::{Error, Result};
-use command::{self, Command};
+use command::{self, Command, Limits};
 use driver::prelude::*;
 use json::{stringify_pretty, JsonValue};
 use runner::Report;
@@ -239,20 +239,19 @@ impl From<&Options> for Command {
     fn from(opts: &Options) -> Command {
         command::Builder::new(opts.argv[0].clone())
             .args(opts.argv.iter().skip(1))
-            .current_dir(match opts.working_directory {
-                Some(ref d) => d.clone(),
-                None => String::new(),
-            })
             .env_kind(opts.env)
             .env_vars(&opts.env_vars)
-            .max_wall_clock_time(opts.wall_clock_time_limit)
-            .max_idle_time(opts.idle_time_limit)
-            .max_user_time(opts.time_limit)
-            .max_memory_usage(mb2b(opts.memory_limit))
-            .max_output_size(mb2b(opts.write_limit))
-            .max_processes(opts.process_count as u64)
             .monitor_interval(opts.monitor_interval)
             .show_gui(opts.show_window)
+            .limits(Limits {
+                max_wall_clock_time: opts.wall_clock_time_limit,
+                max_idle_time: opts.idle_time_limit,
+                max_user_time: opts.time_limit,
+                max_memory_usage: opts.memory_limit.map(|v| mb2b(v)),
+                max_output_size: opts.write_limit.map(|v| mb2b(v)),
+                max_processes: opts.process_count,
+            })
+            .current_dir_opt(opts.working_directory.as_ref())
             .build()
     }
 }

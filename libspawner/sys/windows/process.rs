@@ -123,7 +123,7 @@ impl Process {
                 total_user_time: Duration::from_nanos(user_time * 100),
                 total_kernel_time: Duration::from_nanos(kernel_time * 100),
                 peak_memory_used: ext_info.PeakJobMemoryUsed as u64,
-                total_processes: basic_and_io_info.BasicInfo.TotalProcesses as u64,
+                total_processes: basic_and_io_info.BasicInfo.TotalProcesses as usize,
                 total_bytes_written: basic_and_io_info.IoInfo.WriteTransferCount,
             })
         }
@@ -147,11 +147,11 @@ impl fmt::Debug for Process {
 
 fn create_suspended_process(cmd: &Command, stdio: Stdio) -> Result<(HANDLE, DWORD)> {
     let mut cmdline = argv_to_cmd(&cmd.app, &cmd.args);
-    let current_dir = if cmd.current_dir.len() != 0 {
-        to_utf16(&cmd.current_dir).as_mut_ptr()
-    } else {
-        ptr::null()
-    };
+    let current_dir = cmd
+        .current_dir
+        .as_ref()
+        .map_or(ptr::null(), |dir| to_utf16(dir).as_mut_ptr());
+
     let creation_flags =
         CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
     let mut env = env::create(cmd.env_kind, &cmd.env_vars)?;

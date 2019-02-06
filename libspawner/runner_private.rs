@@ -84,18 +84,22 @@ impl MonitoringLoop {
         self.last_check_time = Some(Instant::now());
         self.stats = new_stats;
 
+        fn gr<T: PartialOrd>(stat: T, limit: Option<T>) -> bool {
+            limit.is_some() && stat > limit.unwrap()
+        }
+
         let limits = &self.cmd.limits;
-        let term_reason = if self.stats.wall_clock_time > limits.max_wall_clock_time {
+        let term_reason = if gr(self.stats.wall_clock_time, limits.max_wall_clock_time) {
             TerminationReason::WallClockTimeLimitExceeded
-        } else if self.total_idle_time > limits.max_idle_time {
+        } else if gr(self.total_idle_time, limits.max_idle_time) {
             TerminationReason::IdleTimeLimitExceeded
-        } else if self.stats.total_user_time > limits.max_user_time {
+        } else if gr(self.stats.total_user_time, limits.max_user_time) {
             TerminationReason::UserTimeLimitExceeded
-        } else if self.stats.total_bytes_written > limits.max_output_size {
+        } else if gr(self.stats.total_bytes_written, limits.max_output_size) {
             TerminationReason::WriteLimitExceeded
-        } else if self.stats.peak_memory_used > limits.max_memory_usage {
+        } else if gr(self.stats.peak_memory_used, limits.max_memory_usage) {
             TerminationReason::MemoryLimitExceeded
-        } else if self.stats.total_processes > limits.max_processes {
+        } else if gr(self.stats.total_processes, limits.max_processes) {
             TerminationReason::ProcessLimitExceeded
         } else {
             return false;
@@ -108,7 +112,12 @@ impl MonitoringLoop {
     fn start(mut self, stdio: Stdio) -> Result<Report> {
         let process = Process::spawn(&self.cmd, stdio)?;
 
-        while !self.is_killed.load(Ordering::SeqCst) {
+        loop {
+            if self.is_killed.load(Ordering::SeqCst) {
+                self.exit_status = Some(ExitStatus::Terminated(TerminationReason::Other));
+                break;
+            }
+
             match process.status()? {
                 Status::Alive(stats) => {
                     if self.check_limits(stats) {
@@ -126,9 +135,7 @@ impl MonitoringLoop {
         Ok(Report {
             command: self.cmd,
             statistics: self.stats,
-            exit_status: self
-                .exit_status
-                .unwrap_or(ExitStatus::Terminated(TerminationReason::Other)),
+            exit_status: self.exit_status.unwrap(),
         })
     }
 }

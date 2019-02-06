@@ -6,8 +6,6 @@ use driver::new::value_parser::{
 use driver::prelude::{CmdLineOptions, OptionValueParser};
 use std::f64;
 use std::time::Duration;
-use std::u32;
-use std::u64;
 
 #[derive(Copy, Clone)]
 pub struct RedirectFlags {
@@ -58,21 +56,21 @@ pub struct Options {
         desc = "Set the time limit for an executable (user time)",
         value_desc = "<number>[unit]"
     )]
-    pub time_limit: Duration,
+    pub time_limit: Option<Duration>,
 
     #[opt(
         name = "-d",
         desc = "Set the time limit for an executable (wall-clock time)",
         value_desc = "<number>[unit]"
     )]
-    pub wall_clock_time_limit: Duration,
+    pub wall_clock_time_limit: Option<Duration>,
 
     #[opt(
         name = "-y",
         desc = "Set the idle time limit for an executable (idle time = wall-clock time - user time)",
         value_desc = "<number>[unit]"
     )]
-    pub idle_time_limit: Duration,
+    pub idle_time_limit: Option<Duration>,
 
     #[opt(
         name = "-ml",
@@ -80,7 +78,7 @@ pub struct Options {
         value_desc = "<number>[unit]",
         parser = "MemValueParser"
     )]
-    pub memory_limit: f64,
+    pub memory_limit: Option<f64>,
 
     #[opt(
         name = "-wl",
@@ -88,7 +86,7 @@ pub struct Options {
         value_desc = "<number>[unit]",
         parser = "MemValueParser"
     )]
-    pub write_limit: f64,
+    pub write_limit: Option<f64>,
 
     #[opt(
         name = "-lr",
@@ -103,7 +101,7 @@ pub struct Options {
         desc = "The maximum allowed number of processes created",
         value_desc = "<number>[unit]"
     )]
-    pub process_count: u32,
+    pub process_count: Option<usize>,
 
     #[opt(
         names("-mi", "--monitorInterval"),
@@ -241,13 +239,13 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
-            time_limit: Duration::from_secs(u64::MAX),
-            wall_clock_time_limit: Duration::from_secs(u64::MAX),
-            idle_time_limit: Duration::from_secs(u64::MAX),
-            memory_limit: f64::INFINITY,
-            write_limit: f64::INFINITY,
+            time_limit: None,
+            wall_clock_time_limit: None,
+            idle_time_limit: None,
+            memory_limit: None,
+            write_limit: None,
             load_ratio: 5.0,
-            process_count: u32::MAX,
+            process_count: None,
             monitor_interval: Duration::from_millis(1),
             secure: false,
             show_window: false,

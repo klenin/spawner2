@@ -14,10 +14,10 @@ pub struct StdoutRedirectParser;
 pub struct StderrRedirectParser;
 pub struct FileFlagsParser;
 
-impl OptionValueParser<u32> for DefaultValueParser {
-    fn parse(opt: &mut u32, v: &str) -> Result<(), String> {
-        if let Ok(v) = v.parse::<u32>() {
-            *opt = v;
+impl OptionValueParser<Option<usize>> for DefaultValueParser {
+    fn parse(opt: &mut Option<usize>, v: &str) -> Result<(), String> {
+        if let Ok(v) = v.parse::<usize>() {
+            *opt = Some(v);
             Ok(())
         } else {
             Err(format!("Invalid value '{}'", v))
@@ -90,23 +90,24 @@ impl OptionValueParser<Vec<EnvVar>> for DefaultValueParser {
 
 impl OptionValueParser<Duration> for DefaultValueParser {
     fn parse(opt: &mut Duration, v: &str) -> Result<(), String> {
-        parse_value(v, parse_time_degree, parse_time_unit).map_or(
-            Err(format!("Invalid value '{}'", v)),
-            |(val, mult)| {
-                let usec = (val * mult.unwrap_or(1.0) * 1e6) as u64;
-                *opt = Duration::from_micros(usec);
-                Ok(())
-            },
-        )
+        *opt = parse_time_value(v)?;
+        Ok(())
     }
 }
 
-impl OptionValueParser<f64> for MemValueParser {
-    fn parse(opt: &mut f64, v: &str) -> Result<(), String> {
+impl OptionValueParser<Option<Duration>> for DefaultValueParser {
+    fn parse(opt: &mut Option<Duration>, v: &str) -> Result<(), String> {
+        *opt = Some(parse_time_value(v)?);
+        Ok(())
+    }
+}
+
+impl OptionValueParser<Option<f64>> for MemValueParser {
+    fn parse(opt: &mut Option<f64>, v: &str) -> Result<(), String> {
         parse_value(v, parse_mem_degree, parse_mem_unit).map_or(
             Err(format!("Invalid value '{}'", v)),
             |(val, mult)| {
-                *opt = val * mult.map_or(1.0, |m| m / f64::powf(2.0, 20.0));
+                *opt = Some(val * mult.map_or(1.0, |m| m / f64::powf(2.0, 20.0)));
                 Ok(())
             },
         )
@@ -273,6 +274,16 @@ where
             )
         })
     })
+}
+
+fn parse_time_value(v: &str) -> Result<Duration, String> {
+    parse_value(v, parse_time_degree, parse_time_unit).map_or(
+        Err(format!("Invalid value '{}'", v)),
+        |(val, mult)| {
+            let usec = (val * mult.unwrap_or(1.0) * 1e6) as u64;
+            Ok(Duration::from_micros(usec))
+        },
+    )
 }
 
 fn parse_redirect_flags(
