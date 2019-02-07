@@ -60,8 +60,7 @@ impl ReadPipe {
     }
 
     pub fn null() -> Result<Self> {
-        let (r, _) = create()?;
-        Ok(r)
+        Self::open("nul")
     }
 }
 
@@ -100,8 +99,9 @@ impl WritePipe {
     }
 
     pub fn null() -> Result<Self> {
-        let (_, w) = create()?;
-        Ok(w)
+        Ok(Self {
+            handle: open_file("nul", GENERIC_WRITE, OPEN_EXISTING, false)?,
+        })
     }
 }
 
