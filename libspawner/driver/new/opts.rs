@@ -337,9 +337,13 @@ impl ToString for RedirectFlags {
 
 impl ToString for StdioRedirect {
     fn to_string(&self) -> String {
-        match &self.kind {
-            StdioRedirectKind::Pipe(p) => format!("*{}:{}", self.flags.to_string(), p.to_string()),
-            StdioRedirectKind::File(f) => f.clone(),
-        }
+        format!(
+            "*{}:{}",
+            self.flags.to_string(),
+            match &self.kind {
+                StdioRedirectKind::Pipe(p) => p.to_string(),
+                StdioRedirectKind::File(f) => f.clone(),
+            }
+        )
     }
 }
