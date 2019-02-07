@@ -168,7 +168,7 @@ impl Builder {
             },
             OstreamDstKind::Istream(i) => i.0,
         };
-        self.builder.connect(ostream.0, istream)
+        self.builder.connect(istream, ostream.0)
     }
 
     pub fn spawn(mut self) -> Result<Session> {

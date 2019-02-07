@@ -12,7 +12,7 @@ use command::{self, Command, Limits};
 use driver::prelude::*;
 use json::{stringify_pretty, JsonValue};
 use runner::Report;
-use session::{self, IstreamIndex, IstreamSrc, OstreamDst, OstreamIndex, Session, StdioMapping};
+use session::{self, IstreamIndex, IstreamSrc, OstreamDst, OstreamIndex, StdioMapping};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -189,7 +189,7 @@ fn redirect_istream(
                 PipeKind::Null => { /* pipes are null by default */ }
                 PipeKind::Std => { /* todo */ }
                 PipeKind::Stdout(i) => {
-                    if *i > stdio_mappings.len() {
+                    if *i >= stdio_mappings.len() {
                         return Err(Error::from(format!("stdout index {} is out of range", i)));
                     }
                     builder
@@ -217,7 +217,7 @@ fn redirect_ostream(
                 PipeKind::Null => { /* pipes are null by default */ }
                 PipeKind::Std => { /* todo */ }
                 PipeKind::Stdin(i) => {
-                    if *i > stdio_mappings.len() {
+                    if *i >= stdio_mappings.len() {
                         return Err(Error::from(format!("stdin index {} is out of range", i)));
                     }
                     builder
@@ -234,10 +234,11 @@ fn redirect_ostream(
 }
 
 pub(crate) fn mb2b(mb: f64) -> u64 {
-    if mb.is_infinite() {
+    let b = mb * 1024.0 * 1024.0;
+    if b.is_infinite() {
         u64::MAX
     } else {
-        (mb * 1024.0 * 1024.0) as u64
+        b as u64
     }
 }
 
