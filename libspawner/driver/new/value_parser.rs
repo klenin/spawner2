@@ -146,6 +146,9 @@ macro_rules! check_redirect {
 
 impl OptionValueParser<StdinRedirectList> for StdinRedirectParser {
     fn parse(opt: &mut StdinRedirectList, s: &str) -> Result<(), String> {
+        if s.is_empty() {
+            return Ok(());
+        }
         if let Some(redirect) = parse_stdio_redirect(s, opt)? {
             check_redirect!(redirect, Stdout, invalid => (Stdin, Stderr))?;
             opt.items.push(redirect);
@@ -156,6 +159,9 @@ impl OptionValueParser<StdinRedirectList> for StdinRedirectParser {
 
 impl OptionValueParser<StdoutRedirectList> for StdoutRedirectParser {
     fn parse(opt: &mut StdoutRedirectList, s: &str) -> Result<(), String> {
+        if s.is_empty() {
+            return Ok(());
+        }
         if let Some(redirect) = parse_stdio_redirect(s, opt)? {
             check_redirect!(redirect, Stdin, invalid => (Stdout, Stderr))?;
             opt.items.push(redirect);
@@ -166,6 +172,9 @@ impl OptionValueParser<StdoutRedirectList> for StdoutRedirectParser {
 
 impl OptionValueParser<StderrRedirectList> for StderrRedirectParser {
     fn parse(opt: &mut StderrRedirectList, s: &str) -> Result<(), String> {
+        if s.is_empty() {
+            return Ok(());
+        }
         if let Some(redirect) = parse_stdio_redirect(s, opt)? {
             check_redirect!(redirect, Stdin, invalid => (Stdout, Stderr))?;
             opt.items.push(redirect);
