@@ -167,7 +167,7 @@ impl OptionValueParser<StdoutRedirectList> for StdoutRedirectParser {
 impl OptionValueParser<StderrRedirectList> for StderrRedirectParser {
     fn parse(opt: &mut StderrRedirectList, s: &str) -> Result<(), String> {
         if let Some(redirect) = parse_stdio_redirect(s, opt)? {
-            check_redirect!(redirect, Stderr, invalid => (Stdin, Stdout))?;
+            check_redirect!(redirect, Stdin, invalid => (Stdout, Stderr))?;
             opt.items.push(redirect);
         }
         Ok(())

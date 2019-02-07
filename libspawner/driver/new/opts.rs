@@ -211,7 +211,7 @@ pub struct Options {
     #[opt(
         names("-e", "-se", "--err"),
         desc = "Redirect stderr to [*[<file-flags>]:]<filename>\n\
-                or *[[<pipe-flags>]:]{null|std|<index>.stderr}",
+                or *[[<pipe-flags>]:]{null|std|<index>.stdin}",
         value_desc = "<value>",
         parser = "StderrRedirectParser"
     )]

@@ -223,8 +223,12 @@ fn redirect_ostream(
                     builder
                         .add_ostream_dst(ostream, OstreamDst::istream(stdio_mappings[*i].stdin))?;
                 }
-                PipeKind::Stderr(_) => {
-                    // todo: c++ spawner can redirect stderr to other stderr
+                PipeKind::Stderr(i) => {
+                    if *i >= stdio_mappings.len() {
+                        return Err(Error::from(format!("stderr index {} is out of range", i)));
+                    }
+                    builder
+                        .add_ostream_dst(ostream, OstreamDst::istream(stdio_mappings[*i].stdin))?;
                 }
                 _ => {}
             },
