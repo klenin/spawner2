@@ -1,8 +1,10 @@
 use crate::Result;
 use command::{EnvKind, EnvVar};
+use std::collections::HashMap;
 use std::env;
 use std::mem;
 use std::ptr;
+use std::slice;
 use sys::windows::common::ok_nonzero;
 use sys::windows::common::to_utf16;
 use winapi::shared::minwindef::FALSE;
@@ -18,30 +20,27 @@ pub fn create(kind: EnvKind, vars: &Vec<EnvVar>) -> Result<Vec<u16>> {
     // A Unicode environment block is terminated by four zero bytes: two for the last string,
     // two more to terminate the block.
     let mut env = match kind {
-        EnvKind::Clear => Vec::new(),
-        EnvKind::Inherit => current_env(),
+        EnvKind::Clear => HashMap::new(),
+        EnvKind::Inherit => env::vars().collect(),
         EnvKind::UserDefault => user_default_env()?,
     };
     for var in vars {
-        env.extend(to_utf16(format!("{}={}", var.name, var.val)));
+        env.insert(var.name.clone(), var.val.clone());
     }
-    if env.len() == 0 {
-        env.push(0);
-    }
-    env.push(0);
-    Ok(env)
-}
 
-fn current_env() -> Vec<u16> {
-    env::vars()
+    let mut result: Vec<u16> = env
+        .iter()
         .map(|(name, val)| to_utf16(format!("{}={}", name, val)))
         .flatten()
-        .collect()
+        .chain(std::iter::once(0))
+        .collect();
+    if result.len() == 1 {
+        result.push(0);
+    }
+    Ok(result)
 }
 
-fn user_default_env() -> Result<Vec<u16>> {
-    let mut result: Vec<u16> = Vec::new();
-
+fn create_env_block<'a>() -> Result<&'a mut [u16]> {
     unsafe {
         let mut env_block: *mut u16 = ptr::null_mut();
         ok_nonzero(CreateEnvironmentBlock(
@@ -50,16 +49,30 @@ fn user_default_env() -> Result<Vec<u16>> {
             FALSE,
         ))?;
 
-        let mut it = env_block;
-        loop {
-            result.push(*it);
-            if *it == 0 && *it.offset(1) == 0 {
-                break;
-            }
-            it = it.offset(1);
+        let mut i = 0;
+        while *env_block.offset(i) != 0 && *env_block.offset(i + 1) != 0 {
+            i += 1;
         }
-        DestroyEnvironmentBlock(mem::transmute(env_block));
-    }
 
+        Ok(slice::from_raw_parts_mut(env_block, i as usize))
+    }
+}
+
+fn destroy_env_block(block: &mut [u16]) {
+    unsafe {
+        DestroyEnvironmentBlock(mem::transmute(block.as_mut_ptr()));
+    }
+}
+
+fn user_default_env() -> Result<HashMap<String, String>> {
+    let env_block = create_env_block()?;
+    let mut result: HashMap<String, String> = HashMap::new();
+    for var in env_block.split(|c| *c == 0) {
+        let nameval = String::from_utf16_lossy(var);
+        if let Some(idx) = nameval.find('=') {
+            result.insert(nameval[0..idx].to_string(), nameval[idx + 1..].to_string());
+        }
+    }
+    destroy_env_block(env_block);
     Ok(result)
 }
