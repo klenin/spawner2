@@ -217,30 +217,6 @@ fn parse_time_value_suffix() {
     check_time_value!("1000000fd", 0.000086);
 }
 
-impl ToString for RedirectFlags {
-    fn to_string(&self) -> String {
-        let f = match self.flush {
-            true => "f",
-            false => "-f",
-        };
-        let e = match self.exclusive {
-            true => "e",
-            false => "-e",
-        };
-        format!("{}{}", f, e)
-    }
-}
-
-impl ToString for StdioRedirect {
-    fn to_string(&self) -> String {
-        let suffix = match &self.kind {
-            StdioRedirectKind::Pipe(p) => p.to_string(),
-            StdioRedirectKind::File(f) => f.clone(),
-        };
-        format!("*{}:{}", self.flags.to_string(), suffix)
-    }
-}
-
 impl ToString for StdioRedirectList {
     fn to_string(&self) -> String {
         match self.items.len() {

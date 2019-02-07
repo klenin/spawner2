@@ -1,6 +1,6 @@
 use crate::Result;
 use driver::new::mb2b;
-use driver::new::opts::{Options, StdioRedirectKind, StdioRedirectList};
+use driver::new::opts::{Options, StdioRedirectList};
 use json::{array, object, stringify_pretty, JsonValue};
 use runner::{ExitStatus, Report, TerminationReason};
 use std::fmt::Write;
@@ -235,11 +235,8 @@ fn json_limits(opts: &Options) -> JsonValue {
 fn json_redirect_list(list: &StdioRedirectList) -> JsonValue {
     list.items
         .iter()
-        .map(|x| match &x.kind {
-            StdioRedirectKind::Pipe(p) => format!("*{}", p.to_string()),
-            StdioRedirectKind::File(f) => f.clone(),
-        })
-        .collect::<Vec<String>>()
+        .map(|x| x.to_string().into())
+        .collect::<Vec<JsonValue>>()
         .into()
 }
 
