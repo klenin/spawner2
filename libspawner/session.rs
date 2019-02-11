@@ -2,7 +2,7 @@ use crate::Result;
 use command::Command;
 use pipe::{ReadPipe, WritePipe};
 use process::Stdio;
-use runner::{Report, Runner};
+use runner::{Runner, RunnerReport};
 use runner_private::{self, RunnerThread};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -60,12 +60,12 @@ impl Session {
         &self.runners
     }
 
-    pub fn wait(mut self) -> Result<Vec<Report>> {
+    pub fn wait(mut self) -> Result<Vec<RunnerReport>> {
         self.wait_impl()
     }
 
-    fn wait_impl(&mut self) -> Result<Vec<Report>> {
-        let mut reports: Vec<Report> = Vec::new();
+    fn wait_impl(&mut self) -> Result<Vec<RunnerReport>> {
+        let mut reports: Vec<RunnerReport> = Vec::new();
         for thread in self.runner_threads.drain(..) {
             reports.push(thread.join()?);
         }

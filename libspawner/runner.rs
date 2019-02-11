@@ -23,7 +23,7 @@ pub enum ExitStatus {
 }
 
 #[derive(Clone)]
-pub struct Report {
+pub struct RunnerReport {
     pub command: Command,
     pub statistics: Statistics,
     pub exit_status: ExitStatus,
@@ -42,7 +42,7 @@ impl Runner {
     }
 }
 
-impl ToString for Report {
+impl ToString for RunnerReport {
     fn to_string(&self) -> String {
         let labels = [
             "app",

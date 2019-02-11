@@ -2,12 +2,12 @@ use crate::{Error, Result};
 use driver::new::mb2b;
 use driver::new::opts::{Options, StdioRedirectList};
 use json::{array, object, stringify_pretty, JsonValue};
-use runner::{self, ExitStatus, TerminationReason};
+use runner::{ExitStatus, RunnerReport, TerminationReason};
 use std::fmt::Write;
 use std::time::Duration;
 
 pub struct Report {
-    pub runner_reports: Result<Vec<runner::Report>>,
+    pub runner_reports: Result<Vec<RunnerReport>>,
     pub cmds: Vec<Options>,
 }
 
@@ -17,7 +17,7 @@ pub enum CommandReportKind {
 }
 
 pub struct CommandReport<'a> {
-    pub runner_report: std::result::Result<&'a runner::Report, &'a Error>,
+    pub runner_report: std::result::Result<&'a RunnerReport, &'a Error>,
     pub cmd: &'a Options,
 }
 

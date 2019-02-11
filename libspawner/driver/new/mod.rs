@@ -12,7 +12,7 @@ use crate::{Error, Result};
 use command::{self, Command, Limits};
 use driver::prelude::*;
 use json::{stringify_pretty, JsonValue};
-use runner;
+use runner::RunnerReport;
 use session::{IstreamIndex, IstreamSrc, OstreamDst, OstreamIndex, SessionBuilder, StdioMapping};
 use std::collections::HashMap;
 use std::env;
@@ -145,7 +145,7 @@ impl Driver {
         }
     }
 
-    fn run_impl(&self) -> Result<Vec<runner::Report>> {
+    fn run_impl(&self) -> Result<Vec<RunnerReport>> {
         if self.cmds.len() == 0 {
             return Ok(Vec::new());
         }

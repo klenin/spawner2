@@ -1,14 +1,14 @@
 use crate::{Error, Result};
 use command::Command;
 use process::{Process, Statistics, Status, Stdio};
-use runner::{ExitStatus, Report, Runner, TerminationReason};
+use runner::{ExitStatus, Runner, RunnerReport, TerminationReason};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 pub struct RunnerThread {
-    handle: JoinHandle<Result<Report>>,
+    handle: JoinHandle<Result<RunnerReport>>,
     runner: Runner,
 }
 
@@ -41,7 +41,7 @@ impl RunnerThread {
         &self.runner
     }
 
-    pub fn join(self) -> Result<Report> {
+    pub fn join(self) -> Result<RunnerReport> {
         match self.handle.join() {
             Ok(result) => result,
             Err(_) => Err(Error::from("monitoring thread panicked")),
@@ -109,7 +109,7 @@ impl RunnerImpl {
         true
     }
 
-    fn spawn(mut self, stdio: Stdio) -> Result<Report> {
+    fn spawn(mut self, stdio: Stdio) -> Result<RunnerReport> {
         let process = Process::spawn(&self.cmd, stdio)?;
 
         loop {
@@ -132,7 +132,7 @@ impl RunnerImpl {
             thread::sleep(self.cmd.monitor_interval);
         }
 
-        Ok(Report {
+        Ok(RunnerReport {
             command: self.cmd,
             statistics: self.stats,
             exit_status: self.exit_status.unwrap(),
