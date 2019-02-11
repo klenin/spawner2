@@ -11,7 +11,7 @@ use self::opts::{Options, PipeKind, StdioRedirectKind, StdioRedirectList};
 use crate::{Error, Result};
 use command::{self, Command, Limits};
 use driver::prelude::*;
-use json::{stringify_pretty, JsonValue};
+use json::JsonValue;
 use runner::RunnerReport;
 use session::{IstreamIndex, IstreamSrc, OstreamDst, OstreamIndex, SessionBuilder, StdioMapping};
 use std::collections::HashMap;
@@ -105,7 +105,7 @@ pub fn main() {
     for (idx, cmd) in report.cmds.iter().enumerate() {
         let cmd_report = report.at(idx);
         if !cmd.hide_report && report.cmds.len() == 1 {
-            println!("{}", cmd_report.to_string());
+            println!("{}", cmd_report);
         }
         if let Some(filename) = &cmd.output_file {
             output_files
@@ -125,14 +125,12 @@ pub fn main() {
             }
         };
 
-        if report_kinds.len() == 1 {
-            let _ = write!(&mut file, "{}", report_kinds[0].to_string());
-            continue;
-        }
-
-        if report_kinds.iter().all(|k| k.is_json()) {
-            let array = JsonValue::Array(report_kinds.into_iter().map(|k| k.into_json()).collect());
-            let _ = write!(&mut file, "{}", stringify_pretty(array, 4));
+        if report_kinds.len() == 1 && !report_kinds[0].is_json() {
+            let _ = write!(&mut file, "{}", report_kinds[0]);
+        } else if report_kinds.iter().all(|k| k.is_json()) {
+            let reports =
+                JsonValue::Array(report_kinds.into_iter().map(|k| k.into_json()).collect());
+            let _ = reports.write_pretty(&mut file, 4);
         }
     }
 }
