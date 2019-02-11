@@ -126,8 +126,8 @@ impl<'a> CommandReport<'a> {
         swrite!(s, "CreateProcessMethod:       CreateProcess\n");
         swrite!(s, "UserName:                  \n");
 
-        let user_time_limit = fsecs_or_inf(&self.cmd.time_limit);
-        let deadline = fsecs_or_inf(&self.cmd.wall_clock_time_limit);
+        let user_time_limit = secs_or_inf(&self.cmd.time_limit);
+        let deadline = secs_or_inf(&self.cmd.wall_clock_time_limit);
         let mem_limit = mb_or_inf(&self.cmd.memory_limit);
         let write_limit = mb_or_inf(&self.cmd.write_limit);
         swrite!(s, "UserTimeLimit:             {}\n", user_time_limit);
@@ -203,7 +203,7 @@ impl<'a> ToString for CommandReport<'a> {
     }
 }
 
-fn fsecs_or_inf(val: &Option<Duration>) -> String {
+fn secs_or_inf(val: &Option<Duration>) -> String {
     match val {
         Some(v) => format!("{:.6} (sec)", dur2sec(v)),
         None => "Infinity".to_string(),
