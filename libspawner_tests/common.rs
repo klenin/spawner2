@@ -3,7 +3,6 @@ use rand::{thread_rng, Rng};
 use std::fs;
 use std::io::prelude::*;
 use std::iter;
-use std::ops::{Add, Sub};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
@@ -54,17 +53,27 @@ macro_rules! exe {
     };
 }
 
-pub fn approx_eq<T>(a: T, b: T, diff: T) -> bool
-where
-    T: Add<Output = T> + Sub<Output = T> + PartialOrd + Copy,
-{
-    (a > (b - diff)) && (a < (b + diff))
+#[macro_export]
+macro_rules! assert_approx_eq {
+    ($a:expr, $b:expr, $diff:expr) => {{
+        match (&$a, &$b, &$diff) {
+            (a_val, b_val, diff_val) => {
+                if !(*a_val > (*b_val - *diff_val)) && (*a_val < (*b_val + *diff_val)) {
+                    panic!(
+                        "assertion failed: (a > (b - diff)) && (a < (b + diff)) \
+                         a: `{:?}`, b: `{:?}`, diff: `{:?}`",
+                        a_val, b_val, diff_val
+                    )
+                }
+            }
+        }
+    }};
 }
 
 #[macro_export]
-macro_rules! assert_approx_eq {
-    ($a:expr, $b:expr, $diff:expr) => {
-        assert!($crate::common::approx_eq($a, $b, $diff))
+macro_rules! assert_flt_eq {
+    ($a:expr, $b:expr) => {
+        assert_approx_eq!($a, $b, 1e-6);
     };
 }
 
