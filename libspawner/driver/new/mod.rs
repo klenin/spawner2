@@ -5,13 +5,14 @@ mod value_parser;
 #[cfg(test)]
 mod tests;
 
+pub use self::report::*;
+
 use self::opts::{Options, PipeKind, StdioRedirectKind, StdioRedirectList};
-use self::report::ReportKind;
 use crate::{Error, Result};
 use command::{self, Command, Limits};
 use driver::prelude::*;
 use json::{stringify_pretty, JsonValue};
-use runner::Report;
+use runner;
 use session::{self, IstreamIndex, IstreamSrc, OstreamDst, OstreamIndex, StdioMapping};
 use std::collections::HashMap;
 use std::env;
@@ -75,13 +76,13 @@ where
     })
 }
 
-pub fn run<T, U>(argv: T) -> Result<Vec<Report>>
+pub fn run<T, U>(argv: T) -> Result<Report>
 where
     T: IntoIterator<Item = U>,
     U: AsRef<str>,
 {
     let driver = parse(argv)?;
-    driver.run()
+    Ok(driver.run())
 }
 
 pub fn main() {
@@ -99,22 +100,22 @@ pub fn main() {
         return;
     }
 
-    let reports = driver.run();
-    let mut output_files: HashMap<&String, Vec<ReportKind>> = HashMap::new();
-    for (idx, cmd) in driver.cmds.iter().enumerate() {
-        let report = report::create(&reports, idx, cmd);
-        if !cmd.hide_report && driver.cmds.len() == 1 {
-            println!("{}", report.to_string());
+    let report = driver.run();
+    let mut output_files: HashMap<&String, Vec<CommandReportKind>> = HashMap::new();
+    for (idx, cmd) in report.cmds.iter().enumerate() {
+        let cmd_report = report.at(idx);
+        if !cmd.hide_report && report.cmds.len() == 1 {
+            println!("{}", cmd_report.to_string());
         }
         if let Some(filename) = &cmd.output_file {
             output_files
                 .entry(filename)
                 .or_insert(Vec::new())
-                .push(report);
+                .push(cmd_report.kind());
         }
     }
 
-    for (filename, reports) in output_files.into_iter() {
+    for (filename, report_kinds) in output_files.into_iter() {
         let _ = fs::remove_file(filename);
         let mut file = match fs::File::create(filename) {
             Ok(x) => x,
@@ -124,20 +125,27 @@ pub fn main() {
             }
         };
 
-        if reports.len() == 1 {
-            let _ = write!(&mut file, "{}", reports[0].to_string());
+        if report_kinds.len() == 1 {
+            let _ = write!(&mut file, "{}", report_kinds[0].to_string());
             continue;
         }
 
-        if reports.iter().all(|r| r.is_json()) {
-            let array = JsonValue::Array(reports.into_iter().map(|r| r.into_json()).collect());
+        if report_kinds.iter().all(|k| k.is_json()) {
+            let array = JsonValue::Array(report_kinds.into_iter().map(|k| k.into_json()).collect());
             let _ = write!(&mut file, "{}", stringify_pretty(array, 4));
         }
     }
 }
 
 impl Driver {
-    pub fn run(&self) -> Result<Vec<Report>> {
+    pub fn run(self) -> Report {
+        Report {
+            runner_reports: self.run_impl(),
+            cmds: self.cmds,
+        }
+    }
+
+    fn run_impl(&self) -> Result<Vec<runner::Report>> {
         if self.cmds.len() == 0 {
             return Ok(Vec::new());
         }
