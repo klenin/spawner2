@@ -48,7 +48,7 @@ pub struct StdioMapping {
     pub stderr: OstreamIndex,
 }
 
-pub struct Builder {
+pub struct SessionBuilder {
     cmds: Vec<Command>,
     stdio_mappings: Vec<StdioMapping>,
     builder: router::Builder,
@@ -126,7 +126,7 @@ impl OstreamDst {
     }
 }
 
-impl Builder {
+impl SessionBuilder {
     pub fn new() -> Self {
         Self {
             cmds: Vec::new(),

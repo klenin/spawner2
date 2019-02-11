@@ -13,7 +13,7 @@ use command::{self, Command, Limits};
 use driver::prelude::*;
 use json::{stringify_pretty, JsonValue};
 use runner;
-use session::{self, IstreamIndex, IstreamSrc, OstreamDst, OstreamIndex, StdioMapping};
+use session::{IstreamIndex, IstreamSrc, OstreamDst, OstreamIndex, SessionBuilder, StdioMapping};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -150,7 +150,7 @@ impl Driver {
             return Ok(Vec::new());
         }
 
-        let mut builder = session::Builder::new();
+        let mut builder = SessionBuilder::new();
         let stdio_mappings: Vec<StdioMapping> = self
             .cmds
             .iter()
@@ -183,7 +183,7 @@ impl Driver {
 }
 
 fn redirect_istream(
-    builder: &mut session::Builder,
+    builder: &mut SessionBuilder,
     istream: IstreamIndex,
     stdio_mappings: &Vec<StdioMapping>,
     redirect_list: &StdioRedirectList,
@@ -211,7 +211,7 @@ fn redirect_istream(
 }
 
 fn redirect_ostream(
-    builder: &mut session::Builder,
+    builder: &mut SessionBuilder,
     ostream: OstreamIndex,
     stdio_mappings: &Vec<StdioMapping>,
     redirect_list: &StdioRedirectList,
