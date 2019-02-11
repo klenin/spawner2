@@ -28,7 +28,6 @@
 //! - `parser = "IntValueParser"` - This attribute tells what parser should be used on the value.
 //! The parser must implement `OptionValueParser` trait.
 //! - `value_desc = "<int>"` - The description of the option's value.
-#![allow(dead_code)]
 #![recursion_limit = "128"]
 
 extern crate proc_macro;
