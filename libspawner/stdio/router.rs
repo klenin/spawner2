@@ -33,7 +33,7 @@ pub struct IoList {
 ///
 /// If the relation between i\o streams is one-to-many or many-to-one then we need to
 /// initialize corresponding hubs.
-pub struct Builder {
+pub struct RouterBuilder {
     istreams: Vec<IstreamInfo>,
     ostreams: Vec<OstreamInfo>,
 }
@@ -105,7 +105,7 @@ impl Ostream {
     }
 }
 
-impl Builder {
+impl RouterBuilder {
     pub fn new() -> Self {
         Self {
             istreams: Vec::new(),

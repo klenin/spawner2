@@ -7,7 +7,7 @@ use runner_private::{self, RunnerThread};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use stdio::router::{self, Router};
+use stdio::router::{Router, RouterBuilder};
 
 pub struct Session {
     router: Router,
@@ -51,7 +51,7 @@ pub struct StdioMapping {
 pub struct SessionBuilder {
     cmds: Vec<Command>,
     stdio_mappings: Vec<StdioMapping>,
-    builder: router::Builder,
+    builder: RouterBuilder,
     output_files: HashMap<PathBuf, usize>,
 }
 
@@ -131,7 +131,7 @@ impl SessionBuilder {
         Self {
             cmds: Vec::new(),
             stdio_mappings: Vec::new(),
-            builder: router::Builder::new(),
+            builder: RouterBuilder::new(),
             output_files: HashMap::new(),
         }
     }
