@@ -1,9 +1,9 @@
 use crate::{Error, Result};
 use driver::new::mb2b;
 use driver::new::opts::{Options, StdioRedirectList};
-use json::{array, object, stringify_pretty, JsonValue};
+use json::{array, object, JsonValue};
 use runner::{ExitStatus, RunnerReport, TerminationReason};
-use std::fmt::Write;
+use std::fmt::{self, Display, Formatter};
 use std::time::Duration;
 
 pub struct Report {
@@ -31,12 +31,6 @@ impl Report {
             cmd: &self.cmds[index],
         }
     }
-}
-
-macro_rules! swrite {
-    ($string:ident, $($t:tt)*) => {
-        let _ = write!(&mut $string, $($t)*);
-    };
 }
 
 impl<'a> CommandReport<'a> {
@@ -113,28 +107,54 @@ impl<'a> CommandReport<'a> {
 
     pub fn to_legacy(&self) -> String {
         let mut s = String::new();
+        self.write_legacy(&mut s).unwrap();
+        s
+    }
+
+    pub fn write_legacy<W: fmt::Write>(&self, w: &mut W) -> fmt::Result {
+        fn secs_or_inf<W: fmt::Write>(
+            w: &mut W,
+            prefix: &'static str,
+            val: &Option<Duration>,
+        ) -> fmt::Result {
+            match val {
+                Some(v) => write!(w, "{}{:.6} (sec)\n", prefix, dur2sec(v)),
+                None => write!(w, "{}Infinity\n", prefix),
+            }
+        }
+        fn mb_or_inf<W: fmt::Write>(
+            w: &mut W,
+            prefix: &'static str,
+            val: &Option<f64>,
+        ) -> fmt::Result {
+            match val {
+                Some(v) => write!(w, "{}{:.6} (Mb)\n", prefix, v),
+                None => write!(w, "{}Infinity\n", prefix),
+            }
+        }
+
         let params = if self.cmd.argv.len() == 1 {
             "<none>".to_string()
         } else {
             self.cmd.argv[1..].join(" ")
         };
-        swrite!(s, "\n");
-        swrite!(s, "--------------- Spawner report ---------------\n");
-        swrite!(s, "Application:               {}\n", self.cmd.argv[0]);
-        swrite!(s, "Parameters:                {}\n", params);
-        swrite!(s, "SecurityLevel:             {}\n", self.cmd.secure as u32);
-        swrite!(s, "CreateProcessMethod:       CreateProcess\n");
-        swrite!(s, "UserName:                  \n");
+        write!(w, "\n")?;
+        write!(w, "--------------- Spawner report ---------------\n")?;
+        write!(w, "Application:               {}\n", self.cmd.argv[0])?;
+        write!(w, "Parameters:                {}\n", params)?;
+        write!(w, "SecurityLevel:             {}\n", self.cmd.secure as u32)?;
+        write!(w, "CreateProcessMethod:       CreateProcess\n")?;
+        write!(w, "UserName:                  \n")?;
 
-        let user_time_limit = secs_or_inf(&self.cmd.time_limit);
-        let deadline = secs_or_inf(&self.cmd.wall_clock_time_limit);
-        let mem_limit = mb_or_inf(&self.cmd.memory_limit);
-        let write_limit = mb_or_inf(&self.cmd.write_limit);
-        swrite!(s, "UserTimeLimit:             {}\n", user_time_limit);
-        swrite!(s, "DeadLine:                  {}\n", deadline);
-        swrite!(s, "MemoryLimit:               {}\n", mem_limit);
-        swrite!(s, "WriteLimit:                {}\n", write_limit);
-        swrite!(s, "----------------------------------------------\n");
+        secs_or_inf(w, "UserTimeLimit:             ", &self.cmd.time_limit)?;
+        secs_or_inf(
+            w,
+            "DeadLine:                  ",
+            &self.cmd.wall_clock_time_limit,
+        )?;
+        mb_or_inf(w, "MemoryLimit:               ", &self.cmd.memory_limit)?;
+        mb_or_inf(w, "WriteLimit:                ", &self.cmd.write_limit)?;
+        write!(w, "----------------------------------------------\n")?;
 
         let mut user_time = 0.0;
         let mut mem_used = 0.0;
@@ -160,15 +180,15 @@ impl<'a> CommandReport<'a> {
             }
             Err(e) => error = e.to_string(),
         }
-        swrite!(s, "UserTime:                  {:.6} (sec)\n", user_time);
-        swrite!(s, "PeakMemoryUsed:            {:.6} (Mb)\n", mem_used);
-        swrite!(s, "Written:                   {:.6} (Mb)\n", written);
-        swrite!(s, "TerminateReason:           {}\n", term_reason);
-        swrite!(s, "ExitCode:                  {}\n", exit_code);
-        swrite!(s, "ExitStatus:                {}\n", exit_status);
-        swrite!(s, "----------------------------------------------\n");
-        swrite!(s, "SpawnerError:              {}\n", error);
-        s
+        write!(w, "UserTime:                  {:.6} (sec)\n", user_time)?;
+        write!(w, "PeakMemoryUsed:            {:.6} (Mb)\n", mem_used)?;
+        write!(w, "Written:                   {:.6} (Mb)\n", written)?;
+        write!(w, "TerminateReason:           {}\n", term_reason)?;
+        write!(w, "ExitCode:                  {}\n", exit_code)?;
+        write!(w, "ExitStatus:                {}\n", exit_status)?;
+        write!(w, "----------------------------------------------\n")?;
+        write!(w, "SpawnerError:              {}\n", error)?;
+        Ok(())
     }
 }
 
@@ -188,32 +208,22 @@ impl CommandReportKind {
     }
 }
 
-impl ToString for CommandReportKind {
-    fn to_string(&self) -> String {
+impl Display for CommandReportKind {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            CommandReportKind::Json(v) => stringify_pretty(array![v.clone()], 4),
-            CommandReportKind::Legacy(s) => s.clone(),
+            CommandReportKind::Json(v) => write!(f, "{:#}", v),
+            CommandReportKind::Legacy(s) => s.fmt(f),
         }
     }
 }
 
-impl<'a> ToString for CommandReport<'a> {
-    fn to_string(&self) -> String {
-        self.kind().to_string()
-    }
-}
-
-fn secs_or_inf(val: &Option<Duration>) -> String {
-    match val {
-        Some(v) => format!("{:.6} (sec)", dur2sec(v)),
-        None => "Infinity".to_string(),
-    }
-}
-
-fn mb_or_inf(val: &Option<f64>) -> String {
-    match val {
-        Some(v) => format!("{:.6} (Mb)", v),
-        None => "Infinity".to_string(),
+impl<'a> Display for CommandReport<'a> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        if self.cmd.use_json {
+            write!(f, "{:#}", self.to_json())
+        } else {
+            self.write_legacy(f)
+        }
     }
 }
 

@@ -5,6 +5,7 @@ use driver::new::value_parser::{
 };
 use driver::prelude::{CmdLineOptions, OptionValueParser};
 use std::f64;
+use std::fmt::{self, Display, Formatter};
 use std::time::Duration;
 
 #[derive(Copy, Clone)]
@@ -309,41 +310,46 @@ impl Default for StdioRedirectList {
     }
 }
 
-impl ToString for PipeKind {
-    fn to_string(&self) -> String {
+impl Display for PipeKind {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            PipeKind::Null => String::from("null"),
-            PipeKind::Std => String::from("std"),
-            PipeKind::Stdout(i) => format!("{}.stdout", i),
-            PipeKind::Stdin(i) => format!("{}.stdin", i),
-            PipeKind::Stderr(i) => format!("{}.stderr", i),
+            PipeKind::Null => write!(f, "null"),
+            PipeKind::Std => write!(f, "std"),
+            PipeKind::Stdout(i) => write!(f, "{}.stdout", i),
+            PipeKind::Stdin(i) => write!(f, "{}.stdin", i),
+            PipeKind::Stderr(i) => write!(f, "{}.stderr", i),
         }
     }
 }
 
-impl ToString for RedirectFlags {
-    fn to_string(&self) -> String {
-        let f = match self.flush {
-            true => "f",
-            false => "-f",
-        };
-        let e = match self.exclusive {
-            true => "e",
-            false => "-e",
-        };
-        format!("{}{}", f, e)
+impl Display for RedirectFlags {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}{}",
+            match self.flush {
+                true => "f",
+                false => "-f",
+            },
+            match self.exclusive {
+                true => "e",
+                false => "-e",
+            }
+        )
     }
 }
 
-impl ToString for StdioRedirect {
-    fn to_string(&self) -> String {
-        format!(
-            "*{}:{}",
-            self.flags.to_string(),
-            match &self.kind {
-                StdioRedirectKind::Pipe(p) => p.to_string(),
-                StdioRedirectKind::File(f) => f.clone(),
-            }
-        )
+impl Display for StdioRedirectKind {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            StdioRedirectKind::Pipe(p) => write!(f, "{}", p),
+            StdioRedirectKind::File(filename) => write!(f, "{}", filename),
+        }
+    }
+}
+
+impl Display for StdioRedirect {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "*{}:{}", self.flags, self.kind)
     }
 }
