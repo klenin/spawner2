@@ -6,6 +6,7 @@ use std::io;
 enum ErrorKind {
     Io(io::Error),
     Str(String),
+    StaticStr(&'static str),
 }
 
 #[derive(Debug)]
@@ -34,6 +35,7 @@ impl Error {
         match self.kind {
             ErrorKind::Io(e) => e,
             ErrorKind::Str(s) => io::Error::new(io::ErrorKind::Other, s),
+            ErrorKind::StaticStr(s) => io::Error::new(io::ErrorKind::Other, s),
         }
     }
 }
@@ -43,8 +45,9 @@ impl std::error::Error for Error {}
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.kind {
-            ErrorKind::Io(e) => write!(f, "Error: {}", e.to_string()),
-            ErrorKind::Str(s) => write!(f, "Error: {}", s.as_str()),
+            ErrorKind::Io(e) => write!(f, "Error: {}", e),
+            ErrorKind::Str(s) => write!(f, "Error: {}", s),
+            ErrorKind::StaticStr(s) => write!(f, "Error: {}", s),
         }
     }
 }
@@ -57,12 +60,12 @@ impl From<io::Error> for Error {
 
 impl From<String> for Error {
     fn from(s: String) -> Self {
-        Error::new(ErrorKind::Str(s.clone()))
+        Error::new(ErrorKind::Str(s))
     }
 }
 
 impl From<&'static str> for Error {
     fn from(s: &'static str) -> Self {
-        Error::new(ErrorKind::Str(s.to_string()))
+        Error::new(ErrorKind::StaticStr(s))
     }
 }

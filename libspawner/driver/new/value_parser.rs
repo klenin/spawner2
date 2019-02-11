@@ -133,8 +133,8 @@ macro_rules! check_redirect {
             match kind {
                 PipeKind::$a(i) | PipeKind::$b(i) => Err(format!(
                     "Expected '{}' but got '{}' instead",
-                    PipeKind::$expected(*i).to_string(),
-                    kind.to_string()
+                    PipeKind::$expected(*i),
+                    kind
                 )),
                 _ => Ok(()),
             }

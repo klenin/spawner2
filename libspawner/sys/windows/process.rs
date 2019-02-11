@@ -282,18 +282,25 @@ fn resume_process(process_id: DWORD) -> Result<()> {
 }
 
 fn argv_to_cmd(app: &String, args: &Vec<String>) -> Vec<u16> {
-    let mut cmd = quote(app);
+    let mut cmd = String::new();
+    write_quoted(&mut cmd, app);
     for arg in args {
-        write!(&mut cmd, " {}", quote(arg)).unwrap();
+        cmd.write_char(' ').unwrap();
+        write_quoted(&mut cmd, arg);
     }
     to_utf16(cmd)
 }
 
-fn quote<S: AsRef<str>>(s: S) -> String {
+fn write_quoted<W, S>(w: &mut W, s: S)
+where
+    W: fmt::Write,
+    S: AsRef<str>,
+{
     let escaped = s.as_ref().replace("\"", "\\\"");
     if escaped.find(' ').is_some() {
-        format!("\"{}\"", escaped)
+        write!(w, "\"{}\"", escaped)
     } else {
-        escaped
+        w.write_str(escaped.as_str())
     }
+    .unwrap();
 }
