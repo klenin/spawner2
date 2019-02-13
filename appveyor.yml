@@ -23,7 +23,7 @@ test_script:
   - cargo test
 
 after_build:
-  - 7z a win32.zip .\%build_dir%\target\release\sp.exe
+  - 7z a win32.zip %APPVEYOR_BUILD_FOLDER%\target\debug\sp.exe
 
 artifacts:
   - path: win32.zip
