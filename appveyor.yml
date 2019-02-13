@@ -10,5 +10,20 @@ install:
 build: false
 
 test_script:
-  - cargo build
+  - cargo build --release
   - cargo test
+
+after_build:
+  - 7z a win32.zip .\%build_dir%\target\release\sp.exe
+
+artifacts:
+  - path: win32.zip
+    name: sp
+
+deploy:
+  provider: GitHub
+  auth_token: $(GITHUB_AUTH_TOKEN)
+  artifact: win32.zip
+  force_update: true
+  on:
+    APPVEYOR_REPO_TAG: true
