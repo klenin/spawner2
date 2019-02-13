@@ -7,23 +7,23 @@ os: Visual Studio 2015
 
 install:
   - appveyor DownloadFile https://win.rustup.rs/ -FileName rustup-init.exe
-  - rustup-init -yv --default-toolchain stable --default-host x86_64-pc-windows-msvc
+  - rustup-init -y --default-toolchain stable --default-host x86_64-pc-windows-msvc
   - set PATH=%PATH%;%USERPROFILE%\.cargo\bin
   - rustc -vV
   - cargo -vV
-
-build: false
 
 cache:
   - '%USERPROFILE%\.cargo'
   - target
 
-test_script:
-  - cargo build
-  - cargo test
+build_script:
+  - cargo build --release
 
 after_build:
-  - 7z a win32.zip %APPVEYOR_BUILD_FOLDER%\target\debug\sp.exe
+  - 7z a win32.zip %APPVEYOR_BUILD_FOLDER%\target\release\sp.exe
+
+test_script:
+  - cargo test
 
 artifacts:
   - path: win32.zip
@@ -32,5 +32,5 @@ artifacts:
 deploy:
   provider: GitHub
   auth_token: $(GITHUB_AUTH_TOKEN)
-  artifact: win32.zip
+  artifact: sp
   force_update: true
