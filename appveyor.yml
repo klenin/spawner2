@@ -14,8 +14,12 @@ install:
 
 build: false
 
+cache:
+  - '%USERPROFILE%\.cargo'
+  - target
+
 test_script:
-  - cargo build --release
+  - cargo build
   - cargo test
 
 after_build:
