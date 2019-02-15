@@ -9,7 +9,7 @@ pub use self::report::*;
 
 use self::opts::{Options, PipeKind, StdioRedirectKind, StdioRedirectList};
 use crate::{Error, Result};
-use command::{self, Command, Limits};
+use command::{Command, CommandBuilder, Limits};
 use driver::prelude::*;
 use json::JsonValue;
 use runner::RunnerReport;
@@ -254,7 +254,7 @@ pub(crate) fn mb2b(mb: f64) -> u64 {
 
 impl From<&Options> for Command {
     fn from(opts: &Options) -> Command {
-        command::Builder::new(opts.argv[0].clone())
+        CommandBuilder::new(opts.argv[0].clone())
             .args(opts.argv.iter().skip(1))
             .env_kind(opts.env)
             .env_vars(&opts.env_vars)

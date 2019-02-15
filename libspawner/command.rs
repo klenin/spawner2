@@ -42,7 +42,7 @@ pub struct Command {
     pub env_vars: Vec<EnvVar>,
 }
 
-pub struct Builder {
+pub struct CommandBuilder {
     cmd: Command,
 }
 
@@ -74,7 +74,7 @@ impl Command {
     }
 }
 
-impl Builder {
+impl CommandBuilder {
     pub fn new<S: AsRef<str>>(app: S) -> Self {
         Self {
             cmd: Command::new(app),
