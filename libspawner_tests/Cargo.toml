@@ -35,6 +35,10 @@ path = "bin/two_proc.rs"
 name = "sleep"
 path = "bin/sleep.rs"
 
+[[bin]]
+name = "env_printer"
+path = "bin/env_printer.rs"
+
 [dependencies]
 rand = "0.6.5"
 spawner = { path = "../libspawner" }

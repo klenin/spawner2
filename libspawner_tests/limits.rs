@@ -145,6 +145,19 @@ fn test_write_limit() {
 }
 
 #[test]
+fn test_null_stdout_write_limit() {
+    let report = run(&[
+        "--out=*null",
+        "-wl=8",
+        exe!("stdout_writer"),
+        "A",
+        format!("{}", 10 * 1024 * 1024).as_str(),
+    ])
+    .unwrap();
+    ensure_write_limit_exceeded(report.at(0));
+}
+
+#[test]
 fn test_process_limit() {
     let report = run(&["-process-count=1", exe!("two_proc")]).unwrap();
     ensure_process_limit_exceeded(report.at(0));

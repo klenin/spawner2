@@ -151,3 +151,23 @@ fn test_2_stdout_to_2_stdin() {
     assert_eq!("A".repeat(40), read_all(output_1));
     assert_eq!("A".repeat(40), read_all(output_2));
 }
+
+#[test]
+fn test_2_stdout_to_file() {
+    let tmp = TmpDir::new();
+    let out = tmp.file("out.txt");
+    run(&[
+        "--separator=@",
+        format!("--out={}", out).as_str(),
+        "--@",
+        exe!("stdout_writer"),
+        "AAA",
+        "20",
+        "--@",
+        exe!("stdout_writer"),
+        "AAA",
+        "20",
+    ])
+    .unwrap();
+    assert_eq!("AAA".repeat(40), read_all(out));
+}
