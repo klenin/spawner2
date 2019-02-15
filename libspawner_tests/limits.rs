@@ -26,7 +26,7 @@ fn dur2sec(d: &Duration) -> f64 {
 fn ensure_mem_limit_exceeded(report: CommandReport) {
     let runner_report = report.runner_report.unwrap();
     let json = report.to_json();
-    let mem_used = runner_report.statistics.peak_memory_used;
+    let mem_used = runner_report.process_info.peak_memory_used;
     let mem_limit_b = mb2b(report.cmd.memory_limit.unwrap());
 
     assert_eq!(
@@ -43,7 +43,7 @@ fn ensure_mem_limit_exceeded(report: CommandReport) {
 fn ensure_user_time_limit_exceeded(report: CommandReport) {
     let runner_report = report.runner_report.unwrap();
     let json = report.to_json();
-    let time_used = dur2sec(&runner_report.statistics.total_user_time);
+    let time_used = dur2sec(&runner_report.process_info.total_user_time);
     let time_limit = dur2sec(report.cmd.time_limit.as_ref().unwrap());
 
     assert_eq!(
@@ -60,7 +60,7 @@ fn ensure_user_time_limit_exceeded(report: CommandReport) {
 fn ensure_write_limit_exceeded(report: CommandReport) {
     let runner_report = report.runner_report.unwrap();
     let json = report.to_json();
-    let bytes_written = runner_report.statistics.total_bytes_written;
+    let bytes_written = runner_report.process_info.total_bytes_written;
     let write_limit = mb2b(report.cmd.write_limit.unwrap());
 
     assert_eq!(
@@ -77,7 +77,7 @@ fn ensure_write_limit_exceeded(report: CommandReport) {
 fn ensure_process_limit_exceeded(report: CommandReport) {
     let runner_report = report.runner_report.unwrap();
     let json = report.to_json();
-    let total_processes = runner_report.statistics.total_processes;
+    let total_processes = runner_report.process_info.total_processes;
     let process_limit = report.cmd.process_count.unwrap();
 
     assert_eq!(
@@ -105,7 +105,7 @@ fn ensure_idle_time_limit_exceeded(report: CommandReport) {
 fn ensure_wall_clock_time_limit_exceeded(report: CommandReport) {
     let runner_report = report.runner_report.unwrap();
     let json = report.to_json();
-    let time_used = dur2sec(&runner_report.statistics.wall_clock_time);
+    let time_used = dur2sec(&runner_report.process_info.wall_clock_time);
     let time_limit = dur2sec(report.cmd.wall_clock_time_limit.as_ref().unwrap());
 
     assert_eq!(

@@ -1,6 +1,6 @@
 use crate::{Error, Result};
 use command::Command;
-use process::{Process, Statistics, Status, Stdio};
+use process::{Process, ProcessInfo, ProcessStatus, ProcessStdio};
 use runner::{ExitStatus, Runner, RunnerReport, TerminationReason};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -14,14 +14,14 @@ pub struct RunnerThread {
 
 struct RunnerImpl {
     cmd: Command,
-    stats: Statistics,
+    info: ProcessInfo,
     last_check_time: Option<Instant>,
     total_idle_time: Duration,
     exit_status: Option<ExitStatus>,
     is_killed: Arc<AtomicBool>,
 }
 
-pub fn spawn(cmd: Command, stdio: Stdio) -> Result<RunnerThread> {
+pub fn spawn(cmd: Command, stdio: ProcessStdio) -> Result<RunnerThread> {
     let monitoring_loop = RunnerImpl::new(cmd);
     let is_killed = Arc::downgrade(&monitoring_loop.is_killed);
 
@@ -53,7 +53,7 @@ impl RunnerImpl {
     fn new(cmd: Command) -> Self {
         Self {
             cmd: cmd,
-            stats: Statistics::zeroed(),
+            info: ProcessInfo::zeroed(),
             last_check_time: None,
             total_idle_time: Duration::from_millis(0),
             exit_status: None,
@@ -61,10 +61,10 @@ impl RunnerImpl {
         }
     }
 
-    fn check_limits(&mut self, new_stats: Statistics) -> bool {
+    fn check_limits(&mut self, new_info: ProcessInfo) -> bool {
         if let Some(last_check_time) = self.last_check_time {
             let dt = last_check_time.elapsed();
-            let mut d_user = new_stats.total_user_time - self.stats.total_user_time;
+            let mut d_user = new_info.total_user_time - self.info.total_user_time;
             // FIXME: total_user_time contains user times of all processes created, therefore
             // it can be greater than the wall-clock time. Currently it is possible for 2 processes
             // to avoid idle time limit. Consider:
@@ -82,24 +82,24 @@ impl RunnerImpl {
             self.total_idle_time += dt - d_user;
         }
         self.last_check_time = Some(Instant::now());
-        self.stats = new_stats;
+        self.info = new_info;
 
         fn gr<T: PartialOrd>(stat: T, limit: Option<T>) -> bool {
             limit.is_some() && stat > limit.unwrap()
         }
 
         let limits = &self.cmd.limits;
-        let term_reason = if gr(self.stats.wall_clock_time, limits.max_wall_clock_time) {
+        let term_reason = if gr(self.info.wall_clock_time, limits.max_wall_clock_time) {
             TerminationReason::WallClockTimeLimitExceeded
         } else if gr(self.total_idle_time, limits.max_idle_time) {
             TerminationReason::IdleTimeLimitExceeded
-        } else if gr(self.stats.total_user_time, limits.max_user_time) {
+        } else if gr(self.info.total_user_time, limits.max_user_time) {
             TerminationReason::UserTimeLimitExceeded
-        } else if gr(self.stats.total_bytes_written, limits.max_output_size) {
+        } else if gr(self.info.total_bytes_written, limits.max_output_size) {
             TerminationReason::WriteLimitExceeded
-        } else if gr(self.stats.peak_memory_used, limits.max_memory_usage) {
+        } else if gr(self.info.peak_memory_used, limits.max_memory_usage) {
             TerminationReason::MemoryLimitExceeded
-        } else if gr(self.stats.total_processes, limits.max_processes) {
+        } else if gr(self.info.total_processes, limits.max_processes) {
             TerminationReason::ProcessLimitExceeded
         } else {
             return false;
@@ -109,7 +109,7 @@ impl RunnerImpl {
         true
     }
 
-    fn spawn(mut self, stdio: Stdio) -> Result<RunnerReport> {
+    fn spawn(mut self, stdio: ProcessStdio) -> Result<RunnerReport> {
         let process = Process::spawn(&self.cmd, stdio)?;
 
         loop {
@@ -119,12 +119,12 @@ impl RunnerImpl {
             }
 
             match process.status()? {
-                Status::Alive(stats) => {
-                    if self.check_limits(stats) {
+                ProcessStatus::Running => {
+                    if self.check_limits(process.info()?) {
                         break;
                     }
                 }
-                Status::Finished(code) => {
+                ProcessStatus::Finished(code) => {
                     self.exit_status = Some(ExitStatus::Finished(code));
                     break;
                 }
@@ -134,7 +134,7 @@ impl RunnerImpl {
 
         Ok(RunnerReport {
             command: self.cmd,
-            statistics: self.stats,
+            process_info: self.info,
             exit_status: self.exit_status.unwrap(),
         })
     }

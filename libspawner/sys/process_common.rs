@@ -1,14 +1,14 @@
 use std::time::Duration;
 use sys::pipe::{ReadPipe, WritePipe};
 
-pub struct Stdio {
+pub struct ProcessStdio {
     pub stdin: ReadPipe,
     pub stdout: WritePipe,
     pub stderr: WritePipe,
 }
 
 #[derive(Copy, Clone)]
-pub struct Statistics {
+pub struct ProcessInfo {
     /// The amount of time elapsed since process creation.
     pub wall_clock_time: Duration,
     /// The total amount of user-mode execution time for all active processes,
@@ -25,12 +25,12 @@ pub struct Statistics {
     pub total_processes: usize,
 }
 
-pub enum Status {
-    Alive(Statistics),
+pub enum ProcessStatus {
+    Running,
     Finished(i32),
 }
 
-impl Statistics {
+impl ProcessInfo {
     pub fn zeroed() -> Self {
         Self {
             wall_clock_time: Duration::from_nanos(0),

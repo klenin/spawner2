@@ -58,16 +58,17 @@ impl<'a> CommandReport<'a> {
 
         match self.runner_report {
             Ok(report) => {
+                let info = &report.process_info;
                 obj["Result"] = object! {
-                    "Time" => dur2sec(&report.statistics.total_user_time),
-                    "WallClockTime" => dur2sec(&report.statistics.wall_clock_time),
-                    "Memory" => report.statistics.peak_memory_used,
-                    "BytesWritten" => report.statistics.total_bytes_written,
-                    "KernelTime" =>  dur2sec(&report.statistics.total_kernel_time),
+                    "Time" => dur2sec(&info.total_user_time),
+                    "WallClockTime" => dur2sec(&info.wall_clock_time),
+                    "Memory" => info.peak_memory_used,
+                    "BytesWritten" => info.total_bytes_written,
+                    "KernelTime" =>  dur2sec(&info.total_kernel_time),
                     // C++ spawner computes processor load as total user time / wall clock time.
                     // Making it possible for the processor load to be greater than 1.0
                     "ProcessorLoad" =>
-                        dur2sec(&report.statistics.total_user_time) / dur2sec(&report.statistics.wall_clock_time),
+                        dur2sec(&info.total_user_time) / dur2sec(&info.wall_clock_time),
                     "WorkingDirectory" => report.command.current_dir.clone(),
                 };
                 obj["UserName"] = "todo".into();
@@ -165,9 +166,10 @@ impl<'a> CommandReport<'a> {
         let mut error = "<none>".to_string();
         match &self.runner_report {
             Ok(report) => {
-                user_time = dur2sec(&report.statistics.total_user_time);
-                mem_used = b2mb(report.statistics.peak_memory_used);
-                written = b2mb(report.statistics.total_bytes_written);
+                let info = &report.process_info;
+                user_time = dur2sec(&info.total_user_time);
+                mem_used = b2mb(info.peak_memory_used);
+                written = b2mb(info.total_bytes_written);
                 match report.exit_status {
                     ExitStatus::Finished(code) => {
                         exit_code = code;

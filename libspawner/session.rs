@@ -1,7 +1,7 @@
 use crate::Result;
 use command::Command;
 use pipe::{ReadPipe, WritePipe};
-use process::Stdio;
+use process::ProcessStdio;
 use runner::{Runner, RunnerReport};
 use runner_private::{self, RunnerThread};
 use std::collections::hash_map::Entry;
@@ -182,7 +182,7 @@ impl SessionBuilder {
         for (cmd, mapping) in self.cmds.drain(..).zip(self.stdio_mappings.drain(..)) {
             let thread = runner_private::spawn(
                 cmd,
-                Stdio {
+                ProcessStdio {
                     stdin: iolist.istreams[mapping.stdin.0].take(),
                     stdout: iolist.ostreams[mapping.stdout.0].take(),
                     stderr: iolist.ostreams[mapping.stderr.0].take(),

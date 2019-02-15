@@ -1,5 +1,5 @@
 use command::Command;
-use process::Statistics;
+use process::ProcessInfo;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Weak;
 
@@ -23,7 +23,7 @@ pub enum ExitStatus {
 #[derive(Clone)]
 pub struct RunnerReport {
     pub command: Command,
-    pub statistics: Statistics,
+    pub process_info: ProcessInfo,
     pub exit_status: ExitStatus,
 }
 

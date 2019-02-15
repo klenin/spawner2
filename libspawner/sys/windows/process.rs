@@ -7,7 +7,7 @@ use std::mem;
 use std::ptr;
 use std::time::Duration;
 use std::time::Instant;
-pub use sys::process_common::{Statistics, Status, Stdio};
+pub use sys::process_common::{ProcessInfo, ProcessStatus, ProcessStdio};
 use sys::windows::common::{ok_neq_minus_one, ok_nonzero, to_utf16};
 use sys::windows::env;
 use sys::windows::thread::ThreadIterator;
@@ -20,7 +20,7 @@ use winapi::um::jobapi2::{
 use winapi::um::minwinbase::STILL_ACTIVE;
 use winapi::um::processthreadsapi::{
     CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
-    InitializeProcThreadAttributeList, OpenThread, ResumeThread, TerminateProcess,
+    InitializeProcThreadAttributeList, OpenThread, ResumeThread, SuspendThread, TerminateProcess,
     UpdateProcThreadAttribute, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_LIST,
 };
 use winapi::um::winbase::{
@@ -35,9 +35,6 @@ use winapi::um::winnt::{
 use winapi::um::winuser::{SW_HIDE, SW_SHOW};
 
 /// This structure is used to represent and manage root process and all its descendants.
-/// The `status` method will query information about parent process and all
-/// its children. Note that `Status::Finished` does not guarantee that all child processes
-/// are finished.
 pub struct Process {
     handle: HANDLE,
     id: DWORD,
@@ -48,8 +45,8 @@ pub struct Process {
 unsafe impl Send for Process {}
 
 impl Process {
-    /// Spawns process from given command and stdio streams
-    pub fn spawn(cmd: &Command, stdio: Stdio) -> Result<Self> {
+    /// Spawns process from given command and stdio streams.
+    pub fn spawn(cmd: &Command, stdio: ProcessStdio) -> Result<Self> {
         let (handle, id) = create_suspended_process(cmd, stdio)?;
         let job = match assign_process_to_new_job(handle) {
             Ok(x) => x,
@@ -80,19 +77,40 @@ impl Process {
         }
     }
 
-    pub fn status(&self) -> Result<Status> {
+    /// Returns status of the root process. Note that `Status::Finished` does not guarantee
+    /// that all child processes are finished.
+    pub fn status(&self) -> Result<ProcessStatus> {
         let mut exit_code: DWORD = 0;
         unsafe {
             ok_nonzero(GetExitCodeProcess(self.handle, &mut exit_code))?;
         }
-        if exit_code == STILL_ACTIVE {
-            Ok(Status::Alive(self.statistics()?))
-        } else {
-            Ok(Status::Finished(exit_code as i32))
+        match exit_code {
+            STILL_ACTIVE => Ok(ProcessStatus::Running),
+            c => Ok(ProcessStatus::Finished(c as i32)),
         }
     }
 
-    fn statistics(&self) -> Result<Statistics> {
+    /// Suspends the root process.
+    pub fn suspend(&self) -> Result<()> {
+        for id in ThreadIterator::new(self.id) {
+            unsafe {
+                let handle = ok_nonzero(OpenThread(THREAD_SUSPEND_RESUME, FALSE, id))?;
+                let result = ok_neq_minus_one(SuspendThread(handle));
+                CloseHandle(handle);
+                if let Err(e) = result {
+                    return Err(e);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Resumes the root process.
+    pub fn resume(&self) -> Result<()> {
+        resume_process(self.id)
+    }
+
+    pub fn info(&self) -> Result<ProcessInfo> {
         unsafe {
             let mut basic_and_io_info: JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION =
                 mem::zeroed();
@@ -118,7 +136,7 @@ impl Process {
             // total kernel time in in 100-nanosecond ticks
             let kernel_time = *basic_and_io_info.BasicInfo.TotalKernelTime.QuadPart() as u64;
 
-            Ok(Statistics {
+            Ok(ProcessInfo {
                 wall_clock_time: self.creation_time.elapsed(),
                 total_user_time: Duration::from_nanos(user_time * 100),
                 total_kernel_time: Duration::from_nanos(kernel_time * 100),
@@ -145,7 +163,7 @@ impl fmt::Debug for Process {
     }
 }
 
-fn create_suspended_process(cmd: &Command, stdio: Stdio) -> Result<(HANDLE, DWORD)> {
+fn create_suspended_process(cmd: &Command, stdio: ProcessStdio) -> Result<(HANDLE, DWORD)> {
     let mut cmdline = argv_to_cmd(&cmd.app, &cmd.args);
     let current_dir = cmd
         .current_dir
@@ -186,7 +204,7 @@ fn create_suspended_process(cmd: &Command, stdio: Stdio) -> Result<(HANDLE, DWOR
 
 fn create_startup_info(
     cmd: &Command,
-    stdio: &Stdio,
+    stdio: &ProcessStdio,
     inherited_handles: &mut Vec<HANDLE>,
 ) -> Result<(STARTUPINFOEXW, SIZE_T)> {
     let mut info: STARTUPINFOEXW = unsafe { mem::zeroed() };
