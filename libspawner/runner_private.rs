@@ -128,6 +128,10 @@ impl RunnerImpl {
                     self.exit_status = Some(ExitStatus::Finished(code));
                     break;
                 }
+                ProcessStatus::Crashed(status_crashed) => {
+                    self.exit_status = Some(ExitStatus::Crashed(status_crashed));
+                    break;
+                }
             }
             thread::sleep(self.cmd.monitor_interval);
         }

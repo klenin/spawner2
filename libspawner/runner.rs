@@ -1,5 +1,5 @@
 use command::Command;
-use process::ProcessInfo;
+use process::{ProcessInfo, ProcessStatusCrashed};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Weak;
 
@@ -16,6 +16,7 @@ pub enum TerminationReason {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExitStatus {
+    Crashed(ProcessStatusCrashed),
     Finished(u32),
     Terminated(TerminationReason),
 }

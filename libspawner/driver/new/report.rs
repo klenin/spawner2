@@ -74,12 +74,7 @@ impl<'a> CommandReport<'a> {
                 obj["UserName"] = "todo".into();
                 match report.exit_status {
                     ExitStatus::Finished(code) => {
-                        obj["TerminateReason"] = if code == 0 {
-                            "ExitProcess"
-                        } else {
-                            "AbnormalExitProcess"
-                        }
-                        .into();
+                        obj["TerminateReason"] = "ExitProcess".into();
                         obj["ExitCode"] = code.into();
                         obj["ExitStatus"] = code.to_string().into();
                     }
@@ -87,6 +82,11 @@ impl<'a> CommandReport<'a> {
                         obj["TerminateReason"] = spawner_term_reason(r).into();
                         obj["ExitCode"] = 0.into();
                         obj["ExitStatus"] = "0".into();
+                    }
+                    ExitStatus::Crashed(ref info) => {
+                        obj["TerminateReason"] = "AbnormalExitProcess".into();
+                        obj["ExitCode"] = info.exit_code.into();
+                        obj["ExitStatus"] = info.cause.into();
                     }
                 }
                 obj["SpawnerError"] = array!["<none>"];
@@ -177,14 +177,16 @@ impl<'a> CommandReport<'a> {
                 written = b2mb(info.total_bytes_written);
                 match report.exit_status {
                     ExitStatus::Finished(code) => {
-                        if code != 0 {
-                            term_reason = "AbnormalExitProcess";
-                        }
                         exit_code = code;
                         exit_status = code.to_string();
                     }
                     ExitStatus::Terminated(ref reason) => {
                         term_reason = spawner_term_reason(reason);
+                    }
+                    ExitStatus::Crashed(ref info) => {
+                        exit_code = info.exit_code;
+                        exit_status = info.cause.to_string();
+                        term_reason = "AbnormalExitProcess";
                     }
                 }
             }

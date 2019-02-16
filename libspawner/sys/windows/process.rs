@@ -7,7 +7,7 @@ use std::mem;
 use std::ptr;
 use std::time::Duration;
 use std::time::Instant;
-pub use sys::process_common::{ProcessInfo, ProcessStatus, ProcessStdio};
+pub use sys::process_common::*;
 use sys::windows::common::{ok_neq_minus_one, ok_nonzero, to_utf16};
 use sys::windows::env;
 use sys::windows::thread::ThreadIterator;
@@ -32,7 +32,14 @@ use winapi::um::winbase::{
 use winapi::um::winnt::{
     JobObjectBasicAndIoAccountingInformation, JobObjectExtendedLimitInformation, HANDLE,
     JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    THREAD_SUSPEND_RESUME,
+    STATUS_ACCESS_VIOLATION, STATUS_ARRAY_BOUNDS_EXCEEDED, STATUS_BREAKPOINT,
+    STATUS_CONTROL_C_EXIT, STATUS_DATATYPE_MISALIGNMENT, STATUS_FLOAT_DENORMAL_OPERAND,
+    STATUS_FLOAT_INEXACT_RESULT, STATUS_FLOAT_INVALID_OPERATION, STATUS_FLOAT_MULTIPLE_FAULTS,
+    STATUS_FLOAT_MULTIPLE_TRAPS, STATUS_FLOAT_OVERFLOW, STATUS_FLOAT_STACK_CHECK,
+    STATUS_FLOAT_UNDERFLOW, STATUS_GUARD_PAGE_VIOLATION, STATUS_ILLEGAL_INSTRUCTION,
+    STATUS_INTEGER_DIVIDE_BY_ZERO, STATUS_INTEGER_OVERFLOW, STATUS_INVALID_DISPOSITION,
+    STATUS_IN_PAGE_ERROR, STATUS_NONCONTINUABLE_EXCEPTION, STATUS_PRIVILEGED_INSTRUCTION,
+    STATUS_REG_NAT_CONSUMPTION, STATUS_SINGLE_STEP, STATUS_STACK_OVERFLOW, THREAD_SUSPEND_RESUME,
 };
 use winapi::um::winuser::{SW_HIDE, SW_SHOW};
 
@@ -86,10 +93,19 @@ impl Process {
         unsafe {
             ok_nonzero(GetExitCodeProcess(self.handle, &mut exit_code))?;
         }
-        match exit_code {
-            STILL_ACTIVE => Ok(ProcessStatus::Running),
-            c => Ok(ProcessStatus::Finished(c as u32)),
-        }
+        Ok(match exit_code {
+            STILL_ACTIVE => ProcessStatus::Running,
+            _ => {
+                if let Some(cause) = crash_cause(exit_code) {
+                    ProcessStatus::Crashed(ProcessStatusCrashed {
+                        exit_code: exit_code,
+                        cause: cause,
+                    })
+                } else {
+                    ProcessStatus::Finished(exit_code)
+                }
+            }
+        })
     }
 
     /// Suspends the root process.
@@ -327,4 +343,34 @@ where
         w.write_str(escaped.as_str())
     }
     .unwrap();
+}
+
+fn crash_cause(exit_code: DWORD) -> Option<&'static str> {
+    match exit_code {
+        STATUS_ACCESS_VIOLATION => Some("AccessViolation"),
+        STATUS_ARRAY_BOUNDS_EXCEEDED => Some("ArrayBoundsExceeded"),
+        STATUS_BREAKPOINT => Some("Breakpoint"),
+        STATUS_CONTROL_C_EXIT => Some("Control_C_Exit"),
+        STATUS_DATATYPE_MISALIGNMENT => Some("DatatypeMisalignment"),
+        STATUS_FLOAT_DENORMAL_OPERAND => Some("FloatDenormalOperand"),
+        STATUS_FLOAT_INEXACT_RESULT => Some("FloatInexactResult"),
+        STATUS_FLOAT_INVALID_OPERATION => Some("FloatInvalidOperation"),
+        STATUS_FLOAT_MULTIPLE_FAULTS => Some("FloatMultipleFaults"),
+        STATUS_FLOAT_MULTIPLE_TRAPS => Some("FloatMultipleTraps"),
+        STATUS_FLOAT_OVERFLOW => Some("FloatOverflow"),
+        STATUS_FLOAT_STACK_CHECK => Some("FloatStackCheck"),
+        STATUS_FLOAT_UNDERFLOW => Some("FloatUnderflow"),
+        STATUS_GUARD_PAGE_VIOLATION => Some("GuardPageViolation"),
+        STATUS_ILLEGAL_INSTRUCTION => Some("IllegalInstruction"),
+        STATUS_IN_PAGE_ERROR => Some("InPageError"),
+        STATUS_INVALID_DISPOSITION => Some("InvalidDisposition"),
+        STATUS_INTEGER_DIVIDE_BY_ZERO => Some("IntegerDivideByZero"),
+        STATUS_INTEGER_OVERFLOW => Some("IntegerOverflow"),
+        STATUS_NONCONTINUABLE_EXCEPTION => Some("NoncontinuableException"),
+        STATUS_PRIVILEGED_INSTRUCTION => Some("PrivilegedInstruction"),
+        STATUS_REG_NAT_CONSUMPTION => Some("RegNatConsumption"),
+        STATUS_SINGLE_STEP => Some("SingleStep"),
+        STATUS_STACK_OVERFLOW => Some("StackOverflow"),
+        _ => None,
+    }
 }
