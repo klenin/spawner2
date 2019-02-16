@@ -74,7 +74,12 @@ impl<'a> CommandReport<'a> {
                 obj["UserName"] = "todo".into();
                 match report.exit_status {
                     ExitStatus::Finished(code) => {
-                        obj["TerminateReason"] = "ExitProcess".into();
+                        obj["TerminateReason"] = if code == 0 {
+                            "ExitProcess"
+                        } else {
+                            "AbnormalExitProcess"
+                        }
+                        .into();
                         obj["ExitCode"] = code.into();
                         obj["ExitStatus"] = code.to_string().into();
                     }
@@ -172,6 +177,9 @@ impl<'a> CommandReport<'a> {
                 written = b2mb(info.total_bytes_written);
                 match report.exit_status {
                     ExitStatus::Finished(code) => {
+                        if code != 0 {
+                            term_reason = "AbnormalExitProcess";
+                        }
                         exit_code = code;
                         exit_status = code.to_string();
                     }

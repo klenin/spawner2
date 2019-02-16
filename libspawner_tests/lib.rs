@@ -6,7 +6,7 @@ extern crate spawner;
 mod common;
 
 #[cfg(test)]
-mod limits;
+mod term_reason;
 
 #[cfg(test)]
 mod redirect;
