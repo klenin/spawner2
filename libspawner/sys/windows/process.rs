@@ -86,7 +86,7 @@ impl Process {
         }
         match exit_code {
             STILL_ACTIVE => Ok(ProcessStatus::Running),
-            c => Ok(ProcessStatus::Finished(c as i32)),
+            c => Ok(ProcessStatus::Finished(c as u32)),
         }
     }
 

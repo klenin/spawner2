@@ -27,7 +27,7 @@ pub struct ProcessInfo {
 
 pub enum ProcessStatus {
     Running,
-    Finished(i32),
+    Finished(u32),
 }
 
 impl ProcessInfo {

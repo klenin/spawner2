@@ -16,7 +16,7 @@ pub enum TerminationReason {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExitStatus {
-    Finished(i32),
+    Finished(u32),
     Terminated(TerminationReason),
 }
 
