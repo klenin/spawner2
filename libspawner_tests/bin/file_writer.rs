@@ -22,4 +22,6 @@ fn main() {
     for _ in 0..kb {
         let _ = file.write(&chunk);
     }
+
+    std::thread::sleep(std::time::Duration::from_millis(1000));
 }
