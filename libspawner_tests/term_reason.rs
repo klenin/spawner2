@@ -74,12 +74,6 @@ fn ensure_write_limit_exceeded(report: CommandReport) {
     assert_eq!(json["SpawnerError"][0], "<none>");
 }
 
-fn ensure_abnormal_exit(report: CommandReport, exit_code: u32) {
-    let json = report.to_json();
-    assert_eq!(json["TerminateReason"], "AbnormalExitProcess");
-    assert_eq!(json["ExitCode"], exit_code);
-}
-
 fn ensure_process_limit_exceeded(report: CommandReport) {
     let runner_report = report.runner_report.unwrap();
     let json = report.to_json();
@@ -123,6 +117,11 @@ fn ensure_wall_clock_time_limit_exceeded(report: CommandReport) {
     assert_flt_eq!(json["Result"]["WallClockTime"].as_f64().unwrap(), time_used);
     assert_eq!(json["TerminateReason"], "TimeLimitExceeded");
     assert_eq!(json["SpawnerError"][0], "<none>");
+}
+
+fn ensure_abnormal_exit(report: CommandReport) {
+    let json = report.to_json();
+    assert_eq!(json["TerminateReason"], "AbnormalExitProcess");
 }
 
 #[test]
@@ -189,6 +188,6 @@ fn test_wall_clock_time_limit_using_loop() {
 
 #[test]
 fn test_abnormal_exit() {
-    let report = run(&[exe!("abnormal_exit")]).unwrap();
-    ensure_abnormal_exit(report.at(0), (-10i32) as u32);
+    let report = run(&["-d=0.2", exe!("abnormal_exit")]).unwrap();
+    ensure_abnormal_exit(report.at(0));
 }
