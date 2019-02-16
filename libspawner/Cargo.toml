@@ -26,4 +26,5 @@ winapi = { version = "0.3.6", features = [
     "tlhelp32",
     "namedpipeapi",
     "fileapi",
-    "userenv",] }
+    "userenv",
+    "errhandlingapi",] }

@@ -13,6 +13,7 @@ use sys::windows::env;
 use sys::windows::thread::ThreadIterator;
 use winapi::shared::basetsd::{DWORD_PTR, SIZE_T};
 use winapi::shared::minwindef::{DWORD, FALSE, TRUE, WORD};
+use winapi::um::errhandlingapi::SetErrorMode;
 use winapi::um::handleapi::CloseHandle;
 use winapi::um::jobapi2::{
     AssignProcessToJobObject, CreateJobObjectW, QueryInformationJobObject, TerminateJobObject,
@@ -25,7 +26,8 @@ use winapi::um::processthreadsapi::{
 };
 use winapi::um::winbase::{
     CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT,
-    STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX, STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES,
+    STARTUPINFOEXW,
 };
 use winapi::um::winnt::{
     JobObjectBasicAndIoAccountingInformation, JobObjectExtendedLimitInformation, HANDLE,
@@ -179,6 +181,7 @@ fn create_suspended_process(cmd: &Command, stdio: ProcessStdio) -> Result<(HANDL
         create_startup_info(cmd, &stdio, &mut inherited_handles)?;
 
     unsafe {
+        SetErrorMode(SEM_NOGPFAULTERRORBOX | SEM_FAILCRITICALERRORS);
         let result = ok_nonzero(CreateProcessW(
             /*lpApplicationName=*/ ptr::null(),
             /*lpCommandLine=*/ cmdline.as_mut_ptr(),
@@ -191,6 +194,9 @@ fn create_suspended_process(cmd: &Command, stdio: ProcessStdio) -> Result<(HANDL
             /*lpStartupInfo=*/ mem::transmute(&mut startup_info),
             /*lpProcessInformation=*/ &mut process_info,
         ));
+
+        // Restore default error mode.
+        SetErrorMode(0);
         DeleteProcThreadAttributeList(startup_info.lpAttributeList);
         dealloc_att_list(startup_info.lpAttributeList, att_list_size);
         result?;
