@@ -9,7 +9,7 @@ pub use self::report::*;
 
 use self::opts::{Options, PipeKind, StdioRedirectKind, StdioRedirectList};
 use crate::{Error, Result};
-use command::{Command, CommandBuilder, Limits};
+use command::{Command, CommandBuilder, CommandCallbacks, Limits};
 use driver::prelude::*;
 use json::JsonValue;
 use runner::RunnerReport;
@@ -152,7 +152,7 @@ impl Driver {
         let stdio_mappings: Vec<StdioMapping> = self
             .cmds
             .iter()
-            .map(|x| builder.add_cmd(Command::from(x)))
+            .map(|x| builder.add_cmd(Command::from(x), CommandCallbacks::none()))
             .collect();
 
         for (opt, mapping) in self.cmds.iter().zip(stdio_mappings.iter()) {

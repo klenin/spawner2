@@ -1,5 +1,5 @@
 use crate::{Error, Result};
-use command::Command;
+use command::{Command, CommandCallbacks};
 use process::{Process, ProcessInfo, ProcessStatus, ProcessStdio};
 use runner::{ExitStatus, Runner, RunnerReport, TerminationReason};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,12 +21,20 @@ struct RunnerImpl {
     is_killed: Arc<AtomicBool>,
 }
 
-pub fn spawn(cmd: Command, stdio: ProcessStdio) -> Result<RunnerThread> {
+struct OnTerminateGuard {
+    cb: Option<Box<FnMut() + Send>>,
+}
+
+pub fn spawn(
+    cmd: Command,
+    cmd_callbacks: CommandCallbacks,
+    stdio: ProcessStdio,
+) -> Result<RunnerThread> {
     let monitoring_loop = RunnerImpl::new(cmd);
     let is_killed = Arc::downgrade(&monitoring_loop.is_killed);
 
     thread::Builder::new()
-        .spawn(move || RunnerImpl::spawn(monitoring_loop, stdio))
+        .spawn(move || RunnerImpl::spawn(monitoring_loop, cmd_callbacks, stdio))
         .map_err(|e| Error::from(e))
         .map(|handle| RunnerThread {
             handle: handle,
@@ -109,7 +117,12 @@ impl RunnerImpl {
         true
     }
 
-    fn spawn(mut self, stdio: ProcessStdio) -> Result<RunnerReport> {
+    fn spawn(
+        mut self,
+        mut cmd_callbacks: CommandCallbacks,
+        stdio: ProcessStdio,
+    ) -> Result<RunnerReport> {
+        let _on_terminate_guard = OnTerminateGuard::new(cmd_callbacks.on_terminate.take());
         let process = Process::spawn(&self.cmd, stdio)?;
 
         loop {
@@ -141,5 +154,19 @@ impl RunnerImpl {
             process_info: self.info,
             exit_status: self.exit_status.unwrap(),
         })
+    }
+}
+
+impl OnTerminateGuard {
+    fn new(cb: Option<Box<FnMut() + Send>>) -> Self {
+        Self { cb: cb }
+    }
+}
+
+impl Drop for OnTerminateGuard {
+    fn drop(&mut self) {
+        if let Some(cb) = self.cb.as_mut() {
+            cb();
+        }
     }
 }

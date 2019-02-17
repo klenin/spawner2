@@ -1,5 +1,5 @@
 use crate::Result;
-use command::Command;
+use command::{Command, CommandCallbacks};
 use pipe::{ReadPipe, WritePipe};
 use process::ProcessStdio;
 use runner::{Runner, RunnerReport};
@@ -48,9 +48,14 @@ pub struct StdioMapping {
     pub stderr: OstreamIndex,
 }
 
+struct Target {
+    cmd: Command,
+    cbs: CommandCallbacks,
+    stdio_mapping: StdioMapping,
+}
+
 pub struct SessionBuilder {
-    cmds: Vec<Command>,
-    stdio_mappings: Vec<StdioMapping>,
+    targets: Vec<Target>,
     builder: RouterBuilder,
     output_files: HashMap<PathBuf, usize>,
 }
@@ -129,21 +134,23 @@ impl OstreamDst {
 impl SessionBuilder {
     pub fn new() -> Self {
         Self {
-            cmds: Vec::new(),
-            stdio_mappings: Vec::new(),
+            targets: Vec::new(),
             builder: RouterBuilder::new(),
             output_files: HashMap::new(),
         }
     }
 
-    pub fn add_cmd(&mut self, cmd: Command) -> StdioMapping {
+    pub fn add_cmd(&mut self, cmd: Command, cbs: CommandCallbacks) -> StdioMapping {
         let stdio = StdioMapping {
             stdin: IstreamIndex(self.builder.add_istream(None)),
             stdout: OstreamIndex(self.builder.add_ostream(None)),
             stderr: OstreamIndex(self.builder.add_ostream(None)),
         };
-        self.stdio_mappings.push(stdio);
-        self.cmds.push(cmd);
+        self.targets.push(Target {
+            cmd: cmd,
+            cbs: cbs,
+            stdio_mapping: stdio,
+        });
         stdio
     }
 
@@ -179,9 +186,11 @@ impl SessionBuilder {
             runner_threads: Vec::new(),
         };
 
-        for (cmd, mapping) in self.cmds.drain(..).zip(self.stdio_mappings.drain(..)) {
+        for target in self.targets.drain(..) {
+            let mapping = target.stdio_mapping;
             let thread = runner_private::spawn(
-                cmd,
+                target.cmd,
+                target.cbs,
                 ProcessStdio {
                     stdin: iolist.istreams[mapping.stdin.0].take(),
                     stdout: iolist.ostreams[mapping.stdout.0].take(),

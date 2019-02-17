@@ -42,6 +42,10 @@ pub struct Command {
     pub env_vars: Vec<EnvVar>,
 }
 
+pub struct CommandCallbacks {
+    pub on_terminate: Option<Box<FnMut() + Send>>,
+}
+
 pub struct CommandBuilder {
     cmd: Command,
 }
@@ -184,5 +188,11 @@ impl CommandBuilder {
 impl AsRef<EnvVar> for EnvVar {
     fn as_ref(&self) -> &EnvVar {
         self
+    }
+}
+
+impl CommandCallbacks {
+    pub fn none() -> Self {
+        Self { on_terminate: None }
     }
 }
