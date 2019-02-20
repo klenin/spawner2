@@ -21,6 +21,11 @@ pub struct CommandReport<'a> {
     pub cmd: &'a Options,
 }
 
+pub struct CommandReportIterator<'a> {
+    report: &'a Report,
+    pos: usize,
+}
+
 impl Report {
     pub fn at(&self, index: usize) -> CommandReport {
         CommandReport {
@@ -29,6 +34,13 @@ impl Report {
                 Err(e) => Err(e),
             },
             cmd: &self.cmds[index],
+        }
+    }
+
+    pub fn iter(&self) -> CommandReportIterator {
+        CommandReportIterator {
+            report: self,
+            pos: 0,
         }
     }
 }
@@ -235,6 +247,20 @@ impl<'a> Display for CommandReport<'a> {
             write!(f, "{:#}", self.to_json())
         } else {
             self.write_legacy(f)
+        }
+    }
+}
+
+impl<'a> Iterator for CommandReportIterator<'a> {
+    type Item = CommandReport<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.pos < self.report.cmds.len() {
+            let report = Some(self.report.at(self.pos));
+            self.pos += 1;
+            report
+        } else {
+            None
         }
     }
 }
