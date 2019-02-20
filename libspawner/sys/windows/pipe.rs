@@ -5,9 +5,7 @@ use std::path::Path;
 use std::ptr;
 use sys::windows::common::{ok_nonzero, to_utf16};
 use winapi::shared::minwindef::{DWORD, TRUE};
-use winapi::um::fileapi::{
-    CreateFileW, FlushFileBuffers, ReadFile, WriteFile, CREATE_ALWAYS, OPEN_EXISTING,
-};
+use winapi::um::fileapi::{CreateFileW, ReadFile, WriteFile, CREATE_ALWAYS, OPEN_EXISTING};
 use winapi::um::handleapi::{CloseHandle, SetHandleInformation, INVALID_HANDLE_VALUE};
 use winapi::um::minwinbase::SECURITY_ATTRIBUTES;
 use winapi::um::namedpipeapi::CreatePipe;
@@ -22,6 +20,7 @@ pub struct ReadPipe {
 
 pub struct WritePipe {
     pub(crate) handle: HANDLE,
+    is_file: bool,
 }
 
 pub fn create() -> Result<(ReadPipe, WritePipe)> {
@@ -48,6 +47,7 @@ pub fn create() -> Result<(ReadPipe, WritePipe)> {
         },
         WritePipe {
             handle: write_handle,
+            is_file: false,
         },
     ))
 }
@@ -95,13 +95,19 @@ impl WritePipe {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         Ok(Self {
             handle: open_file(path, GENERIC_WRITE, CREATE_ALWAYS, false)?,
+            is_file: true,
         })
     }
 
     pub fn null() -> Result<Self> {
         Ok(Self {
             handle: open_file("nul", GENERIC_WRITE, OPEN_EXISTING, false)?,
+            is_file: false,
         })
+    }
+
+    pub fn is_file(&self) -> bool {
+        self.is_file
     }
 }
 
@@ -124,9 +130,6 @@ impl Write for WritePipe {
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        unsafe {
-            ok_nonzero(FlushFileBuffers(self.handle)).map_err(|e| e.into_io_error())?;
-        }
         Ok(())
     }
 }
