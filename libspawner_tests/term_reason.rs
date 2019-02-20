@@ -191,3 +191,56 @@ fn test_abnormal_exit() {
     let report = run(&["-d=0.2", exe!("abnormal_exit")]).unwrap();
     ensure_abnormal_exit(report.at(0));
 }
+
+#[test]
+fn test_close_stdout_on_exit() {
+    // if stdout_writer does not close stdout on exit then the consumer will hang on stdin().read(...).
+    let report = run(&[
+        "-d=1",
+        "--separator=@",
+        "--@",
+        exe!("stdout_writer"),
+        "AAA",
+        "1000",
+        "--@",
+        "--in=*0.stdout",
+        exe!("consumer"),
+    ])
+    .unwrap();
+    for cmd_report in report.iter() {
+        assert_eq!(
+            cmd_report.runner_report.unwrap().exit_status,
+            ExitStatus::Finished(0)
+        );
+    }
+}
+
+#[test]
+fn test_close_stdout_on_exit_2() {
+    let report = run(&[
+        "-d=1",
+        "--separator=@",
+        "--@",
+        exe!("stdout_writer"),
+        "AAA",
+        "1000",
+        "--@",
+        exe!("stdout_writer"),
+        "AAA",
+        "1000",
+        "--@",
+        "--in=*0.stdout",
+        "--in=*1.stdout",
+        exe!("consumer"),
+    ])
+    .unwrap();
+    let mut kek = 0;
+    for cmd_report in report.iter() {
+        kek += 1;
+        assert_eq!(
+            cmd_report.runner_report.unwrap().exit_status,
+            ExitStatus::Finished(0)
+        );
+    }
+    println!("{}", kek);
+}

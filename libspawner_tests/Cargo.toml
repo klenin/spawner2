@@ -43,6 +43,10 @@ path = "bin/env_printer.rs"
 name = "abnormal_exit"
 path = "bin/abnormal_exit.rs"
 
+[[bin]]
+name = "consumer"
+path = "bin/consumer.rs"
+
 [dependencies]
 rand = "0.6.5"
 spawner = { path = "../libspawner" }
