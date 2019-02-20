@@ -1,44 +1,39 @@
 use crate::{Error, Result};
 use pipe::{ReadPipe, WritePipe};
-use std::io::{Read, Write};
-use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
+use std::io;
+use std::io::{BufWriter, Read, Write};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 
-/// This structure splits the `ReadPipe` allowing multiple readers to receive data from it.
+/// Splits the `ReadPipe` allowing multiple readers to receive data from it.
 pub struct ReadHub {
     src: ReadPipe,
-    channels: Vec<Sender<Message>>,
+    write_hubs: Vec<WriteHub>,
     buffer_size: usize,
 }
 
-struct WriteHubInner {
-    dst: WritePipe,
-    receiver: Receiver<Message>,
+enum WriteHubKind {
+    Pipe(WritePipe),
+    File(BufWriter<WritePipe>),
 }
 
-/// This structure splits the `WritePipe` allowing multiple writers to send data to it.
-pub struct WriteHub {
-    inner: WriteHubInner,
-    sender: Sender<Message>,
-}
-
+/// Allows multiple writers to send data to the `WritePipe`.
 #[derive(Clone)]
-struct Message {
-    content: Arc<Vec<u8>>,
+pub struct WriteHub {
+    kind: Arc<Mutex<WriteHubKind>>,
 }
 
 impl ReadHub {
     pub fn new(src: ReadPipe) -> Self {
         Self {
             src: src,
-            channels: Vec::new(),
-            buffer_size: 4096,
+            write_hubs: Vec::new(),
+            buffer_size: 8192,
         }
     }
 
     pub fn connect(&mut self, wh: &WriteHub) {
-        self.channels.push(wh.sender.clone());
+        self.write_hubs.push(wh.clone());
     }
 
     pub fn spawn(self) -> Result<JoinHandle<()>> {
@@ -64,15 +59,13 @@ impl ReadHub {
                 return;
             }
 
-            let message = Message::new(&buffer[..bytes_read]);
             let mut errors = 0;
-            for channel in &self.channels {
-                if let Err(_) = channel.send(message.clone()) {
+            for wh in &mut self.write_hubs {
+                if wh.write_all(&buffer[..bytes_read]).is_err() {
                     errors += 1;
                 }
             }
-
-            if errors == self.channels.len() {
+            if errors == self.write_hubs.len() {
                 // All receivers are dead.
                 return;
             }
@@ -82,54 +75,33 @@ impl ReadHub {
 
 impl WriteHub {
     pub fn new(dst: WritePipe) -> Self {
-        let (s, r) = channel::<Message>();
         Self {
-            inner: WriteHubInner {
-                dst: dst,
-                receiver: r,
-            },
-            sender: s,
+            kind: Arc::new(Mutex::new(match dst.is_file() {
+                true => WriteHubKind::File(BufWriter::new(dst)),
+                false => WriteHubKind::Pipe(dst),
+            })),
         }
     }
 
-    pub fn connect(&self, rh: &mut ReadHub) {
-        rh.connect(self);
-    }
-
-    pub fn spawn(self) -> Result<JoinHandle<()>> {
-        // Split self into inner and _sender, so we can drop the sender.
-        // If we don't do that we'll hang on recv() call since there will be always one sender left.
-        let inner = self.inner;
-        let _sender = self.sender;
-
-        thread::Builder::new()
-            .spawn(move || WriteHubInner::main_loop(inner))
-            .map_err(|e| Error::from(e))
+    fn lock(&self) -> io::Result<MutexGuard<WriteHubKind>> {
+        self.kind
+            .lock()
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "WriteHub mutex was poisoned"))
     }
 }
 
-impl WriteHubInner {
-    fn main_loop(mut self) {
-        loop {
-            let msg = match self.receiver.recv() {
-                Ok(x) => x,
-                Err(_) => return,
-            };
-            if self.dst.write_all(msg.get()).is_err() {
-                return;
-            }
-        }
-    }
-}
-
-impl Message {
-    pub fn new(content: &[u8]) -> Self {
-        Self {
-            content: Arc::new(content.to_vec()),
+impl Write for WriteHub {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match *self.lock()? {
+            WriteHubKind::Pipe(ref mut p) => p.write(buf),
+            WriteHubKind::File(ref mut f) => f.write(buf),
         }
     }
 
-    pub fn get(&self) -> &[u8] {
-        self.content.as_slice()
+    fn flush(&mut self) -> io::Result<()> {
+        match *self.lock()? {
+            WriteHubKind::Pipe(ref mut p) => p.flush(),
+            WriteHubKind::File(ref mut f) => f.flush(),
+        }
     }
 }

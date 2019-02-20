@@ -12,8 +12,8 @@ use crate::{Error, Result};
 use command::{Command, CommandBuilder, CommandCallbacks, Limits};
 use driver::prelude::*;
 use json::JsonValue;
-use runner::RunnerReport;
-use session::{IstreamIndex, IstreamSrc, OstreamDst, OstreamIndex, SessionBuilder, StdioMapping};
+use session::{IstreamDst, IstreamIdx, OstreamIdx, OstreamSrc, SessionBuilder, StdioMapping};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -23,6 +23,8 @@ use std::u64;
 pub struct Driver {
     pub controller: Option<usize>,
     pub cmds: Vec<Options>,
+    builder: RefCell<SessionBuilder>,
+    stdio_mappings: Vec<StdioMapping>,
 }
 
 pub fn parse<T, U>(argv: T) -> Result<Driver>
@@ -70,10 +72,7 @@ where
         }
     }
 
-    Ok(Driver {
-        controller: controller,
-        cmds: cmds,
-    })
+    Driver::create(controller, cmds)
 }
 
 pub fn run<T, U>(argv: T) -> Result<Report>
@@ -136,111 +135,114 @@ pub fn main() {
 }
 
 impl Driver {
+    fn create(controller: Option<usize>, cmds: Vec<Options>) -> Result<Driver> {
+        let mut driver = Driver {
+            controller: controller,
+            cmds: cmds,
+            builder: RefCell::new(SessionBuilder::new()),
+            stdio_mappings: Vec::new(),
+        };
+
+        for cmd in driver.cmds.iter() {
+            driver.stdio_mappings.push(
+                driver
+                    .builder
+                    .borrow_mut()
+                    .add_cmd(Command::from(cmd), CommandCallbacks::none()),
+            );
+        }
+
+        for (cmd, mapping) in driver.cmds.iter().zip(driver.stdio_mappings.iter()) {
+            driver.redirect_ostream(mapping.stdin, &cmd.stdin_redirect)?;
+            driver.redirect_istream(mapping.stdout, &cmd.stdout_redirect)?;
+            driver.redirect_istream(mapping.stderr, &cmd.stderr_redirect)?;
+        }
+
+        Ok(driver)
+    }
+
+    fn redirect_istream(
+        &self,
+        istream: IstreamIdx,
+        redirect_list: &StdioRedirectList,
+    ) -> Result<()> {
+        let stdio_len = self.stdio_mappings.len();
+        for redirect in redirect_list.items.iter() {
+            match &redirect.kind {
+                StdioRedirectKind::File(s) => {
+                    self.builder
+                        .borrow_mut()
+                        .add_istream_dst(istream, IstreamDst::file(s))?;
+                }
+                StdioRedirectKind::Pipe(pipe_kind) => match pipe_kind {
+                    PipeKind::Null => { /* pipes are null by default */ }
+                    PipeKind::Std => { /* todo */ }
+                    PipeKind::Stdin(i) => {
+                        if *i >= stdio_len {
+                            return Err(Error::from(format!("stdin index {} is out of range", i)));
+                        }
+                        self.builder.borrow_mut().add_istream_dst(
+                            istream,
+                            IstreamDst::ostream(self.stdio_mappings[*i].stdin),
+                        )?;
+                    }
+                    PipeKind::Stderr(i) => {
+                        if *i >= stdio_len {
+                            return Err(Error::from(format!("stderr index {} is out of range", i)));
+                        }
+                        self.builder.borrow_mut().add_istream_dst(
+                            istream,
+                            IstreamDst::ostream(self.stdio_mappings[*i].stdin),
+                        )?;
+                    }
+                    _ => {}
+                },
+            }
+        }
+        Ok(())
+    }
+
+    fn redirect_ostream(
+        &self,
+        ostream: OstreamIdx,
+        redirect_list: &StdioRedirectList,
+    ) -> Result<()> {
+        for redirect in redirect_list.items.iter() {
+            match &redirect.kind {
+                StdioRedirectKind::File(s) => {
+                    self.builder
+                        .borrow_mut()
+                        .add_ostream_src(ostream, OstreamSrc::file(s))?;
+                }
+                StdioRedirectKind::Pipe(pipe_kind) => match pipe_kind {
+                    PipeKind::Null => { /* pipes are null by default */ }
+                    PipeKind::Std => { /* todo */ }
+                    PipeKind::Stdout(i) => {
+                        if *i >= self.stdio_mappings.len() {
+                            return Err(Error::from(format!("stdout index {} is out of range", i)));
+                        }
+                        self.builder.borrow_mut().add_ostream_src(
+                            ostream,
+                            OstreamSrc::istream(self.stdio_mappings[*i].stdout),
+                        )?;
+                    }
+                    _ => {}
+                },
+            }
+        }
+        Ok(())
+    }
+
     pub fn run(self) -> Report {
         Report {
-            runner_reports: self.run_impl(),
+            runner_reports: self
+                .builder
+                .into_inner()
+                .spawn()
+                .and_then(|sess| sess.wait()),
             cmds: self.cmds,
         }
     }
-
-    fn run_impl(&self) -> Result<Vec<RunnerReport>> {
-        if self.cmds.len() == 0 {
-            return Ok(Vec::new());
-        }
-
-        let mut builder = SessionBuilder::new();
-        let stdio_mappings: Vec<StdioMapping> = self
-            .cmds
-            .iter()
-            .map(|x| builder.add_cmd(Command::from(x), CommandCallbacks::none()))
-            .collect();
-
-        for (opt, mapping) in self.cmds.iter().zip(stdio_mappings.iter()) {
-            redirect_istream(
-                &mut builder,
-                mapping.stdin,
-                &stdio_mappings,
-                &opt.stdin_redirect,
-            )?;
-            redirect_ostream(
-                &mut builder,
-                mapping.stdout,
-                &stdio_mappings,
-                &opt.stdout_redirect,
-            )?;
-            redirect_ostream(
-                &mut builder,
-                mapping.stderr,
-                &stdio_mappings,
-                &opt.stderr_redirect,
-            )?;
-        }
-
-        builder.spawn()?.wait()
-    }
-}
-
-fn redirect_istream(
-    builder: &mut SessionBuilder,
-    istream: IstreamIndex,
-    stdio_mappings: &Vec<StdioMapping>,
-    redirect_list: &StdioRedirectList,
-) -> Result<()> {
-    for redirect in redirect_list.items.iter() {
-        match &redirect.kind {
-            StdioRedirectKind::File(s) => {
-                builder.add_istream_src(istream, IstreamSrc::file(s))?;
-            }
-            StdioRedirectKind::Pipe(pipe_kind) => match pipe_kind {
-                PipeKind::Null => { /* pipes are null by default */ }
-                PipeKind::Std => { /* todo */ }
-                PipeKind::Stdout(i) => {
-                    if *i >= stdio_mappings.len() {
-                        return Err(Error::from(format!("stdout index {} is out of range", i)));
-                    }
-                    builder
-                        .add_istream_src(istream, IstreamSrc::ostream(stdio_mappings[*i].stdout))?;
-                }
-                _ => {}
-            },
-        }
-    }
-    Ok(())
-}
-
-fn redirect_ostream(
-    builder: &mut SessionBuilder,
-    ostream: OstreamIndex,
-    stdio_mappings: &Vec<StdioMapping>,
-    redirect_list: &StdioRedirectList,
-) -> Result<()> {
-    for redirect in redirect_list.items.iter() {
-        match &redirect.kind {
-            StdioRedirectKind::File(s) => {
-                builder.add_ostream_dst(ostream, OstreamDst::file(s))?;
-            }
-            StdioRedirectKind::Pipe(pipe_kind) => match pipe_kind {
-                PipeKind::Null => { /* pipes are null by default */ }
-                PipeKind::Std => { /* todo */ }
-                PipeKind::Stdin(i) => {
-                    if *i >= stdio_mappings.len() {
-                        return Err(Error::from(format!("stdin index {} is out of range", i)));
-                    }
-                    builder
-                        .add_ostream_dst(ostream, OstreamDst::istream(stdio_mappings[*i].stdin))?;
-                }
-                PipeKind::Stderr(i) => {
-                    if *i >= stdio_mappings.len() {
-                        return Err(Error::from(format!("stderr index {} is out of range", i)));
-                    }
-                    builder
-                        .add_ostream_dst(ostream, OstreamDst::istream(stdio_mappings[*i].stdin))?;
-                }
-                _ => {}
-            },
-        }
-    }
-    Ok(())
 }
 
 pub(crate) fn mb2b(mb: f64) -> u64 {
