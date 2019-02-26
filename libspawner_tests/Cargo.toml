@@ -24,8 +24,8 @@ name = "stdout_writer"
 path = "bin/stdout_writer.rs"
 
 [[bin]]
-name = "stdin_to_stdout"
-path = "bin/stdin_to_stdout.rs"
+name = "in2out"
+path = "bin/in2out.rs"
 
 [[bin]]
 name = "two_proc"

@@ -13,8 +13,7 @@ fn test_stdin_from_file() {
     run(&[
         format!("--in={}", input).as_str(),
         format!("--out={}", output).as_str(),
-        exe!("stdin_to_stdout"),
-        "30",
+        exe!("in2out"),
     ])
     .unwrap();
     let output_data = read_all(output);
@@ -35,8 +34,7 @@ fn test_stdin_from_2_files() {
         format!("--in={}", input_1).as_str(),
         format!("--in={}", input_2).as_str(),
         format!("--out={}", output).as_str(),
-        exe!("stdin_to_stdout"),
-        "60",
+        exe!("in2out"),
     ])
     .unwrap();
     assert_eq!(input_data, read_all(output));
@@ -50,8 +48,7 @@ fn test_stdin_from_stdout() {
         "--separator=@",
         "--in=*1.stdout",
         format!("--out={}", output).as_str(),
-        exe!("stdin_to_stdout"),
-        "60",
+        exe!("in2out"),
         "--@",
         "--out=*0.stdin",
         exe!("stdout_writer"),
@@ -71,8 +68,7 @@ fn test_stdin_from_2_stdout() {
         "--separator=@",
         "--in=*1.stdout",
         format!("--out={}", output).as_str(),
-        exe!("stdin_to_stdout"),
-        "60",
+        exe!("in2out"),
         "--@",
         "--out=*0.stdin",
         exe!("stdout_writer"),
@@ -138,14 +134,12 @@ fn test_2_stdout_to_2_stdin() {
         "--in=*0.stdout",
         "--in=*1.stdout",
         format!("--out={}", output_1).as_str(),
-        exe!("stdin_to_stdout"),
-        "40",
+        exe!("in2out"),
         "--@",
         "--in=*0.stdout",
         "--in=*1.stdout",
         format!("--out={}", output_2).as_str(),
-        exe!("stdin_to_stdout"),
-        "40",
+        exe!("in2out"),
     ])
     .unwrap();
     assert_eq!("A".repeat(40), read_all(output_1));

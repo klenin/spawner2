@@ -23,7 +23,7 @@ fn dur2sec(d: &Duration) -> f64 {
     us / 1e6
 }
 
-fn ensure_mem_limit_exceeded(report: CommandReport) {
+pub fn ensure_mem_limit_exceeded(report: CommandReport) {
     let runner_report = report.runner_report.unwrap();
     let json = report.to_json();
     let mem_used = runner_report.process_info.peak_memory_used;
@@ -40,7 +40,7 @@ fn ensure_mem_limit_exceeded(report: CommandReport) {
     assert_eq!(json["SpawnerError"][0], "<none>");
 }
 
-fn ensure_user_time_limit_exceeded(report: CommandReport) {
+pub fn ensure_user_time_limit_exceeded(report: CommandReport) {
     let runner_report = report.runner_report.unwrap();
     let json = report.to_json();
     let time_used = dur2sec(&runner_report.process_info.total_user_time);
@@ -57,7 +57,7 @@ fn ensure_user_time_limit_exceeded(report: CommandReport) {
     assert_eq!(json["SpawnerError"][0], "<none>");
 }
 
-fn ensure_write_limit_exceeded(report: CommandReport) {
+pub fn ensure_write_limit_exceeded(report: CommandReport) {
     let runner_report = report.runner_report.unwrap();
     let json = report.to_json();
     let bytes_written = runner_report.process_info.total_bytes_written;
@@ -74,7 +74,7 @@ fn ensure_write_limit_exceeded(report: CommandReport) {
     assert_eq!(json["SpawnerError"][0], "<none>");
 }
 
-fn ensure_process_limit_exceeded(report: CommandReport) {
+pub fn ensure_process_limit_exceeded(report: CommandReport) {
     let runner_report = report.runner_report.unwrap();
     let json = report.to_json();
     let total_processes = runner_report.process_info.total_processes;
@@ -89,7 +89,7 @@ fn ensure_process_limit_exceeded(report: CommandReport) {
     assert_eq!(json["SpawnerError"][0], "<none>");
 }
 
-fn ensure_idle_time_limit_exceeded(report: CommandReport) {
+pub fn ensure_idle_time_limit_exceeded(report: CommandReport) {
     let json = report.to_json();
     let time_limit = dur2sec(report.cmd.idle_time_limit.as_ref().unwrap());
 
@@ -102,7 +102,7 @@ fn ensure_idle_time_limit_exceeded(report: CommandReport) {
     assert_eq!(json["SpawnerError"][0], "<none>");
 }
 
-fn ensure_wall_clock_time_limit_exceeded(report: CommandReport) {
+pub fn ensure_wall_clock_time_limit_exceeded(report: CommandReport) {
     let runner_report = report.runner_report.unwrap();
     let json = report.to_json();
     let time_used = dur2sec(&runner_report.process_info.wall_clock_time);
@@ -119,7 +119,7 @@ fn ensure_wall_clock_time_limit_exceeded(report: CommandReport) {
     assert_eq!(json["SpawnerError"][0], "<none>");
 }
 
-fn ensure_abnormal_exit(report: CommandReport) {
+pub fn ensure_abnormal_exit(report: CommandReport) {
     let json = report.to_json();
     assert_eq!(json["TerminateReason"], "AbnormalExitProcess");
 }
@@ -188,13 +188,13 @@ fn test_wall_clock_time_limit_using_loop() {
 
 #[test]
 fn test_abnormal_exit() {
-    let report = run(&["-d=0.2", exe!("abnormal_exit")]).unwrap();
+    let report = run(&["-d=1", exe!("abnormal_exit")]).unwrap();
     ensure_abnormal_exit(report.at(0));
 }
 
 #[test]
 fn test_close_stdout_on_exit() {
-    // if stdout_writer does not close stdout on exit then the consumer will hang on stdin().read(...).
+    // if stdout_writer does not close stdout on exit then the reader will hang on stdin().read(...).
     let report = run(&[
         "-d=1",
         "--separator=@",
@@ -204,7 +204,7 @@ fn test_close_stdout_on_exit() {
         "1000",
         "--@",
         "--in=*0.stdout",
-        exe!("consumer"),
+        exe!("in2out"),
     ])
     .unwrap();
     for cmd_report in report.iter() {
@@ -231,7 +231,7 @@ fn test_close_stdout_on_exit_2() {
         "--@",
         "--in=*0.stdout",
         "--in=*1.stdout",
-        exe!("consumer"),
+        exe!("in2out"),
     ])
     .unwrap();
     let mut kek = 0;
