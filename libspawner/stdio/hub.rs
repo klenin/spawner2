@@ -1,13 +1,13 @@
 use crate::{Error, Result};
-use pipe::{ReadPipe, WritePipe};
-use std::io;
-use std::io::{BufWriter, Read, Write};
+use pipe::WritePipe;
+use std::io::{self, BufWriter, Read, Write};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
+use stdio::{Istream, IstreamListeners, Ostream, OstreamIdx};
 
 /// Splits the `ReadPipe` allowing multiple readers to receive data from it.
 pub struct ReadHub {
-    src: ReadPipe,
+    istream: Istream,
     write_hubs: Vec<WriteHub>,
     buffer_size: usize,
 }
@@ -21,12 +21,13 @@ enum WriteHubKind {
 #[derive(Clone)]
 pub struct WriteHub {
     kind: Arc<Mutex<WriteHubKind>>,
+    ostream_idx: OstreamIdx,
 }
 
 impl ReadHub {
-    pub fn new(src: ReadPipe) -> Self {
+    pub fn new(istream: Istream) -> Self {
         Self {
-            src: src,
+            istream: istream,
             write_hubs: Vec::new(),
             buffer_size: 8192,
         }
@@ -36,51 +37,67 @@ impl ReadHub {
         self.write_hubs.push(wh.clone());
     }
 
-    pub fn spawn(self) -> Result<JoinHandle<()>> {
+    pub fn spawn(self) -> Result<JoinHandle<Result<()>>> {
         thread::Builder::new()
             .spawn(move || Self::main_loop(self))
             .map_err(|e| Error::from(e))
     }
 
-    fn main_loop(mut self) {
+    fn main_loop(mut self) -> Result<()> {
         let mut buffer: Vec<u8> = Vec::new();
         buffer.resize(self.buffer_size, 0);
 
         loop {
-            let bytes_read = match self.src.read(buffer.as_mut_slice()) {
+            let bytes_read = match self.istream.pipe.read(buffer.as_mut_slice()) {
                 Ok(x) => x,
-                Err(_) => return,
+                Err(_) => return Ok(()),
+            };
+            if bytes_read == 0 {
+                return Ok(());
+            }
+            let data = &buffer[..bytes_read];
+            let num_errors = match &mut self.istream.controller {
+                Some(ctl) => {
+                    let mut listeners = IstreamListeners {
+                        write_hubs: &mut self.write_hubs,
+                        num_errors: 0,
+                    };
+                    ctl.handle_data(data, &mut listeners)?;
+                    listeners.num_errors
+                }
+                None => {
+                    let mut num_errors = 0;
+                    for wh in self.write_hubs.iter_mut() {
+                        if wh.write_all(data).is_err() {
+                            num_errors += 1;
+                        }
+                    }
+                    num_errors
+                }
             };
 
-            if bytes_read == 0 {
-                // Assuming pipes are blocking.
-                // So we waited on the pipe, got 0 bytes and no errors.
-                // That case is (probably) unreachable.
-                return;
-            }
-
-            let mut errors = 0;
-            for wh in &mut self.write_hubs {
-                if wh.write_all(&buffer[..bytes_read]).is_err() {
-                    errors += 1;
-                }
-            }
-            if errors == self.write_hubs.len() {
-                // All receivers are dead.
-                return;
+            if num_errors == self.write_hubs.len() {
+                // All pipes are dead.
+                return Ok(());
             }
         }
     }
 }
 
 impl WriteHub {
-    pub fn new(dst: WritePipe) -> Self {
+    pub fn new(ostream: Ostream, idx: OstreamIdx) -> Self {
+        let pipe = ostream.pipe;
         Self {
-            kind: Arc::new(Mutex::new(match dst.is_file() {
-                true => WriteHubKind::File(BufWriter::new(dst)),
-                false => WriteHubKind::Pipe(dst),
+            kind: Arc::new(Mutex::new(match pipe.is_file() {
+                true => WriteHubKind::File(BufWriter::new(pipe)),
+                false => WriteHubKind::Pipe(pipe),
             })),
+            ostream_idx: idx,
         }
+    }
+
+    pub fn ostream_idx(&self) -> OstreamIdx {
+        self.ostream_idx
     }
 
     fn lock(&self) -> io::Result<MutexGuard<WriteHubKind>> {
