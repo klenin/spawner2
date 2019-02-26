@@ -1,5 +1,6 @@
 use std::time::Duration;
 use std::u64;
+use stdio::IstreamController;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Limits {
@@ -42,8 +43,13 @@ pub struct Command {
     pub env_vars: Vec<EnvVar>,
 }
 
-pub struct CommandCallbacks {
-    pub on_terminate: Option<Box<FnMut() + Send>>,
+pub trait OnTerminate: Send {
+    fn on_terminate(&mut self);
+}
+
+pub struct CommandController {
+    pub on_terminate: Option<Box<OnTerminate>>,
+    pub stdout_controller: Option<Box<IstreamController>>,
 }
 
 pub struct CommandBuilder {
@@ -188,11 +194,5 @@ impl CommandBuilder {
 impl AsRef<EnvVar> for EnvVar {
     fn as_ref(&self) -> &EnvVar {
         self
-    }
-}
-
-impl CommandCallbacks {
-    pub fn none() -> Self {
-        Self { on_terminate: None }
     }
 }
