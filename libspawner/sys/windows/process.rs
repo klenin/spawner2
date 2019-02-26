@@ -67,23 +67,18 @@ impl Process {
                 return Err(e);
             }
         };
+
         let creation_time = Instant::now();
-        match resume_process(id) {
-            Ok(_) => Ok(Self {
-                handle: handle,
-                id: id,
-                job: job,
-                creation_time: creation_time,
-            }),
-            Err(e) => {
-                unsafe {
-                    TerminateJobObject(job, 0);
-                    CloseHandle(handle);
-                    CloseHandle(job);
-                }
-                Err(e)
-            }
+        if !cmd.spawn_suspended {
+            resume_process(id)?;
         }
+
+        Ok(Self {
+            handle: handle,
+            id: id,
+            job: job,
+            creation_time: creation_time,
+        })
     }
 
     /// Returns status of the root process. Note that `Status::Finished` does not guarantee

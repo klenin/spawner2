@@ -233,6 +233,7 @@ impl SessionBuilderEx {
                 .env_vars(&opts.env_vars)
                 .monitor_interval(opts.monitor_interval)
                 .show_gui(opts.show_window)
+                .spawn_suspended(cmd_info.kind.is_agent())
                 .limits(Limits {
                     max_wall_clock_time: opts.wall_clock_time_limit,
                     max_idle_time: opts.idle_time_limit,

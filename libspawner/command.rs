@@ -37,6 +37,7 @@ pub struct Command {
     pub args: Vec<String>,
     pub current_dir: Option<String>,
     pub show_gui: bool,
+    pub spawn_suspended: bool,
     pub limits: Limits,
     pub monitor_interval: Duration,
     pub env_kind: EnvKind,
@@ -76,6 +77,7 @@ impl Command {
             args: Vec::new(),
             current_dir: None,
             show_gui: false,
+            spawn_suspended: false,
             limits: Limits::none(),
             monitor_interval: Duration::from_millis(1),
             env_kind: EnvKind::Inherit,
@@ -119,6 +121,11 @@ impl CommandBuilder {
 
     pub fn show_gui(mut self, show: bool) -> Self {
         self.cmd.show_gui = show;
+        self
+    }
+
+    pub fn spawn_suspended(mut self, suspended: bool) -> Self {
+        self.cmd.spawn_suspended = suspended;
         self
     }
 
