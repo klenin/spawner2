@@ -23,6 +23,6 @@ pub use error::*;
 pub type Result<T> = std::result::Result<T, self::Error>;
 
 mod error;
-mod runner_private;
+mod runner_impl;
 mod stdio;
 mod sys;
