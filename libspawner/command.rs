@@ -1,7 +1,7 @@
 use std::time::Duration;
 use std::u64;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Limits {
     /// The maximum allowed amount of time for a command.
     pub max_wall_clock_time: Option<Duration>,
@@ -17,20 +17,20 @@ pub struct Limits {
     pub max_processes: Option<usize>,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum EnvKind {
     Clear,
     Inherit,
     UserDefault,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct EnvVar {
     pub name: String,
     pub val: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Command {
     pub app: String,
     pub args: Vec<String>,

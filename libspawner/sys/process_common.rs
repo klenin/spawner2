@@ -7,7 +7,7 @@ pub struct ProcessStdio {
     pub stderr: WritePipe,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct ProcessInfo {
     /// The amount of time elapsed since process creation.
     pub wall_clock_time: Duration,
