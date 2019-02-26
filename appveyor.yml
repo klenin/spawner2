@@ -3,6 +3,8 @@ branches:
     - /^v(\d+\.)+\d+$/
     - master
 
+skip_non_tags: true
+
 os: Visual Studio 2015
 
 install:
@@ -31,7 +33,11 @@ artifacts:
     name: sp
 
 deploy:
+  tag: $(APPVEYOR_REPO_TAG_NAME)
+  release: $(APPVEYOR_REPO_TAG_NAME)
   provider: GitHub
   auth_token: $(GITHUB_AUTH_TOKEN)
   artifact: sp
   force_update: true
+  on:
+    APPVEYOR_REPO_TAG: true
