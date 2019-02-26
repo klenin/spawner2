@@ -1,99 +1,170 @@
 use crate::exe;
-use common::{read_all, TmpDir};
+use common::{read_all, write_all, TmpDir};
 use spawner::driver::new::{run, CommandReport};
+use term_reason::{ensure_idle_time_limit_exceeded, ensure_user_time_limit_exceeded};
 
 #[test]
-fn test_termination_msg() {
-    let tmp = TmpDir::new();
-    let err = tmp.file("err.txt");
-    run(&[
+fn test_spawn_suspended() {
+    let report = run(&[
         "--separator=@",
-        "--controller",
-        format!("--err={}", err).as_str(),
-        exe!("in2out"),
+        "-d=1",
         "--@",
-        exe!("empty"),
+        "--controller",
+        exe!("sleep"),
+        "2",
+        "--@",
+        "-y=0.5",
+        exe!("loop"),
     ])
     .unwrap();
-    assert_eq!(b"1T#\n", read_all(err).as_bytes());
+    ensure_idle_time_limit_exceeded(report.at(1));
 }
 
 #[test]
-fn test_multiple_termination_msgs() {
-    let tmp = TmpDir::new();
-    let err = tmp.file("err.txt");
-    run(&[
+fn test_resume_agent_on_controller_termination() {
+    let report = run(&[
         "--separator=@",
         "--controller",
-        format!("--err={}", err).as_str(),
+        exe!("empty"),
+        "--@",
+        "-d=1",
+        "-tl=0.5",
+        exe!("loop"),
+    ])
+    .unwrap();
+    ensure_user_time_limit_exceeded(report.at(1));
+}
+
+#[test]
+fn test_resume_and_agent_termination_msgs() {
+    let tmp = TmpDir::new();
+    let stdin = tmp.file("stdin.txt");
+    let stderr = tmp.file("stderr.txt");
+
+    write_all(&stdin, "1W#\n");
+    run(&[
+        "--separator=@",
+        "-d=1",
+        "--@",
+        "--controller",
+        format!("--in={}", stdin).as_str(),
+        format!("--err={}", stderr).as_str(),
         exe!("in2out"),
         "--@",
-        exe!("empty"),
-        "--@",
-        exe!("empty"),
-        "--@",
+        "--in=*0.stdout",
         exe!("empty"),
     ])
     .unwrap();
-
-    let data = read_all(err);
-    let mut results: Vec<&str> = data.lines().map(|line| line).collect();
-    results.sort();
-
-    let expected = [b"1T#", b"2T#", b"3T#"];
-    for (result, expected) in results.iter().zip(expected.iter()) {
-        assert_eq!(&result.as_bytes(), expected);
-    }
+    assert_eq!(b"1W#\n1T#\n", read_all(stderr).as_bytes());
 }
 
 #[test]
 fn test_message_to_agent() {
     let tmp = TmpDir::new();
-    let out1 = tmp.file("out1.txt");
-    let out2 = tmp.file("out2.txt");
+    let stdin = tmp.file("stdin.txt");
+    let stderr1 = tmp.file("stderr1.txt");
+    let stderr2 = tmp.file("stderr2.txt");
+
+    write_all(&stdin, "1W#\n2W#\n2#message\n");
     run(&[
         "--separator=@",
-        "--controller",
-        exe!("stdout_writer"),
-        "2#message\n",
-        "1",
+        "-d=1",
         "--@",
-        "--in=*0.stdout",
-        format!("--err={}", out1).as_str(),
+        "--controller",
+        format!("--in={}", stdin).as_str(),
         exe!("in2out"),
         "--@",
+        format!("--err={}", stderr1).as_str(),
         "--in=*0.stdout",
-        format!("--err={}", out2).as_str(),
+        exe!("in2out"),
+        "--@",
+        format!("--err={}", stderr2).as_str(),
+        "--in=*0.stdout",
         exe!("in2out"),
     ])
     .unwrap();
-    assert_eq!("", read_all(out1));
-    assert_eq!("message\n", read_all(out2));
+    assert_eq!("", read_all(stderr1));
+    assert_eq!("message\n", read_all(stderr2));
 }
 
 #[test]
 fn test_message_from_agent() {
     let tmp = TmpDir::new();
-    let out1 = tmp.file("out1.txt");
-    let out2 = tmp.file("out2.txt");
+    let stdin = tmp.file("stdin.txt");
+    let stderr = tmp.file("stderr.txt");
+
+    write_all(&stdin, "1W#\n");
     run(&[
         "--separator=@",
+        "-d=1",
+        "--@",
         "--controller",
-        exe!("empty"),
+        format!("--in={}", stdin).as_str(),
+        format!("--err={}", stderr).as_str(),
+        exe!("in2out"),
         "--@",
-        format!("--out={}", out1).as_str(),
-        exe!("stdout_writer"),
-        "message1\n",
-        "1",
-        "--@",
-        format!("--out={}", out2).as_str(),
-        exe!("stdout_writer"),
-        "message2\n",
-        "1",
+        "--in=*0.stdout",
+        "--out=*0.stdin",
+        exe!("arg_printer"),
+        "message\n",
     ])
     .unwrap();
-    assert_eq!("1#message1\n", read_all(out1));
-    assert_eq!("2#message2\n", read_all(out2));
+    assert_eq!("1W#\n1#message\n1T#\n", read_all(stderr));
+}
+
+#[test]
+fn test_controller_message_concatenation() {
+    let tmp = TmpDir::new();
+    let stderr = tmp.file("stderr.txt");
+    run(&[
+        "--separator=@",
+        "-d=1",
+        "--@",
+        "--controller",
+        exe!("arg_printer"),
+        "1W",
+        "#\n",
+        "1",
+        "#",
+        "me",
+        "ssa",
+        "ge",
+        "\n",
+        "--@",
+        "--in=*0.stdout",
+        format!("--err={}", stderr).as_str(),
+        exe!("in2out"),
+    ])
+    .unwrap();
+    assert_eq!("message\n", read_all(stderr));
+}
+
+#[test]
+fn test_agent_message_concatenation() {
+    let tmp = TmpDir::new();
+    let stdin = tmp.file("stdin.txt");
+    let stderr = tmp.file("stderr.txt");
+
+    write_all(&stdin, "1W#\n");
+    run(&[
+        "--separator=@",
+        "-d=1",
+        "--@",
+        "--controller",
+        format!("--in={}", stdin).as_str(),
+        format!("--err={}", stderr).as_str(),
+        exe!("in2out"),
+        "--@",
+        "--in=*0.stdout",
+        "--out=*0.stdin",
+        exe!("arg_printer"),
+        "me",
+        "ssa",
+        "ge",
+        "\n",
+    ])
+    .unwrap();
+    assert_eq!("1W#\n1#message\n1T#\n", read_all(stderr));
 }
 
 pub fn ensure_terminated_by_controller(report: CommandReport) {
@@ -102,15 +173,15 @@ pub fn ensure_terminated_by_controller(report: CommandReport) {
 }
 
 #[test]
-fn test_terminate_agent() {
+fn test_agent_terminated_by_controller() {
     let report = run(&[
         "--separator=@",
         "-d=1",
         "--@",
         "--controller",
         exe!("arg_printer"),
-        "1S#",
-        "2S#",
+        "1S#\n",
+        "2S#\n",
         "--@",
         "--in=*0.stdout",
         exe!("loop"),
@@ -119,7 +190,24 @@ fn test_terminate_agent() {
         exe!("loop"),
     ])
     .unwrap();
-
     ensure_terminated_by_controller(report.at(1));
     ensure_terminated_by_controller(report.at(2));
+}
+
+#[test]
+fn test_agent_suspended_after_write() {
+    let report = run(&[
+        "--separator=@",
+        "-d=1",
+        "--@",
+        "--controller",
+        exe!("loop"),
+        "1W#\n",
+        "--@",
+        "-y=0.5",
+        exe!("loop"),
+        "message\n",
+    ])
+    .unwrap();
+    ensure_idle_time_limit_exceeded(report.at(1));
 }
