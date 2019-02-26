@@ -157,6 +157,7 @@ impl RunnerImpl {
                     Message::ResetTimers => {
                         self.info.wall_clock_time = Duration::from_millis(0);
                         self.info.total_user_time = Duration::from_millis(0);
+                        self.total_idle_time = Duration::from_millis(0);
                     }
                 }
             }
