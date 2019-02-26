@@ -13,3 +13,6 @@ mod redirect;
 
 #[cfg(test)]
 mod env;
+
+#[cfg(test)]
+mod protocol;

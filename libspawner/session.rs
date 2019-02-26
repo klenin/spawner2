@@ -1,20 +1,20 @@
-pub use stdio::router::{IstreamIdx, OstreamIdx};
-
-use crate::Result;
-use command::{Command, CommandCallbacks};
+use crate::{Error, Result};
+use command::{Command, CommandController, OnTerminate};
 use pipe::{ReadPipe, WritePipe};
 use process::ProcessStdio;
 use runner::{Runner, RunnerReport};
-use runner_private::{self, RunnerThread};
+use runner_impl::{self, RunnerThread};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::fmt;
 use std::path::{Path, PathBuf};
 use stdio::router::{Router, RouterBuilder};
+use stdio::{IstreamIdx, OstreamIdx};
 
 pub struct Session {
     router: Router,
     runner_threads: Vec<RunnerThread>,
-    runners: Vec<Runner>,
+    stdio_mappings: Vec<StdioMapping>,
 }
 
 enum IstreamDstKind {
@@ -44,33 +44,55 @@ pub struct StdioMapping {
     pub stderr: IstreamIdx,
 }
 
-struct Target {
+struct TargetInfo {
     cmd: Command,
-    cbs: CommandCallbacks,
+    on_terminate: Option<Box<OnTerminate>>,
     stdio_mapping: StdioMapping,
 }
 
 pub struct SessionBuilder {
-    targets: Vec<Target>,
+    targets: Vec<TargetInfo>,
     builder: RouterBuilder,
     output_files: HashMap<PathBuf, OstreamIdx>,
 }
 
+#[derive(Debug)]
+pub struct CommandErrors {
+    pub errors: Vec<Error>,
+}
+
+pub type CommandResult = std::result::Result<RunnerReport, CommandErrors>;
+
 impl Session {
-    pub fn runners(&self) -> &Vec<Runner> {
-        &self.runners
+    pub fn runners(&self) -> Vec<Runner> {
+        self.runner_threads
+            .iter()
+            .map(|t| t.runner().clone())
+            .collect()
     }
 
-    pub fn wait(mut self) -> Result<Vec<RunnerReport>> {
-        let mut reports: Vec<RunnerReport> = Vec::new();
-        for thread in self.runner_threads.drain(..) {
-            reports.push(thread.join()?);
-        }
+    pub fn wait(self) -> Vec<CommandResult> {
+        let mut results: Vec<CommandResult> = self
+            .runner_threads
+            .into_iter()
+            .map(|thread| thread.join().map_err(|e| CommandErrors { errors: vec![e] }))
+            .collect();
 
-        // It is (almost) impossible to hang on this because all pipes
-        // (except user-provided ones) are dead at this point.
-        self.router.stop()?;
-        Ok(reports)
+        let mut stop_errors = self.router.stop();
+        for (idx, mapping) in self.stdio_mappings.into_iter().enumerate() {
+            for istream in [&mapping.stdout, &mapping.stderr].iter() {
+                let err = match stop_errors.istream_errors.remove(istream) {
+                    Some(e) => e,
+                    None => continue,
+                };
+                if results[idx].is_ok() {
+                    results[idx] = Err(CommandErrors { errors: vec![err] });
+                } else {
+                    results[idx].as_mut().unwrap_err().errors.push(err);
+                }
+            }
+        }
+        results
     }
 }
 
@@ -123,15 +145,15 @@ impl SessionBuilder {
         }
     }
 
-    pub fn add_cmd(&mut self, cmd: Command, cbs: CommandCallbacks) -> StdioMapping {
+    pub fn add_cmd(&mut self, cmd: Command, ctl: CommandController) -> StdioMapping {
         let mapping = StdioMapping {
             stdin: self.builder.add_ostream(None),
-            stdout: self.builder.add_istream(None),
-            stderr: self.builder.add_istream(None),
+            stdout: self.builder.add_istream(None, ctl.stdout_controller),
+            stderr: self.builder.add_istream(None, None),
         };
-        self.targets.push(Target {
+        self.targets.push(TargetInfo {
             cmd: cmd,
-            cbs: cbs,
+            on_terminate: ctl.on_terminate,
             stdio_mapping: mapping,
         });
         mapping
@@ -154,8 +176,8 @@ impl SessionBuilder {
 
     pub fn add_ostream_src(&mut self, ostream: OstreamIdx, src: OstreamSrc) -> Result<()> {
         let istream = match src.kind {
-            OstreamSrcKind::Pipe(p) => self.builder.add_istream(Some(p)),
-            OstreamSrcKind::File(f) => self.builder.add_istream(Some(ReadPipe::open(f)?)),
+            OstreamSrcKind::Pipe(p) => self.builder.add_istream(Some(p), None),
+            OstreamSrcKind::File(f) => self.builder.add_istream(Some(ReadPipe::open(f)?), None),
             OstreamSrcKind::Istream(i) => i,
         };
         self.builder.connect(istream, ostream)
@@ -165,25 +187,35 @@ impl SessionBuilder {
         let (mut iolist, router) = self.builder.spawn()?;
         let mut sess = Session {
             router: router,
-            runners: Vec::new(),
             runner_threads: Vec::new(),
+            stdio_mappings: Vec::new(),
         };
 
-        for target in self.targets.into_iter() {
-            let mapping = target.stdio_mapping;
-            let thread = runner_private::spawn(
-                target.cmd,
-                target.cbs,
+        for target_info in self.targets.into_iter() {
+            let mapping = target_info.stdio_mapping;
+            sess.runner_threads.push(runner_impl::spawn(
+                target_info.cmd,
+                target_info.on_terminate,
                 ProcessStdio {
                     stdin: iolist.ostream_dsts[mapping.stdin.0].take().unwrap(),
                     stdout: iolist.istream_srcs[mapping.stdout.0].take().unwrap(),
                     stderr: iolist.istream_srcs[mapping.stderr.0].take().unwrap(),
                 },
-            )?;
-            sess.runners.push(thread.runner().clone());
-            sess.runner_threads.push(thread);
+            )?);
+            sess.stdio_mappings.push(mapping);
         }
 
         Ok(sess)
+    }
+}
+
+impl std::error::Error for CommandErrors {}
+
+impl fmt::Display for CommandErrors {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for e in self.errors.iter() {
+            write!(f, "{}\n", e)?;
+        }
+        Ok(())
     }
 }

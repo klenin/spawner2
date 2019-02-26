@@ -1,4 +1,5 @@
 pub mod opts;
+mod protocol;
 mod report;
 mod value_parser;
 
@@ -8,23 +9,42 @@ mod tests;
 pub use self::report::*;
 
 use self::opts::{Options, PipeKind, StdioRedirectKind, StdioRedirectList};
+use self::protocol::{
+    AgentIdx, AgentStdout, CommandIdx, Context, ControllerStdin, ControllerStdout, OnAgentTerminate,
+};
 use crate::{Error, Result};
-use command::{Command, CommandBuilder, CommandCallbacks, Limits};
+use command::{CommandBuilder, CommandController, Limits};
 use driver::prelude::*;
 use json::JsonValue;
-use session::{IstreamDst, IstreamIdx, OstreamIdx, OstreamSrc, SessionBuilder, StdioMapping};
-use std::cell::RefCell;
+use pipe::{self, ReadPipe};
+use session::{IstreamDst, OstreamSrc, Session, SessionBuilder, StdioMapping};
 use std::collections::HashMap;
-use std::env;
 use std::fs;
-use std::io::Write;
+use std::io::{self, Write};
 use std::u64;
+use stdio::{IstreamIdx, OstreamIdx};
+
+pub enum CommandKind {
+    Default,
+    Controller,
+    Agent(AgentIdx),
+}
+
+pub struct CommandInfo {
+    pub opts: Options,
+    pub kind: CommandKind,
+}
 
 pub struct Driver {
-    pub controller: Option<usize>,
-    pub cmds: Vec<Options>,
-    builder: RefCell<SessionBuilder>,
-    stdio_mappings: Vec<StdioMapping>,
+    pub cmds: Vec<CommandInfo>,
+}
+
+struct SessionBuilderEx {
+    base: SessionBuilder,
+    ctx: Context,
+    mappings: Vec<StdioMapping>,
+    controller_stdin_r: ReadPipe,
+    controller_stdin_w: ControllerStdin,
 }
 
 pub fn parse<T, U>(argv: T) -> Result<Driver>
@@ -72,7 +92,7 @@ where
         }
     }
 
-    Driver::create(controller, cmds)
+    Ok(Driver::new(controller, cmds))
 }
 
 pub fn run<T, U>(argv: T) -> Result<Report>
@@ -80,26 +100,36 @@ where
     T: IntoIterator<Item = U>,
     U: AsRef<str>,
 {
-    let driver = parse(argv)?;
-    Ok(driver.run())
+    let report = parse(argv).and_then(|driver| driver.run())?;
+    if report.cmds.len() == 0 {
+        println!("{}", Options::help());
+        return Ok(report);
+    }
+
+    print_report(&report)?;
+    Ok(report)
 }
 
 pub fn main() {
-    let args: Vec<_> = env::args().collect();
-    let driver = match parse(&args[1..]) {
-        Ok(x) => x,
-        Err(e) => {
-            eprintln!("{}", e);
-            return;
+    match run(std::env::args().skip(1)) {
+        Err(e) => eprintln!("{}", e),
+        Ok(r) => {
+            for r in r.iter() {
+                if let Err(list) = r.runner_report {
+                    for e in list.errors.iter() {
+                        eprintln!("{}", e);
+                        eprintln!("{}\n", e.call_stack());
+                    }
+                }
+            }
         }
-    };
-
-    if driver.cmds.len() == 0 {
-        println!("{}", Options::help());
-        return;
     }
+    // if let Err(e) = run(std::env::args().skip(1)) {
+    //     eprintln!("{}", e);
+    // }
+}
 
-    let report = driver.run();
+fn print_report(report: &Report) -> io::Result<()> {
     let mut output_files: HashMap<&String, Vec<CommandReportKind>> = HashMap::new();
     for (idx, cmd) in report.cmds.iter().enumerate() {
         let cmd_report = report.at(idx);
@@ -114,163 +144,238 @@ pub fn main() {
         }
     }
 
-    for (filename, report_kinds) in output_files.into_iter() {
+    for (filename, kinds) in output_files.into_iter() {
         let _ = fs::remove_file(filename);
-        let mut file = match fs::File::create(filename) {
-            Ok(x) => x,
-            Err(e) => {
-                eprintln!("{}", e);
-                continue;
-            }
-        };
+        let mut file = fs::File::create(filename)?;
+        if kinds.len() == 1 && !kinds[0].is_json() {
+            write!(&mut file, "{}", kinds[0])?;
+        } else if kinds.iter().all(|k| k.is_json()) {
+            let reports = JsonValue::Array(kinds.into_iter().map(|k| k.into_json()).collect());
+            reports.write_pretty(&mut file, 4)?;
+        }
+    }
+    Ok(())
+}
 
-        if report_kinds.len() == 1 && !report_kinds[0].is_json() {
-            let _ = write!(&mut file, "{}", report_kinds[0]);
-        } else if report_kinds.iter().all(|k| k.is_json()) {
-            let reports =
-                JsonValue::Array(report_kinds.into_iter().map(|k| k.into_json()).collect());
-            let _ = reports.write_pretty(&mut file, 4);
+impl CommandKind {
+    pub fn is_agent(&self) -> bool {
+        match self {
+            CommandKind::Agent(_) => true,
+            _ => false,
+        }
+    }
+    pub fn is_controller(&self) -> bool {
+        match self {
+            CommandKind::Controller => true,
+            _ => false,
         }
     }
 }
 
 impl Driver {
-    fn create(controller: Option<usize>, cmds: Vec<Options>) -> Result<Driver> {
-        let mut driver = Driver {
-            controller: controller,
-            cmds: cmds,
-            builder: RefCell::new(SessionBuilder::new()),
-            stdio_mappings: Vec::new(),
-        };
+    fn new(controller_idx: Option<usize>, opts: Vec<Options>) -> Driver {
+        let mut driver = Driver { cmds: Vec::new() };
+        let mut agent_idx = 0;
 
-        for cmd in driver.cmds.iter() {
-            driver.stdio_mappings.push(
-                driver
-                    .builder
-                    .borrow_mut()
-                    .add_cmd(Command::from(cmd), CommandCallbacks::none()),
-            );
+        for (idx, opts) in opts.into_iter().enumerate() {
+            let is_agent = !opts.controller;
+            driver.cmds.push(CommandInfo {
+                opts: opts,
+                kind: match controller_idx {
+                    Some(controller_idx) => {
+                        if idx == controller_idx {
+                            CommandKind::Controller
+                        } else {
+                            CommandKind::Agent(AgentIdx(agent_idx))
+                        }
+                    }
+                    None => CommandKind::Default,
+                },
+            });
+
+            if is_agent {
+                agent_idx += 1;
+            }
         }
 
-        for (cmd, mapping) in driver.cmds.iter().zip(driver.stdio_mappings.iter()) {
-            driver.redirect_ostream(mapping.stdin, &cmd.stdin_redirect)?;
-            driver.redirect_istream(mapping.stdout, &cmd.stdout_redirect)?;
-            driver.redirect_istream(mapping.stderr, &cmd.stderr_redirect)?;
+        driver
+    }
+
+    pub fn run(self) -> Result<Report> {
+        let mut builder = SessionBuilderEx::create()?;
+        builder.add_cmds(&self);
+        builder.setup_stdio(&self)?;
+
+        Ok(Report {
+            runner_reports: builder.spawn(&self)?.wait(),
+            cmds: self.cmds.into_iter().map(|cmd| cmd.opts).collect(),
+        })
+    }
+}
+
+impl SessionBuilderEx {
+    fn create() -> Result<Self> {
+        pipe::create().map(|(r, w)| Self {
+            base: SessionBuilder::new(),
+            mappings: Vec::new(),
+            ctx: Context::new(),
+            controller_stdin_r: r,
+            controller_stdin_w: ControllerStdin::new(w),
+        })
+    }
+
+    fn add_cmds(&mut self, driver: &Driver) {
+        for (cmd_idx, cmd_info) in driver.cmds.iter().enumerate() {
+            let opts = &cmd_info.opts;
+            let cmd = CommandBuilder::new(opts.argv[0].clone())
+                .args(opts.argv.iter().skip(1))
+                .env_kind(opts.env)
+                .env_vars(&opts.env_vars)
+                .monitor_interval(opts.monitor_interval)
+                .show_gui(opts.show_window)
+                .limits(Limits {
+                    max_wall_clock_time: opts.wall_clock_time_limit,
+                    max_idle_time: opts.idle_time_limit,
+                    max_user_time: opts.time_limit,
+                    max_memory_usage: opts.memory_limit.map(|v| mb2b(v)),
+                    max_output_size: opts.write_limit.map(|v| mb2b(v)),
+                    max_processes: opts.process_count,
+                })
+                .current_dir_opt(opts.working_directory.as_ref())
+                .build();
+
+            let ctl = self.cmd_controller(cmd_idx, &driver);
+            let mapping = self.base.add_cmd(cmd, ctl);
+            self.mappings.push(mapping);
+        }
+    }
+
+    fn setup_stdio(&mut self, driver: &Driver) -> Result<()> {
+        for (idx, cmd) in driver.cmds.iter().enumerate() {
+            let mapping = self.mappings[idx];
+            self.redirect_ostream(mapping.stdin, &cmd.opts.stdin_redirect)?;
+            self.redirect_istream(mapping.stdout, &cmd.opts.stdout_redirect)?;
+            self.redirect_istream(mapping.stderr, &cmd.opts.stderr_redirect)?;
+        }
+        Ok(())
+    }
+
+    fn spawn(mut self, driver: &Driver) -> Result<Session> {
+        if let Some(controller_idx) = driver.cmds.iter().position(|cmd| cmd.kind.is_controller()) {
+            let stdin = self.mappings[controller_idx].stdin;
+            self.base
+                .add_ostream_src(stdin, OstreamSrc::pipe(self.controller_stdin_r))?;
         }
 
-        Ok(driver)
+        let sess = self.base.spawn()?;
+        self.ctx.init(sess.runners(), self.mappings);
+        Ok(sess)
+    }
+
+    fn cmd_controller(&self, cmd_idx: usize, driver: &Driver) -> CommandController {
+        let cmds = &driver.cmds;
+        match cmds[cmd_idx].kind {
+            CommandKind::Default => CommandController {
+                on_terminate: None,
+                stdout_controller: None,
+            },
+            CommandKind::Agent(agent_idx) => CommandController {
+                on_terminate: Some(Box::new(OnAgentTerminate::new(
+                    agent_idx,
+                    self.controller_stdin_w.clone(),
+                ))),
+                stdout_controller: Some(Box::new(AgentStdout::new(
+                    self.ctx.clone(),
+                    agent_idx,
+                    CommandIdx(cmd_idx),
+                ))),
+            },
+            CommandKind::Controller => {
+                let agent_indices = (0..cmds.len())
+                    .filter_map(|i| {
+                        if cmds[i].kind.is_agent() {
+                            Some(CommandIdx(i))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                CommandController {
+                    on_terminate: None,
+                    stdout_controller: Some(Box::new(ControllerStdout::new(
+                        self.ctx.clone(),
+                        CommandIdx(cmd_idx),
+                        agent_indices,
+                    ))),
+                }
+            }
+        }
     }
 
     fn redirect_istream(
-        &self,
+        &mut self,
         istream: IstreamIdx,
         redirect_list: &StdioRedirectList,
     ) -> Result<()> {
-        let stdio_len = self.stdio_mappings.len();
         for redirect in redirect_list.items.iter() {
-            match &redirect.kind {
-                StdioRedirectKind::File(s) => {
-                    self.builder
-                        .borrow_mut()
-                        .add_istream_dst(istream, IstreamDst::file(s))?;
-                }
+            let dst = match &redirect.kind {
+                StdioRedirectKind::File(f) => Some(IstreamDst::file(f)),
                 StdioRedirectKind::Pipe(pipe_kind) => match pipe_kind {
-                    PipeKind::Null => { /* pipes are null by default */ }
-                    PipeKind::Std => { /* todo */ }
                     PipeKind::Stdin(i) => {
-                        if *i >= stdio_len {
-                            return Err(Error::from(format!("stdin index {} is out of range", i)));
-                        }
-                        self.builder.borrow_mut().add_istream_dst(
-                            istream,
-                            IstreamDst::ostream(self.stdio_mappings[*i].stdin),
-                        )?;
+                        self.check_stdio_idx("stdin", *i)?;
+                        Some(IstreamDst::ostream(self.mappings[*i].stdin))
                     }
                     PipeKind::Stderr(i) => {
-                        if *i >= stdio_len {
-                            return Err(Error::from(format!("stderr index {} is out of range", i)));
-                        }
-                        self.builder.borrow_mut().add_istream_dst(
-                            istream,
-                            IstreamDst::ostream(self.stdio_mappings[*i].stdin),
-                        )?;
+                        self.check_stdio_idx("stderr", *i)?;
+                        Some(IstreamDst::ostream(self.mappings[*i].stdin))
                     }
-                    _ => {}
+                    _ => None,
                 },
+            };
+            if let Some(dst) = dst {
+                self.base.add_istream_dst(istream, dst)?;
             }
         }
         Ok(())
     }
 
     fn redirect_ostream(
-        &self,
+        &mut self,
         ostream: OstreamIdx,
         redirect_list: &StdioRedirectList,
     ) -> Result<()> {
         for redirect in redirect_list.items.iter() {
-            match &redirect.kind {
-                StdioRedirectKind::File(s) => {
-                    self.builder
-                        .borrow_mut()
-                        .add_ostream_src(ostream, OstreamSrc::file(s))?;
-                }
+            let src = match &redirect.kind {
+                StdioRedirectKind::File(f) => Some(OstreamSrc::file(f)),
                 StdioRedirectKind::Pipe(pipe_kind) => match pipe_kind {
-                    PipeKind::Null => { /* pipes are null by default */ }
-                    PipeKind::Std => { /* todo */ }
                     PipeKind::Stdout(i) => {
-                        if *i >= self.stdio_mappings.len() {
-                            return Err(Error::from(format!("stdout index {} is out of range", i)));
-                        }
-                        self.builder.borrow_mut().add_ostream_src(
-                            ostream,
-                            OstreamSrc::istream(self.stdio_mappings[*i].stdout),
-                        )?;
+                        self.check_stdio_idx("stdout", *i)?;
+                        Some(OstreamSrc::istream(self.mappings[*i].stdout))
                     }
-                    _ => {}
+                    _ => None,
                 },
+            };
+            if let Some(src) = src {
+                self.base.add_ostream_src(ostream, src)?;
             }
         }
         Ok(())
     }
 
-    pub fn run(self) -> Report {
-        Report {
-            runner_reports: self
-                .builder
-                .into_inner()
-                .spawn()
-                .and_then(|sess| sess.wait()),
-            cmds: self.cmds,
+    fn check_stdio_idx(&self, stream: &str, idx: usize) -> Result<()> {
+        if idx >= self.mappings.len() {
+            Err(Error::from(format!("{} index is out of range", stream)))
+        } else {
+            Ok(())
         }
     }
 }
 
-pub(crate) fn mb2b(mb: f64) -> u64 {
+fn mb2b(mb: f64) -> u64 {
     let b = mb * 1024.0 * 1024.0;
     if b.is_infinite() {
         u64::MAX
     } else {
         b as u64
-    }
-}
-
-impl From<&Options> for Command {
-    fn from(opts: &Options) -> Command {
-        CommandBuilder::new(opts.argv[0].clone())
-            .args(opts.argv.iter().skip(1))
-            .env_kind(opts.env)
-            .env_vars(&opts.env_vars)
-            .monitor_interval(opts.monitor_interval)
-            .show_gui(opts.show_window)
-            .limits(Limits {
-                max_wall_clock_time: opts.wall_clock_time_limit,
-                max_idle_time: opts.idle_time_limit,
-                max_user_time: opts.time_limit,
-                max_memory_usage: opts.memory_limit.map(|v| mb2b(v)),
-                max_output_size: opts.write_limit.map(|v| mb2b(v)),
-                max_processes: opts.process_count,
-            })
-            .current_dir_opt(opts.working_directory.as_ref())
-            .build()
     }
 }

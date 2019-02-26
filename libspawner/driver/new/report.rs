@@ -1,13 +1,13 @@
-use crate::{Error, Result};
 use driver::new::mb2b;
 use driver::new::opts::{Options, StdioRedirectList};
 use json::{array, object, JsonValue};
 use runner::{ExitStatus, RunnerReport, TerminationReason};
+use session::{CommandErrors, CommandResult};
 use std::fmt::{self, Display, Formatter};
 use std::time::Duration;
 
 pub struct Report {
-    pub runner_reports: Result<Vec<RunnerReport>>,
+    pub runner_reports: Vec<CommandResult>,
     pub cmds: Vec<Options>,
 }
 
@@ -17,7 +17,7 @@ pub enum CommandReportKind {
 }
 
 pub struct CommandReport<'a> {
-    pub runner_report: std::result::Result<&'a RunnerReport, &'a Error>,
+    pub runner_report: std::result::Result<&'a RunnerReport, &'a CommandErrors>,
     pub cmd: &'a Options,
 }
 
@@ -27,13 +27,10 @@ pub struct CommandReportIterator<'a> {
 }
 
 impl Report {
-    pub fn at(&self, index: usize) -> CommandReport {
+    pub fn at(&self, idx: usize) -> CommandReport {
         CommandReport {
-            runner_report: match &self.runner_reports {
-                Ok(reports) => Ok(&reports[index]),
-                Err(e) => Err(e),
-            },
-            cmd: &self.cmds[index],
+            runner_report: self.runner_reports[idx].as_ref(),
+            cmd: &self.cmds[idx],
         }
     }
 
