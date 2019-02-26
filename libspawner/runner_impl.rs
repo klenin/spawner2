@@ -1,9 +1,8 @@
 use crate::{Error, Result};
-use command::{Command, CommandCallbacks};
+use command::{Command, OnTerminate};
 use process::{Process, ProcessInfo, ProcessStatus, ProcessStdio};
 use runner::{ExitStatus, Runner, RunnerReport, TerminationReason};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::mpsc::{channel, Receiver};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -12,35 +11,40 @@ pub struct RunnerThread {
     runner: Runner,
 }
 
+pub enum Message {
+    Terminate,
+    Suspend,
+    Resume,
+    ResetTimers,
+}
+
 struct RunnerImpl {
     cmd: Command,
     info: ProcessInfo,
     last_check_time: Option<Instant>,
     total_idle_time: Duration,
     exit_status: Option<ExitStatus>,
-    is_killed: Arc<AtomicBool>,
+    receiver: Receiver<Message>,
 }
 
 struct OnTerminateGuard {
-    cb: Option<Box<FnMut() + Send>>,
+    handler: Option<Box<OnTerminate>>,
 }
 
 pub fn spawn(
     cmd: Command,
-    cmd_callbacks: CommandCallbacks,
+    on_terminate: Option<Box<OnTerminate>>,
     stdio: ProcessStdio,
 ) -> Result<RunnerThread> {
-    let monitoring_loop = RunnerImpl::new(cmd);
-    let is_killed = Arc::downgrade(&monitoring_loop.is_killed);
+    let (sender, receiver) = channel::<Message>();
+    let monitoring_loop = RunnerImpl::new(cmd, receiver);
 
     thread::Builder::new()
-        .spawn(move || RunnerImpl::spawn(monitoring_loop, cmd_callbacks, stdio))
+        .spawn(move || RunnerImpl::main_loop(monitoring_loop, on_terminate, stdio))
         .map_err(|e| Error::from(e))
         .map(|handle| RunnerThread {
             handle: handle,
-            runner: Runner {
-                is_killed: is_killed,
-            },
+            runner: Runner { sender: sender },
         })
 }
 
@@ -58,14 +62,14 @@ impl RunnerThread {
 }
 
 impl RunnerImpl {
-    fn new(cmd: Command) -> Self {
+    fn new(cmd: Command, receiver: Receiver<Message>) -> Self {
         Self {
             cmd: cmd,
             info: ProcessInfo::zeroed(),
             last_check_time: None,
             total_idle_time: Duration::from_millis(0),
             exit_status: None,
-            is_killed: Arc::new(AtomicBool::new(false)),
+            receiver: receiver,
         }
     }
 
@@ -117,20 +121,15 @@ impl RunnerImpl {
         true
     }
 
-    fn spawn(
+    fn main_loop(
         mut self,
-        mut cmd_callbacks: CommandCallbacks,
+        on_terminate: Option<Box<OnTerminate>>,
         stdio: ProcessStdio,
     ) -> Result<RunnerReport> {
-        let _on_terminate_guard = OnTerminateGuard::new(cmd_callbacks.on_terminate.take());
+        let _on_terminate_guard = OnTerminateGuard::new(on_terminate);
         let process = Process::spawn(&self.cmd, stdio)?;
 
         loop {
-            if self.is_killed.load(Ordering::SeqCst) {
-                self.exit_status = Some(ExitStatus::Terminated(TerminationReason::Other));
-                break;
-            }
-
             match process.status()? {
                 ProcessStatus::Running => {
                     if self.check_limits(process.info()?) {
@@ -146,6 +145,22 @@ impl RunnerImpl {
                     break;
                 }
             }
+
+            if let Ok(msg) = self.receiver.try_recv() {
+                match msg {
+                    Message::Terminate => {
+                        self.exit_status = Some(ExitStatus::Terminated(TerminationReason::Other));
+                        break;
+                    }
+                    Message::Suspend => process.suspend()?,
+                    Message::Resume => process.resume()?,
+                    Message::ResetTimers => {
+                        self.info.wall_clock_time = Duration::from_millis(0);
+                        self.info.total_user_time = Duration::from_millis(0);
+                    }
+                }
+            }
+
             thread::sleep(self.cmd.monitor_interval);
         }
 
@@ -158,15 +173,15 @@ impl RunnerImpl {
 }
 
 impl OnTerminateGuard {
-    fn new(cb: Option<Box<FnMut() + Send>>) -> Self {
-        Self { cb: cb }
+    fn new(handler: Option<Box<OnTerminate>>) -> Self {
+        Self { handler: handler }
     }
 }
 
 impl Drop for OnTerminateGuard {
     fn drop(&mut self) {
-        if let Some(cb) = self.cb.as_mut() {
-            cb();
+        if let Some(handler) = self.handler.as_mut() {
+            handler.on_terminate();
         }
     }
 }

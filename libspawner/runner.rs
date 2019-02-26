@@ -1,7 +1,7 @@
 use command::Command;
 use process::{ProcessInfo, ProcessStatusCrashed};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Weak;
+use runner_impl::Message;
+use std::sync::mpsc::Sender;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TerminationReason {
@@ -21,7 +21,7 @@ pub enum ExitStatus {
     Terminated(TerminationReason),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RunnerReport {
     pub command: Command,
     pub process_info: ProcessInfo,
@@ -30,13 +30,27 @@ pub struct RunnerReport {
 
 #[derive(Clone)]
 pub struct Runner {
-    pub(crate) is_killed: Weak<AtomicBool>,
+    pub(crate) sender: Sender<Message>,
 }
 
 impl Runner {
-    pub fn kill(&self) {
-        if let Some(flag) = self.is_killed.upgrade() {
-            flag.store(true, Ordering::SeqCst);
-        }
+    fn send(&self, msg: Message) {
+        let _ = self.sender.send(msg);
+    }
+
+    pub fn terminate(&self) {
+        self.send(Message::Terminate);
+    }
+
+    pub fn suspend(&self) {
+        self.send(Message::Suspend);
+    }
+
+    pub fn resume(&self) {
+        self.send(Message::Resume);
+    }
+
+    pub fn reset_timers(&self) {
+        self.send(Message::ResetTimers);
     }
 }
