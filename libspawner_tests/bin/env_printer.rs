@@ -1,7 +1,5 @@
-use std::env;
-
 fn main() {
-    for (name, val) in env::vars() {
+    for (name, val) in std::env::vars() {
         println!("{}={}", name, val);
     }
 }

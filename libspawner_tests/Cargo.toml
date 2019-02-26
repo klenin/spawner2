@@ -44,8 +44,12 @@ name = "abnormal_exit"
 path = "bin/abnormal_exit.rs"
 
 [[bin]]
-name = "consumer"
-path = "bin/consumer.rs"
+name = "empty"
+path = "bin/empty.rs"
+
+[[bin]]
+name = "arg_printer"
+path = "bin/arg_printer.rs"
 
 [dependencies]
 rand = "0.6.5"
