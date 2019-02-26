@@ -10,7 +10,8 @@ pub use self::report::*;
 
 use self::opts::{Options, PipeKind, StdioRedirectKind, StdioRedirectList};
 use self::protocol::{
-    AgentIdx, AgentStdout, CommandIdx, Context, ControllerStdin, ControllerStdout, OnAgentTerminate,
+    AgentIdx, AgentStdout, AgentTermination, CommandIdx, Context, ControllerStdin,
+    ControllerStdout,
 };
 use crate::{Error, Result};
 use command::{CommandBuilder, CommandController, Limits};
@@ -281,7 +282,7 @@ impl SessionBuilderEx {
                 stdout_controller: None,
             },
             CommandKind::Agent(agent_idx) => CommandController {
-                on_terminate: Some(Box::new(OnAgentTerminate::new(
+                on_terminate: Some(Box::new(AgentTermination::new(
                     agent_idx,
                     self.controller_stdin_w.clone(),
                 ))),

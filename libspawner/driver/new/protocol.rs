@@ -47,7 +47,7 @@ pub struct AgentStdout {
     buf: MessageBuf,
 }
 
-pub struct OnAgentTerminate {
+pub struct AgentTermination {
     idx: AgentIdx,
     stdin: ControllerStdin,
 }
@@ -231,7 +231,7 @@ impl IstreamController for AgentStdout {
     }
 }
 
-impl OnAgentTerminate {
+impl AgentTermination {
     pub fn new(agent_idx: AgentIdx, stdin: ControllerStdin) -> Self {
         Self {
             idx: agent_idx,
@@ -240,7 +240,7 @@ impl OnAgentTerminate {
     }
 }
 
-impl OnTerminate for OnAgentTerminate {
+impl OnTerminate for AgentTermination {
     fn on_terminate(&mut self) {
         let _ = self
             .stdin
