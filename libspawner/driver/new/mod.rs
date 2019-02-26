@@ -11,7 +11,7 @@ pub use self::report::*;
 use self::opts::{Options, PipeKind, StdioRedirectKind, StdioRedirectList};
 use self::protocol::{
     AgentIdx, AgentStdout, AgentTermination, CommandIdx, Context, ControllerStdin,
-    ControllerStdout,
+    ControllerStdout, ControllerTermination,
 };
 use crate::{Error, Result};
 use command::{CommandBuilder, CommandController, Limits};
@@ -112,22 +112,9 @@ where
 }
 
 pub fn main() {
-    match run(std::env::args().skip(1)) {
-        Err(e) => eprintln!("{}", e),
-        Ok(r) => {
-            for r in r.iter() {
-                if let Err(list) = r.runner_report {
-                    for e in list.errors.iter() {
-                        eprintln!("{}", e);
-                        eprintln!("{}\n", e.call_stack());
-                    }
-                }
-            }
-        }
+    if let Err(e) = run(std::env::args().skip(1)) {
+        eprintln!("{}", e);
     }
-    // if let Err(e) = run(std::env::args().skip(1)) {
-    //     eprintln!("{}", e);
-    // }
 }
 
 fn print_report(report: &Report) -> io::Result<()> {
@@ -293,7 +280,7 @@ impl SessionBuilderEx {
                 ))),
             },
             CommandKind::Controller => {
-                let agent_indices = (0..cmds.len())
+                let agent_indices: Vec<CommandIdx> = (0..cmds.len())
                     .filter_map(|i| {
                         if cmds[i].kind.is_agent() {
                             Some(CommandIdx(i))
@@ -303,7 +290,10 @@ impl SessionBuilderEx {
                     })
                     .collect();
                 CommandController {
-                    on_terminate: None,
+                    on_terminate: Some(Box::new(ControllerTermination::new(
+                        self.ctx.clone(),
+                        agent_indices.clone(),
+                    ))),
                     stdout_controller: Some(Box::new(ControllerStdout::new(
                         self.ctx.clone(),
                         CommandIdx(cmd_idx),

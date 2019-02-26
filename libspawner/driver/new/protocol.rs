@@ -52,6 +52,11 @@ pub struct AgentTermination {
     stdin: ControllerStdin,
 }
 
+pub struct ControllerTermination {
+    ctx: Context,
+    agent_indices: Vec<CommandIdx>,
+}
+
 struct MessageBuf {
     buf: Vec<u8>,
     max_size: usize,
@@ -245,6 +250,25 @@ impl OnTerminate for AgentTermination {
         let _ = self
             .stdin
             .write_all(format!("{}T#\n", self.idx.0 + 1).as_bytes());
+    }
+}
+
+impl ControllerTermination {
+    pub fn new(ctx: Context, agent_indices: Vec<CommandIdx>) -> Self {
+        Self {
+            ctx: ctx,
+            agent_indices: agent_indices,
+        }
+    }
+}
+
+impl OnTerminate for ControllerTermination {
+    fn on_terminate(&mut self) {
+        if self.ctx.wait_for_init().is_ok() {
+            for i in self.agent_indices.iter() {
+                self.ctx.runner(*i).resume();
+            }
+        }
     }
 }
 
