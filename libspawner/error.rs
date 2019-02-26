@@ -45,9 +45,9 @@ impl std::error::Error for Error {}
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.kind {
-            ErrorKind::Io(e) => write!(f, "Error: {}", e),
-            ErrorKind::Str(s) => write!(f, "Error: {}", s),
-            ErrorKind::StaticStr(s) => write!(f, "Error: {}", s),
+            ErrorKind::Io(e) => write!(f, "{}", e),
+            ErrorKind::Str(s) => write!(f, "{}", s),
+            ErrorKind::StaticStr(s) => write!(f, "{}", s),
         }
     }
 }
