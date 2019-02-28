@@ -19,3 +19,6 @@ mod protocol;
 
 #[cfg(test)]
 mod other;
+
+#[cfg(test)]
+mod error;
