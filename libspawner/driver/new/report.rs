@@ -1,6 +1,7 @@
 use driver::new::mb2b;
 use driver::new::opts::{Options, StdioRedirectList};
 use json::{array, object, JsonValue};
+use process::ProcessInfo;
 use runner::{ExitStatus, RunnerReport, TerminationReason};
 use session::{CommandErrors, CommandResult};
 use std::fmt::{self, Display, Formatter};
@@ -24,6 +25,14 @@ pub struct CommandReport<'a> {
 pub struct CommandReportIterator<'a> {
     report: &'a Report,
     pos: usize,
+}
+
+struct ReportValues {
+    ps_info: ProcessInfo,
+    error: String,
+    term_reason: String,
+    exit_status: String,
+    exit_code: u32,
 }
 
 impl Report {
@@ -52,7 +61,8 @@ impl<'a> CommandReport<'a> {
     }
 
     pub fn to_json(&self) -> JsonValue {
-        let mut obj = object! {
+        let values = ReportValues::from(self);
+        object! {
             "Application" => self.cmd.argv[0].clone(),
             "Arguments" => self.cmd.argv[1..].to_vec(),
             "Limit" => json_limits(self.cmd),
@@ -63,61 +73,22 @@ impl<'a> CommandReport<'a> {
             "StdOut" => json_redirect_list(&self.cmd.stdout_redirect),
             "StdErr" => json_redirect_list(&self.cmd.stderr_redirect),
             "CreateProcessMethod" => "CreateProcess",
-        };
-
-        match self.runner_report {
-            Ok(report) => {
-                let info = &report.process_info;
-                obj["Result"] = object! {
-                    "Time" => dur2sec(&info.total_user_time),
-                    "WallClockTime" => dur2sec(&info.wall_clock_time),
-                    "Memory" => info.peak_memory_used,
-                    "BytesWritten" => info.total_bytes_written,
-                    "KernelTime" =>  dur2sec(&info.total_kernel_time),
-                    // C++ spawner computes processor load as total user time / wall clock time.
-                    // Making it possible for the processor load to be greater than 1.0
-                    "ProcessorLoad" =>
-                        dur2sec(&info.total_user_time) / dur2sec(&info.wall_clock_time),
-                    "WorkingDirectory" => report.command.current_dir.clone(),
-                };
-                obj["UserName"] = "todo".into();
-                match report.exit_status {
-                    ExitStatus::Finished(code) => {
-                        obj["TerminateReason"] = "ExitProcess".into();
-                        obj["ExitCode"] = code.into();
-                        obj["ExitStatus"] = code.to_string().into();
-                    }
-                    ExitStatus::Terminated(ref r) => {
-                        obj["TerminateReason"] = spawner_term_reason(r).into();
-                        obj["ExitCode"] = 0.into();
-                        obj["ExitStatus"] = "0".into();
-                    }
-                    ExitStatus::Crashed(ref info) => {
-                        obj["TerminateReason"] = "AbnormalExitProcess".into();
-                        obj["ExitCode"] = info.exit_code.into();
-                        obj["ExitStatus"] = info.cause.into();
-                    }
-                }
-                obj["SpawnerError"] = array!["<none>"];
-            }
-            Err(e) => {
-                obj["Result"] = object! {
-                    "Time" => 0.0,
-                    "WallClockTime" => 0.0,
-                    "Memory" => 0,
-                    "BytesWritten" => 0,
-                    "KernelTime" => 0.0,
-                    "ProcessorLoad" => 0.0,
-                    "WorkingDirectory" => "",
-                };
-                obj["UserName"] = "".into();
-                obj["TerminateReason"] = "ExitProcess".into();
-                obj["ExitCode"] = 0.into();
-                obj["ExitStatus"] = "0".into();
-                obj["SpawnerError"] = array![e.to_string()];
-            }
+            "Result" => object! {
+                "Time" => dur2sec(&values.ps_info.total_user_time),
+                "WallClockTime" => dur2sec(&values.ps_info.wall_clock_time),
+                "Memory" => values.ps_info.peak_memory_used,
+                "BytesWritten" => values.ps_info.total_bytes_written,
+                "KernelTime" =>  dur2sec(&values.ps_info.total_kernel_time),
+                "ProcessorLoad" => values.proc_load(),
+                "WorkingDirectory" => self.cmd.working_directory
+                    .as_ref().map_or(String::new(), |d| d.clone()),
+            },
+            "UserName" => "",
+            "TerminateReason" => values.term_reason,
+            "ExitCode" => values.exit_code,
+            "ExitStatus" => values.exit_status,
+            "SpawnerError" => array![values.error],
         }
-        obj
     }
 
     pub fn to_legacy(&self) -> String {
@@ -127,27 +98,6 @@ impl<'a> CommandReport<'a> {
     }
 
     pub fn write_legacy<W: fmt::Write>(&self, w: &mut W) -> fmt::Result {
-        fn secs_or_inf<W: fmt::Write>(
-            w: &mut W,
-            prefix: &'static str,
-            val: &Option<Duration>,
-        ) -> fmt::Result {
-            match val {
-                Some(v) => write!(w, "{}{:.6} (sec)\n", prefix, dur2sec(v)),
-                None => write!(w, "{}Infinity\n", prefix),
-            }
-        }
-        fn mb_or_inf<W: fmt::Write>(
-            w: &mut W,
-            prefix: &'static str,
-            val: &Option<f64>,
-        ) -> fmt::Result {
-            match val {
-                Some(v) => write!(w, "{}{:.6} (Mb)\n", prefix, v),
-                None => write!(w, "{}Infinity\n", prefix),
-            }
-        }
-
         let params = if self.cmd.argv.len() == 1 {
             "<none>".to_string()
         } else {
@@ -171,44 +121,18 @@ impl<'a> CommandReport<'a> {
         mb_or_inf(w, "WriteLimit:                ", &self.cmd.write_limit)?;
         write!(w, "----------------------------------------------\n")?;
 
-        let mut user_time = 0.0;
-        let mut mem_used = 0.0;
-        let mut written = 0.0;
-        let mut term_reason = "ExitProcess";
-        let mut exit_code = 0;
-        let mut exit_status = "0".to_string();
-        let mut error = "<none>".to_string();
-        match &self.runner_report {
-            Ok(report) => {
-                let info = &report.process_info;
-                user_time = dur2sec(&info.total_user_time);
-                mem_used = b2mb(info.peak_memory_used);
-                written = b2mb(info.total_bytes_written);
-                match report.exit_status {
-                    ExitStatus::Finished(code) => {
-                        exit_code = code;
-                        exit_status = code.to_string();
-                    }
-                    ExitStatus::Terminated(ref reason) => {
-                        term_reason = spawner_term_reason(reason);
-                    }
-                    ExitStatus::Crashed(ref info) => {
-                        exit_code = info.exit_code;
-                        exit_status = info.cause.to_string();
-                        term_reason = "AbnormalExitProcess";
-                    }
-                }
-            }
-            Err(e) => error = e.to_string(),
-        }
+        let values = ReportValues::from(self);
+        let user_time = dur2sec(&values.ps_info.total_user_time);
+        let mem_used = b2mb(values.ps_info.peak_memory_used);
+        let written = b2mb(values.ps_info.total_bytes_written);
         write!(w, "UserTime:                  {:.6} (sec)\n", user_time)?;
         write!(w, "PeakMemoryUsed:            {:.6} (Mb)\n", mem_used)?;
         write!(w, "Written:                   {:.6} (Mb)\n", written)?;
-        write!(w, "TerminateReason:           {}\n", term_reason)?;
-        write!(w, "ExitCode:                  {}\n", exit_code)?;
-        write!(w, "ExitStatus:                {}\n", exit_status)?;
+        write!(w, "TerminateReason:           {}\n", values.term_reason)?;
+        write!(w, "ExitCode:                  {}\n", values.exit_code)?;
+        write!(w, "ExitStatus:                {}\n", values.exit_status)?;
         write!(w, "----------------------------------------------\n")?;
-        write!(w, "SpawnerError:              {}\n", error)?;
+        write!(w, "SpawnerError:              {}\n", values.error)?;
         Ok(())
     }
 }
@@ -262,6 +186,82 @@ impl<'a> Iterator for CommandReportIterator<'a> {
     }
 }
 
+impl ReportValues {
+    fn proc_load(&self) -> f64 {
+        // C++ spawner computes processor load as total user time / wall clock time.
+        // Making it possible for the processor load to be greater than 1.0
+        let wc = dur2sec(&self.ps_info.wall_clock_time);
+        if wc <= 1e-8 {
+            0.0
+        } else {
+            dur2sec(&self.ps_info.total_user_time) / wc
+        }
+    }
+}
+
+impl<'a> From<&CommandReport<'a>> for ReportValues {
+    fn from(cr: &CommandReport) -> Self {
+        let (ps_info, exit_status, error) = match cr.runner_report {
+            Ok(report) => (
+                report.process_info,
+                report.exit_status.clone(),
+                "<none>".to_string(),
+            ),
+            Err(err) => (
+                ProcessInfo::zeroed(),
+                ExitStatus::Finished(0),
+                err.to_string(),
+            ),
+        };
+        let (term_reason, code, status) = match exit_status {
+            ExitStatus::Finished(code) => ("ExitProcess".to_string(), code, code.to_string()),
+            ExitStatus::Terminated(ref reason) => (
+                match reason {
+                    TerminationReason::WallClockTimeLimitExceeded => "TimeLimitExceeded",
+                    TerminationReason::IdleTimeLimitExceeded => "IdleTimeLimitExceeded",
+                    TerminationReason::UserTimeLimitExceeded => "TimeLimitExceeded",
+                    TerminationReason::WriteLimitExceeded => "WriteLimitExceeded",
+                    TerminationReason::MemoryLimitExceeded => "MemoryLimitExceeded",
+                    TerminationReason::ProcessLimitExceeded => "ProcessesCountLimitExceeded",
+                    TerminationReason::Other => "TerminatedByController",
+                }
+                .to_string(),
+                0,
+                "0".to_string(),
+            ),
+            ExitStatus::Crashed(ref crash_info) => (
+                "AbnormalExitProcess".to_string(),
+                crash_info.exit_code,
+                crash_info.cause.to_string(),
+            ),
+        };
+        Self {
+            ps_info: ps_info,
+            error: error,
+            term_reason: term_reason,
+            exit_status: status,
+            exit_code: code,
+        }
+    }
+}
+
+fn secs_or_inf<W: fmt::Write>(
+    w: &mut W,
+    prefix: &'static str,
+    val: &Option<Duration>,
+) -> fmt::Result {
+    match val {
+        Some(v) => write!(w, "{}{:.6} (sec)\n", prefix, dur2sec(v)),
+        None => write!(w, "{}Infinity\n", prefix),
+    }
+}
+fn mb_or_inf<W: fmt::Write>(w: &mut W, prefix: &'static str, val: &Option<f64>) -> fmt::Result {
+    match val {
+        Some(v) => write!(w, "{}{:.6} (Mb)\n", prefix, v),
+        None => write!(w, "{}Infinity\n", prefix),
+    }
+}
+
 fn dur2sec(d: &Duration) -> f64 {
     let us = d.as_secs() as f64 * 1e6 + d.subsec_micros() as f64;
     us / 1e6
@@ -269,18 +269,6 @@ fn dur2sec(d: &Duration) -> f64 {
 
 fn b2mb(bytes: u64) -> f64 {
     bytes as f64 / (1024.0 * 1024.0)
-}
-
-fn spawner_term_reason(r: &TerminationReason) -> &'static str {
-    match r {
-        TerminationReason::WallClockTimeLimitExceeded => "TimeLimitExceeded",
-        TerminationReason::IdleTimeLimitExceeded => "IdleTimeLimitExceeded",
-        TerminationReason::UserTimeLimitExceeded => "TimeLimitExceeded",
-        TerminationReason::WriteLimitExceeded => "WriteLimitExceeded",
-        TerminationReason::MemoryLimitExceeded => "MemoryLimitExceeded",
-        TerminationReason::ProcessLimitExceeded => "ProcessesCountLimitExceeded",
-        TerminationReason::Other => "TerminatedByController",
-    }
 }
 
 fn json_limits(opts: &Options) -> JsonValue {
