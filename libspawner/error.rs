@@ -1,6 +1,7 @@
 use backtrace::Backtrace;
 use std::fmt;
 use std::io;
+use sys::error::last_os_error;
 
 #[derive(Debug)]
 enum ErrorKind {
@@ -24,7 +25,7 @@ impl Error {
     }
 
     pub fn last_os_error() -> Self {
-        Self::from(io::Error::last_os_error())
+        Self::from(last_os_error())
     }
 
     pub fn call_stack(&self) -> String {
