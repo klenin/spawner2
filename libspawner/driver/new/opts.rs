@@ -4,6 +4,7 @@ use driver::new::value_parser::{
     StdinRedirectParser, StdoutRedirectParser,
 };
 use driver::prelude::{CmdLineOptions, OptionValueParser};
+use pipe::ShareMode;
 use std::f64;
 use std::fmt::{self, Display, Formatter};
 use std::time::Duration;
@@ -318,6 +319,16 @@ impl Display for PipeKind {
             PipeKind::Stdout(i) => write!(f, "{}.stdout", i),
             PipeKind::Stdin(i) => write!(f, "{}.stdin", i),
             PipeKind::Stderr(i) => write!(f, "{}.stderr", i),
+        }
+    }
+}
+
+impl RedirectFlags {
+    pub fn share_mode(&self) -> ShareMode {
+        if self.exclusive {
+            ShareMode::Exclusive
+        } else {
+            ShareMode::Shared
         }
     }
 }

@@ -14,13 +14,23 @@ use winapi::um::winnt::{
     FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ, GENERIC_WRITE, HANDLE,
 };
 
+#[derive(Clone)]
+struct Handle(HANDLE);
+
+unsafe impl Send for Handle {}
+
 pub struct ReadPipe {
-    pub(crate) handle: HANDLE,
+    handle: Handle,
 }
 
 pub struct WritePipe {
-    pub(crate) handle: HANDLE,
+    handle: Handle,
     is_file: bool,
+}
+
+pub enum ShareMode {
+    Shared,
+    Exclusive,
 }
 
 pub fn create() -> Result<(ReadPipe, WritePipe)> {
@@ -43,43 +53,45 @@ pub fn create() -> Result<(ReadPipe, WritePipe)> {
 
     Ok((
         ReadPipe {
-            handle: read_handle,
+            handle: Handle(read_handle),
         },
         WritePipe {
-            handle: write_handle,
+            handle: Handle(write_handle),
             is_file: false,
         },
     ))
 }
 
-impl ReadPipe {
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        Ok(Self {
-            handle: open_file(path, GENERIC_READ, OPEN_EXISTING, false)?,
-        })
-    }
-
-    pub fn null() -> Result<Self> {
-        Self::open("nul")
-    }
-}
-
-impl Drop for ReadPipe {
+impl Drop for Handle {
     fn drop(&mut self) {
         unsafe {
-            CloseHandle(self.handle);
+            CloseHandle(self.0);
         }
     }
 }
 
-unsafe impl Send for ReadPipe {}
+impl ReadPipe {
+    pub fn open<P: AsRef<Path>>(path: P, mode: ShareMode) -> Result<Self> {
+        Ok(Self {
+            handle: open(path, GENERIC_READ, OPEN_EXISTING, mode)?,
+        })
+    }
+
+    pub fn null() -> Result<Self> {
+        Self::open("nul", ShareMode::Shared)
+    }
+
+    pub(crate) fn handle(&self) -> HANDLE {
+        self.handle.0
+    }
+}
 
 impl Read for ReadPipe {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut bytes_read: DWORD = 0;
         unsafe {
             ok_nonzero(ReadFile(
-                self.handle,
+                self.handle(),
                 mem::transmute(buf.as_mut_ptr()),
                 buf.len() as DWORD,
                 &mut bytes_read,
@@ -92,16 +104,16 @@ impl Read for ReadPipe {
 }
 
 impl WritePipe {
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
+    pub fn open<P: AsRef<Path>>(path: P, mode: ShareMode) -> Result<Self> {
         Ok(Self {
-            handle: open_file(path, GENERIC_WRITE, CREATE_ALWAYS, false)?,
+            handle: open(path, GENERIC_WRITE, CREATE_ALWAYS, mode)?,
             is_file: true,
         })
     }
 
     pub fn null() -> Result<Self> {
         Ok(Self {
-            handle: open_file("nul", GENERIC_WRITE, OPEN_EXISTING, false)?,
+            handle: open("nul", GENERIC_WRITE, OPEN_EXISTING, ShareMode::Shared)?,
             is_file: false,
         })
     }
@@ -109,16 +121,18 @@ impl WritePipe {
     pub fn is_file(&self) -> bool {
         self.is_file
     }
-}
 
-unsafe impl Send for WritePipe {}
+    pub(crate) fn handle(&self) -> HANDLE {
+        self.handle.0
+    }
+}
 
 impl Write for WritePipe {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut bytes_written: DWORD = 0;
         unsafe {
             ok_nonzero(WriteFile(
-                self.handle,
+                self.handle(),
                 mem::transmute(buf.as_ptr()),
                 buf.len() as DWORD,
                 &mut bytes_written,
@@ -134,32 +148,21 @@ impl Write for WritePipe {
     }
 }
 
-impl Drop for WritePipe {
-    fn drop(&mut self) {
-        unsafe {
-            CloseHandle(self.handle);
-        }
-    }
-}
-
-fn open_file<P: AsRef<Path>>(
+fn open<P: AsRef<Path>>(
     path: P,
     access: DWORD,
     creation_disposition: DWORD,
-    exclusive: bool,
-) -> Result<HANDLE> {
-    let mut file = to_utf16(path.as_ref());
-    let share_mode = if exclusive {
-        0
-    } else {
-        FILE_SHARE_READ | FILE_SHARE_WRITE
-    };
-
+    share_mode: ShareMode,
+) -> Result<Handle> {
     let handle = unsafe {
         CreateFileW(
-            /*lpFileName=*/ file.as_mut_ptr(),
+            /*lpFileName=*/ to_utf16(path.as_ref()).as_mut_ptr(),
             /*dwDesiredAccess=*/ access,
-            /*dwShareMode=*/ share_mode,
+            /*dwShareMode=*/
+            match share_mode {
+                ShareMode::Exclusive => 0,
+                ShareMode::Shared => FILE_SHARE_READ | FILE_SHARE_WRITE,
+            },
             /*lpSecurityAttributes=*/ ptr::null_mut(),
             /*dwCreationDisposition=*/ creation_disposition,
             /*dwFlagsAndAttributes=*/ FILE_ATTRIBUTE_NORMAL,
@@ -181,7 +184,7 @@ fn open_file<P: AsRef<Path>>(
                 CloseHandle(handle);
                 Err(e)
             }
-            Ok(_) => Ok(handle),
+            Ok(_) => Ok(Handle(handle)),
         }
     }
 }

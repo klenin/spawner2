@@ -1,5 +1,5 @@
 use crate::{Error, Result};
-use pipe::WritePipe;
+use pipe::{ReadPipe, WritePipe};
 use std::io::{self, BufWriter, Read, Write};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
@@ -16,6 +16,13 @@ enum WriteHubKind {
     Pipe(WritePipe),
     File(BufWriter<WritePipe>),
 }
+
+pub struct ReadHubError {
+    pub error: Error,
+    pub pipe: ReadPipe,
+}
+
+pub type ReadHubResult = std::result::Result<ReadPipe, ReadHubError>;
 
 /// Allows multiple writers to send data to the `WritePipe`.
 #[derive(Clone)]
@@ -37,23 +44,23 @@ impl ReadHub {
         self.write_hubs.push(wh.clone());
     }
 
-    pub fn spawn(self) -> Result<JoinHandle<Result<()>>> {
+    pub fn spawn(self) -> Result<JoinHandle<ReadHubResult>> {
         thread::Builder::new()
             .spawn(move || Self::main_loop(self))
             .map_err(|e| Error::from(e))
     }
 
-    fn main_loop(mut self) -> Result<()> {
+    fn main_loop(mut self) -> ReadHubResult {
         let mut buffer: Vec<u8> = Vec::new();
         buffer.resize(self.buffer_size, 0);
 
         loop {
             let bytes_read = match self.istream.pipe.read(buffer.as_mut_slice()) {
                 Ok(x) => x,
-                Err(_) => return Ok(()),
+                Err(_) => break,
             };
             if bytes_read == 0 {
-                return Ok(());
+                break;
             }
             let data = &buffer[..bytes_read];
             let num_errors = match &mut self.istream.controller {
@@ -62,7 +69,12 @@ impl ReadHub {
                         write_hubs: &mut self.write_hubs,
                         num_errors: 0,
                     };
-                    ctl.handle_data(data, &mut listeners)?;
+                    if let Err(e) = ctl.handle_data(data, &mut listeners) {
+                        return Err(ReadHubError {
+                            error: e,
+                            pipe: self.istream.pipe,
+                        });
+                    }
                     listeners.num_errors
                 }
                 None => {
@@ -78,9 +90,11 @@ impl ReadHub {
 
             if num_errors == self.write_hubs.len() {
                 // All pipes are dead.
-                return Ok(());
+                break;
             }
         }
+
+        Ok(self.istream.pipe)
     }
 }
 
@@ -98,6 +112,13 @@ impl WriteHub {
 
     pub fn ostream_idx(&self) -> OstreamIdx {
         self.ostream_idx
+    }
+
+    pub fn is_file(&self) -> bool {
+        match *self.lock().unwrap() {
+            WriteHubKind::File(_) => true,
+            _ => false,
+        }
     }
 
     fn lock(&self) -> io::Result<MutexGuard<WriteHubKind>> {

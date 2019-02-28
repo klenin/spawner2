@@ -51,6 +51,10 @@ path = "bin/empty.rs"
 name = "arg_printer"
 path = "bin/arg_printer.rs"
 
+[[bin]]
+name = "open_file"
+path = "bin/open_file.rs"
+
 [dependencies]
 rand = "0.6.5"
 spawner = { path = "../libspawner" }

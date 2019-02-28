@@ -2,11 +2,14 @@ use crate::{Error, Result};
 use pipe::{self, ReadPipe, WritePipe};
 use std::collections::HashMap;
 use std::thread::JoinHandle;
-use stdio::hub::{ReadHub, WriteHub};
+use stdio::hub::{ReadHub, ReadHubResult, WriteHub};
 use stdio::{Istream, IstreamController, IstreamIdx, Ostream, OstreamIdx};
 
 pub struct Router {
-    readhub_threads: Vec<(IstreamIdx, JoinHandle<Result<()>>)>,
+    readhub_threads: Vec<(IstreamIdx, JoinHandle<ReadHubResult>)>,
+    // Some of these files are exclusively opened, so they are stored here
+    // to keep them exclusive as long as possible.
+    output_files: Vec<WriteHub>,
 }
 
 pub struct StopErrors {
@@ -44,7 +47,7 @@ impl Router {
                 .filter_map(|(idx, thread)| match thread.join() {
                     Ok(result) => match result {
                         Ok(_) => None,
-                        Err(e) => Some((idx, e)),
+                        Err(e) => Some((idx, e.error)),
                     },
                     Err(_) => Some((idx, Error::from("unexpected panic!(...) in thread"))),
                 })
@@ -122,6 +125,7 @@ impl RouterBuilder {
     pub fn spawn(self) -> Result<(IoList, Router)> {
         let mut router = Router {
             readhub_threads: Vec::new(),
+            output_files: Vec::new(),
         };
         let mut list = IoList {
             istream_srcs: Vec::new(),
@@ -145,6 +149,11 @@ impl RouterBuilder {
                 true => None,
                 false => Some(ostream.dst.unwrap_or(ReadPipe::null()?)),
             });
+            if let Some(hub) = ostream.hub {
+                if hub.is_file() {
+                    router.output_files.push(hub);
+                }
+            }
         }
 
         Ok((list, router))

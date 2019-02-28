@@ -1,6 +1,6 @@
 use crate::{Error, Result};
 use command::{Command, CommandController, OnTerminate};
-use pipe::{ReadPipe, WritePipe};
+use pipe::{ReadPipe, ShareMode, WritePipe};
 use process::ProcessStdio;
 use runner::{Runner, RunnerReport};
 use runner_impl::{self, RunnerThread};
@@ -19,7 +19,7 @@ pub struct Session {
 
 enum IstreamDstKind {
     Pipe(WritePipe),
-    File(PathBuf),
+    File(PathBuf, ShareMode),
     Ostream(OstreamIdx),
 }
 
@@ -29,7 +29,7 @@ pub struct IstreamDst {
 
 enum OstreamSrcKind {
     Pipe(ReadPipe),
-    File(PathBuf),
+    File(PathBuf, ShareMode),
     Istream(IstreamIdx),
 }
 
@@ -109,9 +109,9 @@ impl IstreamDst {
         }
     }
 
-    pub fn file<P: AsRef<Path>>(path: P) -> Self {
+    pub fn file<P: AsRef<Path>>(path: P, mode: ShareMode) -> Self {
         Self {
-            kind: IstreamDstKind::File(path.as_ref().to_path_buf()),
+            kind: IstreamDstKind::File(path.as_ref().to_path_buf(), mode),
         }
     }
 }
@@ -129,9 +129,9 @@ impl OstreamSrc {
         }
     }
 
-    pub fn file<P: AsRef<Path>>(path: P) -> Self {
+    pub fn file<P: AsRef<Path>>(path: P, mode: ShareMode) -> Self {
         Self {
-            kind: OstreamSrcKind::File(path.as_ref().to_path_buf()),
+            kind: OstreamSrcKind::File(path.as_ref().to_path_buf(), mode),
         }
     }
 }
@@ -162,10 +162,10 @@ impl SessionBuilder {
     pub fn add_istream_dst(&mut self, istream: IstreamIdx, dst: IstreamDst) -> Result<()> {
         let ostream = match dst.kind {
             IstreamDstKind::Pipe(p) => self.builder.add_ostream(Some(p)),
-            IstreamDstKind::File(f) => match self.output_files.entry(f) {
+            IstreamDstKind::File(file, mode) => match self.output_files.entry(file) {
                 Entry::Occupied(e) => *e.get(),
                 Entry::Vacant(e) => {
-                    let pipe = WritePipe::open(e.key())?;
+                    let pipe = WritePipe::open(e.key(), mode)?;
                     *e.insert(self.builder.add_ostream(Some(pipe)))
                 }
             },
@@ -177,7 +177,9 @@ impl SessionBuilder {
     pub fn add_ostream_src(&mut self, ostream: OstreamIdx, src: OstreamSrc) -> Result<()> {
         let istream = match src.kind {
             OstreamSrcKind::Pipe(p) => self.builder.add_istream(Some(p), None),
-            OstreamSrcKind::File(f) => self.builder.add_istream(Some(ReadPipe::open(f)?), None),
+            OstreamSrcKind::File(file, mode) => self
+                .builder
+                .add_istream(Some(ReadPipe::open(file, mode)?), None),
             OstreamSrcKind::Istream(i) => i,
         };
         self.builder.connect(istream, ostream)

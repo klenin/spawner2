@@ -187,7 +187,11 @@ fn create_suspended_process(cmd: &Command, stdio: ProcessStdio) -> Result<(HANDL
         CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
     let mut env = env::create(cmd.env_kind, &cmd.env_vars)?;
     let mut process_info: PROCESS_INFORMATION = unsafe { mem::zeroed() };
-    let mut inherited_handles = vec![stdio.stdin.handle, stdio.stdout.handle, stdio.stderr.handle];
+    let mut inherited_handles = vec![
+        stdio.stdin.handle(),
+        stdio.stdout.handle(),
+        stdio.stderr.handle(),
+    ];
     let (mut startup_info, att_list_size) =
         create_startup_info(cmd, &stdio, &mut inherited_handles)?;
 
@@ -229,9 +233,9 @@ fn create_startup_info(
     info.StartupInfo.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
     info.StartupInfo.lpDesktop = ptr::null_mut();
     info.StartupInfo.wShowWindow = if cmd.show_gui { SW_SHOW } else { SW_HIDE } as WORD;
-    info.StartupInfo.hStdInput = stdio.stdin.handle;
-    info.StartupInfo.hStdOutput = stdio.stdout.handle;
-    info.StartupInfo.hStdError = stdio.stderr.handle;
+    info.StartupInfo.hStdInput = stdio.stdin.handle();
+    info.StartupInfo.hStdOutput = stdio.stdout.handle();
+    info.StartupInfo.hStdError = stdio.stderr.handle();
 
     let mut size: SIZE_T = 0;
     unsafe {

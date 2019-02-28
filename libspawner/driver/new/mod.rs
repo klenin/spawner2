@@ -311,7 +311,9 @@ impl SessionBuilderEx {
     ) -> Result<()> {
         for redirect in redirect_list.items.iter() {
             let dst = match &redirect.kind {
-                StdioRedirectKind::File(f) => Some(IstreamDst::file(f)),
+                StdioRedirectKind::File(f) => {
+                    Some(IstreamDst::file(f, redirect.flags.share_mode()))
+                }
                 StdioRedirectKind::Pipe(pipe_kind) => match pipe_kind {
                     PipeKind::Stdin(i) => {
                         self.check_stdio_idx("stdin", *i)?;
@@ -338,7 +340,9 @@ impl SessionBuilderEx {
     ) -> Result<()> {
         for redirect in redirect_list.items.iter() {
             let src = match &redirect.kind {
-                StdioRedirectKind::File(f) => Some(OstreamSrc::file(f)),
+                StdioRedirectKind::File(f) => {
+                    Some(OstreamSrc::file(f, redirect.flags.share_mode()))
+                }
                 StdioRedirectKind::Pipe(pipe_kind) => match pipe_kind {
                     PipeKind::Stdout(i) => {
                         self.check_stdio_idx("stdout", *i)?;
