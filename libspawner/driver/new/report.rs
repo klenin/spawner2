@@ -7,6 +7,7 @@ use session::{CommandErrors, CommandResult};
 use std::fmt::{self, Display, Formatter};
 use std::time::Duration;
 
+#[derive(Debug)]
 pub struct Report {
     pub runner_reports: Vec<CommandResult>,
     pub cmds: Vec<Options>,

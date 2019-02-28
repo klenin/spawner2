@@ -9,13 +9,13 @@ use std::f64;
 use std::fmt::{self, Display, Formatter};
 use std::time::Duration;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct RedirectFlags {
     pub flush: bool,
     pub exclusive: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum PipeKind {
     Null,
     Std,
@@ -24,19 +24,19 @@ pub enum PipeKind {
     Stderr(usize),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum StdioRedirectKind {
     File(String),
     Pipe(PipeKind),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct StdioRedirect {
     pub kind: StdioRedirectKind,
     pub flags: RedirectFlags,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct StdioRedirectList {
     pub items: Vec<StdioRedirect>,
     pub default_flags: RedirectFlags,
@@ -46,7 +46,7 @@ pub type StdinRedirectList = StdioRedirectList;
 pub type StdoutRedirectList = StdioRedirectList;
 pub type StderrRedirectList = StdioRedirectList;
 
-#[derive(CmdLineOptions, Clone)]
+#[derive(CmdLineOptions, Clone, Debug)]
 #[optcont(
     delimeters = "=:",
     usage = "sp [options] executable [arguments]",
