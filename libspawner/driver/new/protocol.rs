@@ -342,7 +342,7 @@ impl<'a> Message<'a> {
             "S" => Ok((agent_idx, MessageKind::Terminate)),
             _ => Err(Error::from(format!(
                 "Invalid controller command '{}' in '{}'",
-                &header_str[num_digits + 1..],
+                &header_str[num_digits..],
                 header_str
             ))),
         }

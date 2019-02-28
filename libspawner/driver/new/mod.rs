@@ -79,11 +79,11 @@ where
 
         if opts.argv.is_empty() {
             if opts.controller {
-                return Err(Error::from("controller must have argv"));
+                return Err(Error::from("Controller must have an argv"));
             }
             default_opts = opts;
         } else if opts.controller && controller.is_some() {
-            return Err(Error::from("there can be at most one controller"));
+            return Err(Error::from("There can be at most one controller"));
         } else {
             if opts.controller {
                 controller = Some(cmds.len());
@@ -316,11 +316,11 @@ impl SessionBuilderEx {
                 }
                 StdioRedirectKind::Pipe(pipe_kind) => match pipe_kind {
                     PipeKind::Stdin(i) => {
-                        self.check_stdio_idx("stdin", *i)?;
+                        self.check_stdio_idx("Stdin", *i)?;
                         Some(IstreamDst::ostream(self.mappings[*i].stdin))
                     }
                     PipeKind::Stderr(i) => {
-                        self.check_stdio_idx("stderr", *i)?;
+                        self.check_stdio_idx("Stderr", *i)?;
                         Some(IstreamDst::ostream(self.mappings[*i].stdin))
                     }
                     _ => None,
@@ -345,7 +345,7 @@ impl SessionBuilderEx {
                 }
                 StdioRedirectKind::Pipe(pipe_kind) => match pipe_kind {
                     PipeKind::Stdout(i) => {
-                        self.check_stdio_idx("stdout", *i)?;
+                        self.check_stdio_idx("Stdout", *i)?;
                         Some(OstreamSrc::istream(self.mappings[*i].stdout))
                     }
                     _ => None,
@@ -360,7 +360,10 @@ impl SessionBuilderEx {
 
     fn check_stdio_idx(&self, stream: &str, idx: usize) -> Result<()> {
         if idx >= self.mappings.len() {
-            Err(Error::from(format!("{} index is out of range", stream)))
+            Err(Error::from(format!(
+                "{} index '{}' is out of range",
+                stream, idx
+            )))
         } else {
             Ok(())
         }
