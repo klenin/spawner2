@@ -10,7 +10,7 @@ pub fn last_os_error() -> String {
     let mut buf = [0 as WCHAR; 256];
     unsafe {
         let ecode = GetLastError();
-        if FormatMessageW(
+        let msg_len = FormatMessageW(
             /*dwFlags=*/
             FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
             /*lpSource=*/ ptr::null(),
@@ -19,10 +19,11 @@ pub fn last_os_error() -> String {
             /*lpBuffer=*/ buf.as_mut_ptr(),
             /*nSize=*/ buf.len() as DWORD,
             /*Arguments=*/ ptr::null_mut(),
-        ) == 0
-        {
-            return String::from("Unable to format error message");
+        );
+        if msg_len == 0 {
+            String::from("Unable to format error message")
+        } else {
+            String::from_utf16_lossy(&buf[..msg_len as usize])
         }
     }
-    String::from_utf16_lossy(&buf)
 }
