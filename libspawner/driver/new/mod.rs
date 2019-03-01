@@ -54,7 +54,7 @@ where
     U: AsRef<str>,
 {
     let argv: Vec<String> = argv.into_iter().map(|x| x.as_ref().to_string()).collect();
-    let mut default_opts = Options::default();
+    let mut default_opts = Options::from_env()?;
     let mut pos = 0;
     let mut cmds: Vec<Options> = Vec::new();
     let mut controller: Option<usize> = None;
@@ -103,7 +103,7 @@ where
 {
     let report = parse(argv).and_then(|driver| driver.run())?;
     if report.cmds.len() == 0 {
-        println!("{}", Options::help());
+        Options::print_help();
     } else {
         print_report(&report)?;
     }

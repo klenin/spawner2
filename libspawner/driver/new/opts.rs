@@ -5,6 +5,7 @@ use driver::new::value_parser::{
 };
 use driver::prelude::{CmdLineOptions, OptionValueParser};
 use pipe::ShareMode;
+use std::env::{self, VarError};
 use std::f64;
 use std::fmt::{self, Display, Formatter};
 use std::time::Duration;
@@ -274,6 +275,22 @@ impl Default for Options {
     }
 }
 
+macro_rules! parse_env_var {
+    ($val:expr, $var:expr, $parser:ident) => {
+        match env::var($var) {
+            Ok(v) => $parser::parse(&mut $val, v.as_str())?,
+            Err(e) => match e {
+                VarError::NotPresent => {}
+                _ => return Err(format!("Couldn't interpret {}: {}", $var, e)),
+            },
+        }
+    };
+
+    ($val:expr, $var:expr) => {
+        parse_env_var!($val, $var, DefaultValueParser)
+    };
+}
+
 impl Options {
     pub const DEFAULT_FILE_FLAGS: RedirectFlags = RedirectFlags {
         flush: false,
@@ -284,6 +301,106 @@ impl Options {
         flush: true,
         exclusive: false,
     };
+
+    pub fn from_env() -> Result<Self, String> {
+        let mut opts = Self::default();
+        parse_env_var!(opts.time_limit, "SP_TIME_LIMIT");
+        parse_env_var!(opts.wall_clock_time_limit, "SP_DEADLINE");
+        parse_env_var!(opts.idle_time_limit, "SP_IDLE_TIME_LIMIT");
+        parse_env_var!(opts.memory_limit, "SP_MEMORY_LIMIT", MemValueParser);
+        parse_env_var!(opts.write_limit, "SP_WRITE_LIMIT", MemValueParser);
+        parse_env_var!(opts.load_ratio, "SP_LOAD_RATIO", PercentValueParser);
+        parse_env_var!(opts.monitor_interval, "SP_MONITOR_INTERVAL");
+        parse_env_var!(opts.secure, "SP_SECURITY_LEVEL");
+        parse_env_var!(opts.show_window, "SP_SHOW_WINDOW");
+        parse_env_var!(opts.debug, "SP_DEBUG");
+        parse_env_var!(opts.working_directory, "SP_DIRECTORY");
+        parse_env_var!(opts.hide_report, "SP_HIDE_REPORT");
+        parse_env_var!(opts.hide_output, "SP_HIDE_OUTPUT");
+        parse_env_var!(opts.delegated, "SP_RUNAS");
+        parse_env_var!(opts.login, "SP_USER");
+        parse_env_var!(opts.password, "SP_PASSWORD");
+        parse_env_var!(opts.use_syspath, "SP_SYSTEM_PATH");
+        parse_env_var!(opts.output_file, "SP_REPORT_FILE");
+        parse_env_var!(opts.env, "SP_ENVIRONMENT");
+        parse_env_var!(opts.stdin_redirect, "SP_INPUT_FILE", StdinRedirectParser);
+        parse_env_var!(opts.stdout_redirect, "SP_OUTPUT_FILE", StdoutRedirectParser);
+        parse_env_var!(opts.stderr_redirect, "SP_ERROR_FILE", StderrRedirectParser);
+        parse_env_var!(opts.separator, "SP_SEPARATOR");
+        parse_env_var!(opts.shared_memory, "SP_SHARED_MEMORY");
+        parse_env_var!(opts.use_json, "SP_JSON");
+        Ok(opts)
+    }
+
+    pub fn print_help() {
+        let mut help = Self::help();
+        help.overview = Some(format!("Spawner sandbox v{}", crate::VERSION));
+        println!("{}", help);
+        Self::print_redirect_examples();
+        Self::print_env_help();
+    }
+
+    fn print_redirect_examples() {
+        let examples = [
+            ("--in=file.txt", "Redirect file.txt to stdin"),
+            ("--in=*:", "Reset default file flags for stdin"),
+            ("--out=*e:", "Set default file flags for stdout"),
+            (
+                "--in=*:file.txt",
+                "Redirect file.txt to stdin with default file flags",
+            ),
+            ("*e:file.txt", "Open file exclusively"),
+            (
+                "--in=*2.stdout",
+                "Redirect stdout of the 2nd command to stdin",
+            ),
+            ("--out=*null", "Redirect stdout to null"),
+            ("--out=*std", "Redirect stdout to the spawner's stdin"),
+        ];
+        println!("Redirect examples:");
+        for (sample, desc) in examples.iter() {
+            let indent = "  ";
+            let spaces = 30 - (sample.len() + indent.len());
+            println!("{}{}{:4$}{}", indent, sample, " ", desc, spaces);
+        }
+        println!("");
+    }
+
+    fn print_env_help() {
+        let env_opts = [
+            ("SP_TIME_LIMIT", "-tl"),
+            ("SP_DEADLINE", "-d"),
+            ("SP_IDLE_TIME_LIMIT", "-y"),
+            ("SP_MEMORY_LIMIT", "-ml"),
+            ("SP_WRITE_LIMIT", "-wl"),
+            ("SP_LOAD_RATIO", "-lr"),
+            ("SP_MONITOR_INTERVAL", "-mi"),
+            ("SP_SECURITY_LEVEL", "-s"),
+            ("SP_SHOW_WINDOW", "-sw"),
+            ("SP_DEBUG", "--debug"),
+            ("SP_DIRECTORY", "-wd"),
+            ("SP_HIDE_REPORT", "-hr"),
+            ("SP_HIDE_OUTPUT", "-ho"),
+            ("SP_RUNAS", "-runas, --delegated"),
+            ("SP_USER", "-u"),
+            ("SP_PASSWORD", "-p"),
+            ("SP_SYSTEM_PATH", "-c, --systempath"),
+            ("SP_REPORT_FILE", "-sr"),
+            ("SP_ENVIRONMENT", "-env"),
+            ("SP_INPUT_FILE", "-i, --in"),
+            ("SP_OUTPUT_FILE", "-so, --out"),
+            ("SP_ERROR_FILE", "-e, -se, --err"),
+            ("SP_SEPARATOR", "--separator"),
+            ("SP_SHARED_MEMORY", "--shared-memory"),
+            ("SP_JSON", "--json"),
+        ];
+        println!("Environment variables and corresponding options:");
+        for (var, opt) in env_opts.iter() {
+            let indent = "  ";
+            let spaces = 30 - (var.len() + indent.len());
+            println!("{}{}{:4$}{}", indent, var, " ", opt, spaces);
+        }
+    }
 }
 
 impl StdioRedirect {
