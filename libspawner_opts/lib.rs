@@ -116,7 +116,7 @@ fn write_opt(f: &mut fmt::Formatter, opt: &OptionHelp, delim: char) -> fmt::Resu
     let opt_offset = 2;
     let empty = &String::new();
 
-    write_n(f, ' ', opt_offset)?;
+    write!(f, "{:1$}", " ", opt_offset)?;
     let written = opt_offset + write_names(f, opt, delim)?;
 
     for (no, line) in opt
@@ -128,20 +128,12 @@ fn write_opt(f: &mut fmt::Formatter, opt: &OptionHelp, delim: char) -> fmt::Resu
         .enumerate()
     {
         if no == 0 && written < desc_offset {
-            write_n(f, ' ', desc_offset - written)?;
+            write!(f, "{:1$}", " ", desc_offset - written)?;
         } else {
-            f.write_str("\n")?;
-            write_n(f, ' ', desc_offset)?;
+            write!(f, "\n{:1$}", " ", desc_offset)?;
         }
         f.write_str(line)?;
     }
     f.write_str("\n")?;
-    Ok(())
-}
-
-fn write_n(f: &mut fmt::Formatter, c: char, n: usize) -> fmt::Result {
-    for _ in 0..n {
-        write!(f, "{}", c)?;
-    }
     Ok(())
 }
