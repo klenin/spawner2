@@ -40,11 +40,26 @@
 
 extern crate spawner_opts_derive;
 
+pub mod parser;
+
 pub use spawner_opts_derive::*;
-use std::collections::HashMap;
+use std::fmt;
+
+pub struct OptionHelp {
+    pub names: Vec<String>,
+    pub desc: Option<String>,
+    pub value_desc: Option<String>,
+}
+
+pub struct Help {
+    pub overview: Option<String>,
+    pub usage: Option<String>,
+    pub delimeters: Option<String>,
+    pub options: Vec<OptionHelp>,
+}
 
 pub trait CmdLineOptions: Sized {
-    fn help() -> String;
+    fn help() -> Help;
     fn parse<T, U>(&mut self, argv: T) -> Result<usize, String>
     where
         T: IntoIterator<Item = U>,
@@ -55,114 +70,78 @@ pub trait OptionValueParser<T> {
     fn parse(opt: &mut T, val: &str) -> Result<(), String>;
 }
 
-pub enum OptEntries {
-    Flag(Vec<String>),
-    Opt(Vec<String>),
-}
-
-pub struct OptParser<T, U>
-where
-    T: IntoIterator<Item = U>,
-    U: AsRef<str>,
-{
-    pos: std::iter::Peekable<<T as IntoIterator>::IntoIter>,
-    entries: Vec<OptEntries>,
-    optmap: HashMap<&'static str, usize>,
-    delims: &'static str,
-}
-
-impl<T, U> OptParser<T, U>
-where
-    T: IntoIterator<Item = U>,
-    U: AsRef<str>,
-{
-    pub fn new(argv: T, delims: &'static str) -> Self {
-        OptParser {
-            pos: argv.into_iter().peekable(),
-            entries: Vec::new(),
-            optmap: HashMap::new(),
-            delims: delims,
+impl fmt::Display for Help {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if let Some(ref overview) = self.overview {
+            write!(f, "Overview: {}\n\n", overview)?;
         }
-    }
-
-    fn add_names(&mut self, names: &[&'static str]) {
-        let idx = self.entries.len() - 1;
-        for name in names {
-            self.optmap.insert(name, idx);
+        if let Some(ref usage) = self.usage {
+            write!(f, "Usage: {}\n\n", usage)?;
         }
-    }
+        if self.options.is_empty() {
+            return Ok(());
+        }
 
-    pub fn opt(&mut self, names: &[&'static str]) -> &mut Self {
-        self.entries.push(OptEntries::Opt(Vec::new()));
-        self.add_names(names);
-        self
-    }
-
-    pub fn flag(&mut self, names: &[&'static str]) -> &mut Self {
-        self.entries.push(OptEntries::Flag(Vec::new()));
-        self.add_names(names);
-        self
-    }
-
-    pub fn has_flag(&self, flag: &str) -> bool {
-        self.optmap.get(flag).map_or(false, |i| {
-            if let OptEntries::Flag(ref e) = self.entries[*i] {
-                e.len() != 0
-            } else {
-                false
-            }
-        })
-    }
-
-    pub fn get_opt(&self, opt: &str) -> Option<&Vec<String>> {
-        self.optmap.get(opt).and_then(|i| {
-            if let OptEntries::Opt(ref e) = self.entries[*i] {
-                Some(e)
-            } else {
-                None
-            }
-        })
-    }
-
-    fn parse_opt(&mut self, arg: &str) -> bool {
-        let (name, val) = match arg.find(|x| self.delims.find(x).is_some()) {
-            Some(pos) => (&arg[0..pos], Some(&arg[pos + 1..arg.len()])),
-            None => (&arg[0..arg.len()], None),
+        let delim = match self.delimeters {
+            Some(ref d) => d.chars().next().unwrap_or(' '),
+            None => ' ',
         };
-        if let Some(opt_idx) = self.optmap.get(name) {
-            let entries = &mut self.entries[*opt_idx];
-            match (entries, val) {
-                (OptEntries::Flag(e), None) => {
-                    e.push(name.to_string());
-                    true
-                }
-                (OptEntries::Opt(e), Some(v)) => {
-                    e.push(v.to_string());
-                    true
-                }
-                (OptEntries::Opt(e), None) => {
-                    if let Some(next) = self.pos.next() {
-                        e.push(next.as_ref().to_string());
-                        true
-                    } else {
-                        false
-                    }
-                }
-                _ => false,
-            }
-        } else {
-            false
+        f.write_str("Options:\n")?;
+        for opt in self.options.iter() {
+            write_opt(f, opt, delim)?;
         }
+        Ok(())
     }
+}
 
-    pub fn parse(&mut self) -> usize {
-        let mut parsed_opts = 0;
-        while let Some(arg) = self.pos.next() {
-            if !self.parse_opt(arg.as_ref()) {
-                break;
-            }
-            parsed_opts += 1;
+fn write_names(f: &mut fmt::Formatter, opt: &OptionHelp, delim: char) -> Result<usize, fmt::Error> {
+    let mut names_len = 0;
+    for (no, name) in opt.names.iter().enumerate() {
+        if no > 0 {
+            f.write_str(", ")?;
+            names_len += 2;
         }
-        parsed_opts
+        f.write_str(name)?;
+        names_len += name.len();
+        if let Some(ref vd) = opt.value_desc {
+            write!(f, "{}{}", delim, vd)?;
+            names_len += 1 + vd.len();
+        }
     }
+    Ok(names_len)
+}
+
+fn write_opt(f: &mut fmt::Formatter, opt: &OptionHelp, delim: char) -> fmt::Result {
+    let desc_offset = 30;
+    let opt_offset = 2;
+    let empty = &String::new();
+
+    write_n(f, ' ', opt_offset)?;
+    let written = opt_offset + write_names(f, opt, delim)?;
+
+    for (no, line) in opt
+        .desc
+        .as_ref()
+        .unwrap_or(empty)
+        .split("\n")
+        .filter(|line| !line.is_empty())
+        .enumerate()
+    {
+        if no == 0 && written < desc_offset {
+            write_n(f, ' ', desc_offset - written)?;
+        } else {
+            f.write_str("\n")?;
+            write_n(f, ' ', desc_offset)?;
+        }
+        f.write_str(line)?;
+    }
+    f.write_str("\n")?;
+    Ok(())
+}
+
+fn write_n(f: &mut fmt::Formatter, c: char, n: usize) -> fmt::Result {
+    for _ in 0..n {
+        write!(f, "{}", c)?;
+    }
+    Ok(())
 }

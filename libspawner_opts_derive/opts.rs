@@ -5,7 +5,7 @@ use syn::{
 };
 
 struct OptKindOpt {
-    value_desc: String,
+    value_desc: Option<String>,
     parser: Option<TokenStream>,
 }
 
@@ -18,7 +18,7 @@ enum OptKind {
 struct Opt<'a> {
     kind: OptKind,
     names: Vec<String>,
-    desc: String,
+    desc: Option<String>,
     field: &'a Field,
 }
 
@@ -31,14 +31,16 @@ enum OptAttribute<'a> {
 }
 
 enum OptContainerAttribute {
+    Overview(String),
     Delimeters(String),
     Usage(String),
     DefaultParser(String),
 }
 
 struct OptContainer<'a> {
-    delimeters: String,
-    usage: String,
+    delimeters: Option<String>,
+    usage: Option<String>,
+    overview: Option<String>,
     default_parser: Option<TokenStream>,
     opts: Vec<Opt<'a>>,
     ast: &'a DeriveInput,
@@ -47,7 +49,7 @@ struct OptContainer<'a> {
 impl Default for OptKindOpt {
     fn default() -> Self {
         Self {
-            value_desc: String::new(),
+            value_desc: None,
             parser: None,
         }
     }
@@ -106,7 +108,7 @@ impl<'a> Opt<'a> {
         Opt {
             kind: kind,
             names: Vec::new(),
-            desc: String::new(),
+            desc: None,
             field: field,
         }
     }
@@ -127,37 +129,29 @@ impl<'a> Opt<'a> {
         };
 
         let mut opt = Opt::new(kind, field);
-        for attr in &attrs {
+        for attr in attrs.into_iter() {
             match attr {
-                OptAttribute::Name(_, s) => {
-                    opt.names = vec![s.clone()];
-                }
-                OptAttribute::Names(_, v) => {
-                    opt.names = v.clone();
-                }
-                OptAttribute::Desc(_, s) => {
-                    opt.desc = s.clone();
-                }
-                OptAttribute::ValueDesc(nameval, s) => {
-                    if let OptKind::Opt(ref mut v) = opt.kind {
-                        v.value_desc = s.clone();
-                    } else {
+                OptAttribute::Name(_, s) => opt.names = vec![s],
+                OptAttribute::Names(_, v) => opt.names = v,
+                OptAttribute::Desc(_, s) => opt.desc = Some(s),
+                OptAttribute::ValueDesc(nameval, s) => match opt.kind {
+                    OptKind::Opt(ref mut v) => v.value_desc = Some(s),
+                    _ => {
                         return Err(Error::new_spanned(
                             nameval,
                             "Value description allowed on options only",
                         ));
                     }
-                }
-                OptAttribute::Parser(nameval, s) => {
-                    if let OptKind::Opt(ref mut v) = opt.kind {
-                        v.parser = Some(s.parse().unwrap());
-                    } else {
+                },
+                OptAttribute::Parser(nameval, s) => match opt.kind {
+                    OptKind::Opt(ref mut v) => v.parser = Some(s.parse().unwrap()),
+                    _ => {
                         return Err(Error::new_spanned(
                             nameval,
                             "Parser allowed on options only",
                         ));
                     }
-                }
+                },
             }
         }
 
@@ -201,7 +195,7 @@ impl OptContainerAttribute {
     fn expected_one_of_err<T: ToTokens>(v: &T) -> Error {
         Error::new_spanned(
             v,
-            "Expected one of: delimeters = \"...\", usage = \"...\" \
+            "Expected one of: delimeters = \"...\", usage = \"...\", overview = \"...\" \
              default_parser = \"...\"",
         )
     }
@@ -209,6 +203,7 @@ impl OptContainerAttribute {
     fn from_meta(meta: &Meta) -> Result<Self, Error> {
         if let Meta::NameValue(nameval) = meta {
             match nameval.ident.to_string().as_ref() {
+                "overview" => Ok(OptContainerAttribute::Overview(expect_str(&nameval.lit)?)),
                 "delimeters" => Ok(OptContainerAttribute::Delimeters(expect_str(&nameval.lit)?)),
                 "usage" => Ok(OptContainerAttribute::Usage(expect_str(&nameval.lit)?)),
                 "default_parser" => Ok(OptContainerAttribute::DefaultParser(expect_str(
@@ -297,35 +292,24 @@ impl<'a> OptContainer<'a> {
     }
 
     fn init_attrs(&mut self) -> Result<(), Vec<Error>> {
-        let mut errors: Vec<Error> = Vec::new();
-        match OptContainer::parse_attrs(&self.ast.attrs) {
-            Ok(attrs) => {
-                for att in attrs {
-                    match att {
-                        OptContainerAttribute::Delimeters(d) => {
-                            self.delimeters = d.clone();
-                        }
-                        OptContainerAttribute::Usage(u) => {
-                            self.usage = u.clone();
-                        }
-                        OptContainerAttribute::DefaultParser(p) => {
-                            self.default_parser = Some(p.parse().unwrap());
-                        }
-                    }
+        for att in OptContainer::parse_attrs(&self.ast.attrs)?.into_iter() {
+            match att {
+                OptContainerAttribute::Overview(s) => self.overview = Some(s),
+                OptContainerAttribute::Delimeters(d) => self.delimeters = Some(d),
+                OptContainerAttribute::Usage(u) => self.usage = Some(u),
+                OptContainerAttribute::DefaultParser(p) => {
+                    self.default_parser = Some(p.parse().unwrap())
                 }
             }
-            Err(e) => errors.extend(e),
         }
-        match errors.len() {
-            0 => Ok(()),
-            _ => Err(errors),
-        }
+        Ok(())
     }
 
     fn from_ast(ast: &'a DeriveInput) -> Result<Self, Vec<Error>> {
         let mut cont = Self {
-            delimeters: String::new(),
-            usage: String::new(),
+            delimeters: None,
+            overview: None,
+            usage: None,
             default_parser: None,
             opts: Vec::new(),
             ast: ast,
@@ -335,20 +319,54 @@ impl<'a> OptContainer<'a> {
         Ok(cont)
     }
 
+    fn build_str_opt(&self, opt: &Option<String>) -> TokenStream {
+        match opt {
+            Some(s) => quote!(Some(#s.to_string())),
+            None => quote!(None),
+        }
+    }
+
     fn build_help_fn(&self) -> TokenStream {
-        let usage = &self.usage;
-        let opts = self
+        let overview = self.build_str_opt(&self.overview);
+        let usage = self.build_str_opt(&self.usage);
+        let delimeters = self.build_str_opt(&self.delimeters);
+        let options: Vec<TokenStream> = self
             .opts
             .iter()
-            .map(|x| opt_help(x, self.delimeters.chars().next().unwrap_or(' ')))
-            .collect::<String>();
+            .filter_map(|opt| {
+                let names: Vec<TokenStream> =
+                    opt.names.iter().map(|s| quote!(#s.to_string())).collect();
+                let desc = self.build_str_opt(&opt.desc);
+                match opt.kind {
+                    OptKind::Invalid => None,
+                    OptKind::Flag => Some(quote! {
+                        spawner_opts::OptionHelp {
+                            names: vec![#(#names),*],
+                            desc: #desc,
+                            value_desc: None,
+                        }
+                    }),
+                    OptKind::Opt(ref v) => {
+                        let vd = self.build_str_opt(&v.value_desc);
+                        Some(quote! {
+                            spawner_opts::OptionHelp {
+                                names: vec![#(#names),*],
+                                desc: #desc,
+                                value_desc: #vd,
+                            }
+                        })
+                    }
+                }
+            })
+            .collect();
         quote! {
-            fn help() -> String {
-                format!(
-                    "Usage: {}\nOptions:\n{}\n",
-                    #usage,
-                    #opts
-                )
+            fn help() -> spawner_opts::Help {
+                spawner_opts::Help {
+                    overview: #overview,
+                    usage: #usage,
+                    delimeters: #delimeters,
+                    options: vec![#(#options),*],
+                }
             }
         }
     }
@@ -433,10 +451,10 @@ impl<'a> OptContainer<'a> {
                 T: IntoIterator<Item = U>,
                 U: AsRef<str>
             {
-                use spawner_opts::OptParser;
+                use spawner_opts::parser::Parser;
                 fn assert_flag_type_is_bool(v: &bool) {}
 
-                let mut parser = OptParser::new(argv, #delimeters);
+                let mut parser = Parser::new(argv, #delimeters);
                 #(#register_opts)*
                 let parsed_opts = parser.parse();
                 #(#set_opts)*
@@ -444,41 +462,6 @@ impl<'a> OptContainer<'a> {
             }
         })
     }
-}
-
-fn opt_help(opt: &Opt, delim: char) -> String {
-    let desc_offset = 30;
-    let indent = String::from(" ").repeat(desc_offset);
-
-    let mut help = String::from("  ");
-    for i in 0..opt.names.len() {
-        if i > 0 {
-            help.push_str(", ")
-        }
-        help.push_str(opt.names[i].as_str());
-        if let OptKind::Opt(ref v) = opt.kind {
-            help.push(delim);
-            help.push_str(v.value_desc.as_str());
-        }
-    }
-
-    let mut is_first = true;
-    for line in opt.desc.split("\n") {
-        if line.is_empty() {
-            continue;
-        }
-        let help_len = help.len();
-        if is_first && help_len < desc_offset {
-            help.push_str(String::from(" ").repeat(desc_offset - help_len).as_str());
-        } else {
-            help.push('\n');
-            help.push_str(indent.as_str());
-        }
-        help.push_str(line);
-        is_first = false;
-    }
-    help.push('\n');
-    help
 }
 
 fn expect_str(lit: &Lit) -> Result<String, Error> {

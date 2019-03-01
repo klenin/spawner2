@@ -104,10 +104,9 @@ where
     let report = parse(argv).and_then(|driver| driver.run())?;
     if report.cmds.len() == 0 {
         println!("{}", Options::help());
-        return Ok(report);
+    } else {
+        print_report(&report)?;
     }
-
-    print_report(&report)?;
     Ok(report)
 }
 
