@@ -26,3 +26,5 @@ mod error;
 mod runner_impl;
 mod stdio;
 mod sys;
+
+const VERSION: &'static str = env!("CARGO_PKG_VERSION");
