@@ -446,7 +446,7 @@ impl<'a> OptContainer<'a> {
         let set_opts = self.build_set_opts()?;
 
         Ok(quote! {
-            fn parse<T, U>(&mut self, argv: T) -> Result<usize, String>
+            fn parse<T, U>(&mut self, argv: T) -> std::result::Result<usize, String>
             where
                 T: IntoIterator<Item = U>,
                 U: AsRef<str>
