@@ -1,5 +1,5 @@
 use command::Command;
-use process::{ProcessInfo, ProcessStatusCrashed};
+use process::ProcessInfo;
 use runner_impl::Message;
 use std::sync::mpsc::Sender;
 
@@ -16,7 +16,7 @@ pub enum TerminationReason {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExitStatus {
-    Crashed(ProcessStatusCrashed),
+    Crashed(u32, &'static str),
     Finished(u32),
     Terminated(TerminationReason),
 }

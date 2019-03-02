@@ -25,16 +25,10 @@ pub struct ProcessInfo {
     pub total_processes: usize,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct ProcessStatusCrashed {
-    pub exit_code: u32,
-    pub cause: &'static str,
-}
-
 pub enum ProcessStatus {
     Running,
     Finished(u32),
-    Crashed(ProcessStatusCrashed),
+    Crashed(u32, &'static str),
 }
 
 impl ProcessInfo {

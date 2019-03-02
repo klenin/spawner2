@@ -92,10 +92,7 @@ impl Process {
             STILL_ACTIVE => ProcessStatus::Running,
             _ => {
                 if let Some(cause) = crash_cause(exit_code) {
-                    ProcessStatus::Crashed(ProcessStatusCrashed {
-                        exit_code: exit_code,
-                        cause: cause,
-                    })
+                    ProcessStatus::Crashed(exit_code, cause)
                 } else {
                     ProcessStatus::Finished(exit_code)
                 }
