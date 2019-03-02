@@ -1,6 +1,6 @@
 use crate::exe;
 use common::{read_all, write_all, TmpDir};
-use spawner::driver::new::run;
+use spawner::driver::run;
 
 #[test]
 fn test_exclusive_read() {

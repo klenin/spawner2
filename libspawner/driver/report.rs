@@ -1,5 +1,5 @@
-use driver::new::mb2b;
-use driver::new::opts::{Options, StdioRedirectList};
+use driver::mb2b;
+use driver::opts::{Options, StdioRedirectList};
 use json::{array, object, JsonValue};
 use process::ProcessInfo;
 use runner::{ExitStatus, RunnerReport, TerminationReason};
@@ -230,11 +230,9 @@ impl<'a> From<&CommandReport<'a>> for ReportValues {
                 0,
                 "0".to_string(),
             ),
-            ExitStatus::Crashed(ref crash_info) => (
-                "AbnormalExitProcess".to_string(),
-                crash_info.exit_code,
-                crash_info.cause.to_string(),
-            ),
+            ExitStatus::Crashed(code, cause) => {
+                ("AbnormalExitProcess".to_string(), code, cause.to_string())
+            }
         };
         Self {
             ps_info: ps_info,

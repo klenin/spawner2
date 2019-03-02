@@ -1,6 +1,6 @@
 use crate::exe;
 use common::{read_all, write_all, TmpDir};
-use spawner::driver::new::{run, CommandReport};
+use spawner::driver::{run, CommandReport};
 use term_reason::{ensure_idle_time_limit_exceeded, ensure_user_time_limit_exceeded};
 
 #[test]

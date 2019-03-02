@@ -1,9 +1,9 @@
 use command::{EnvKind, EnvVar};
-use driver::new::opts::{
+use driver::opts::{
     Options, PipeKind, RedirectFlags, StderrRedirectList, StdinRedirectList, StdioRedirect,
     StdioRedirectKind, StdioRedirectList, StdoutRedirectList,
 };
-use driver::prelude::OptionValueParser;
+use spawner_opts::OptionValueParser;
 use std::time::Duration;
 
 pub struct DefaultValueParser;

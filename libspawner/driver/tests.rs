@@ -1,7 +1,7 @@
 use command::EnvKind;
-use driver::new::opts::*;
-use driver::new::value_parser::StdinRedirectParser;
-use driver::prelude::*;
+use driver::opts::*;
+use driver::value_parser::StdinRedirectParser;
+use spawner_opts::{CmdLineOptions, OptionValueParser};
 use std::time::Duration;
 
 fn fsec2dur(s: f64) -> Duration {

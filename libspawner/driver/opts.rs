@@ -1,10 +1,10 @@
 use command::{EnvKind, EnvVar};
-use driver::new::value_parser::{
+use driver::value_parser::{
     DefaultValueParser, FileFlagsParser, MemValueParser, PercentValueParser, StderrRedirectParser,
     StdinRedirectParser, StdoutRedirectParser,
 };
-use driver::prelude::{CmdLineOptions, OptionValueParser};
 use pipe::ShareMode;
+use spawner_opts::{CmdLineOptions, OptionValueParser};
 use std::env::{self, VarError};
 use std::f64;
 use std::fmt::{self, Display, Formatter};
