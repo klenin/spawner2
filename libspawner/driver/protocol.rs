@@ -10,7 +10,7 @@ use std::str;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use stdio::{IstreamController, IstreamListeners, OstreamIdx};
+use stdio::{IstreamController, OstreamIdx, Ostreams};
 
 #[derive(Copy, Clone, PartialEq)]
 pub struct CommandIdx(pub usize);
@@ -145,7 +145,7 @@ impl ControllerStdout {
         Ok(())
     }
 
-    fn handle_msg(&mut self, listeners: &mut IstreamListeners) -> Result<()> {
+    fn handle_msg(&mut self, ostreams: &mut Ostreams) -> Result<()> {
         self.init()?;
         self.ctx.runner(self.controller_idx).reset_timers();
 
@@ -166,29 +166,26 @@ impl ControllerStdout {
             }
         }
 
-        for i in 0..listeners.len() {
-            let mut listener = listeners.at(i);
-            let agent_idx = self
-                .ostream_to_agent
-                .get(&listener.ostream_idx())
-                .map(|i| *i);
+        for mut ostream in ostreams.iter_mut() {
+            let agent_idx = self.ostream_to_agent.get(&ostream.idx()).map(|i| *i);
             if agent_idx.is_none() {
-                listener.write(self.buf.as_slice());
+                ostream.write(self.buf.as_slice());
             } else if let MessageKind::Message(data) = msg.kind {
                 if agent_idx == msg.agent_idx.map(|i| self.agent_indices[i.0]) {
-                    listener.write(data);
+                    ostream.write(data);
                 }
             }
         }
+
         Ok(())
     }
 }
 
 impl IstreamController for ControllerStdout {
-    fn handle_data(&mut self, data: &[u8], listeners: &mut IstreamListeners) -> Result<()> {
+    fn handle_data(&mut self, data: &[u8], mut ostreams: Ostreams) -> Result<()> {
         let mut next_msg = self.buf.write(data)?;
         while self.buf.is_msg_ready() {
-            self.handle_msg(listeners)?;
+            self.handle_msg(&mut ostreams)?;
             self.buf.clear();
             next_msg = self.buf.write(next_msg)?;
         }
@@ -217,15 +214,15 @@ impl AgentStdout {
 }
 
 impl IstreamController for AgentStdout {
-    fn handle_data(&mut self, data: &[u8], listeners: &mut IstreamListeners) -> Result<()> {
+    fn handle_data(&mut self, data: &[u8], mut ostreams: Ostreams) -> Result<()> {
         let mut next_msg = self.buf.write(data)?;
         while self.buf.is_msg_ready() {
             let agent = self.agent()?;
             agent.suspend();
             agent.reset_timers();
 
-            for i in 0..listeners.len() {
-                listeners.at(i).write(self.buf.as_slice());
+            for mut ostream in ostreams.iter_mut() {
+                ostream.write(self.buf.as_slice());
             }
 
             self.buf.clear();

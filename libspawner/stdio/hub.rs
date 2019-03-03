@@ -3,11 +3,12 @@ use pipe::{ReadPipe, WritePipe};
 use std::io::{self, BufWriter, Read, Write};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
-use stdio::{Istream, IstreamListeners, Ostream, OstreamIdx};
+use stdio::{IstreamController, OstreamIdx, Ostreams};
 
 /// Splits the `ReadPipe` allowing multiple readers to receive data from it.
 pub struct ReadHub {
-    istream: Istream,
+    pipe: ReadPipe,
+    controller: Option<Box<IstreamController>>,
     write_hubs: Vec<WriteHub>,
     buffer_size: usize,
 }
@@ -29,12 +30,14 @@ pub type ReadHubResult = std::result::Result<ReadPipe, ReadHubError>;
 pub struct WriteHub {
     kind: Arc<Mutex<WriteHubKind>>,
     ostream_idx: OstreamIdx,
+    error_encountered: bool,
 }
 
 impl ReadHub {
-    pub fn new(istream: Istream) -> Self {
+    pub fn new(pipe: ReadPipe, controller: Option<Box<IstreamController>>) -> Self {
         Self {
-            istream: istream,
+            pipe: pipe,
+            controller: controller,
             write_hubs: Vec::new(),
             buffer_size: 8192,
         }
@@ -55,58 +58,46 @@ impl ReadHub {
         buffer.resize(self.buffer_size, 0);
 
         loop {
-            let bytes_read = match self.istream.pipe.read(buffer.as_mut_slice()) {
+            let bytes_read = match self.pipe.read(buffer.as_mut_slice()) {
                 Ok(x) => x,
                 Err(_) => break,
             };
             if bytes_read == 0 {
                 break;
             }
-            let data = &buffer[..bytes_read];
-            let num_errors = match &mut self.istream.controller {
-                Some(ctl) => {
-                    let mut listeners = IstreamListeners {
-                        write_hubs: &mut self.write_hubs,
-                        num_errors: 0,
-                    };
-                    if let Err(e) = ctl.handle_data(data, &mut listeners) {
-                        return Err(ReadHubError {
-                            error: e,
-                            pipe: self.istream.pipe,
-                        });
-                    }
-                    listeners.num_errors
-                }
-                None => {
-                    let mut num_errors = 0;
-                    for wh in self.write_hubs.iter_mut() {
-                        if wh.write_all(data).is_err() {
-                            num_errors += 1;
-                        }
-                    }
-                    num_errors
-                }
-            };
 
-            if num_errors == self.write_hubs.len() {
-                // All pipes are dead.
+            let data = &buffer[..bytes_read];
+            if let Some(ctl) = &mut self.controller {
+                if let Err(e) = ctl.handle_data(data, Ostreams(self.write_hubs.as_mut_slice())) {
+                    return Err(ReadHubError {
+                        error: e,
+                        pipe: self.pipe,
+                    });
+                }
+            } else {
+                for wh in self.write_hubs.iter_mut() {
+                    let _ = wh.write_all(data);
+                }
+            }
+
+            if self.write_hubs.iter().all(|wh| wh.error_encountered) {
                 break;
             }
         }
 
-        Ok(self.istream.pipe)
+        Ok(self.pipe)
     }
 }
 
 impl WriteHub {
-    pub fn new(ostream: Ostream, idx: OstreamIdx) -> Self {
-        let pipe = ostream.pipe;
+    pub fn new(pipe: WritePipe, idx: OstreamIdx) -> Self {
         Self {
             kind: Arc::new(Mutex::new(match pipe.is_file() {
                 true => WriteHubKind::File(BufWriter::new(pipe)),
                 false => WriteHubKind::Pipe(pipe),
             })),
             ostream_idx: idx,
+            error_encountered: false,
         }
     }
 
@@ -130,16 +121,24 @@ impl WriteHub {
 
 impl Write for WriteHub {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match *self.lock()? {
+        let result = self.lock().and_then(|mut guard| match *guard {
             WriteHubKind::Pipe(ref mut p) => p.write(buf),
             WriteHubKind::File(ref mut f) => f.write(buf),
+        });
+        if result.is_err() {
+            self.error_encountered = true;
         }
+        result
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        match *self.lock()? {
+        let result = self.lock().and_then(|mut guard| match *guard {
             WriteHubKind::Pipe(ref mut p) => p.flush(),
             WriteHubKind::File(ref mut f) => f.flush(),
+        });
+        if result.is_err() {
+            self.error_encountered = true;
         }
+        result
     }
 }

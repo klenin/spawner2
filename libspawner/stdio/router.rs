@@ -3,7 +3,7 @@ use pipe::{self, ReadPipe, WritePipe};
 use std::collections::HashMap;
 use std::thread::JoinHandle;
 use stdio::hub::{ReadHub, ReadHubResult, WriteHub};
-use stdio::{Istream, IstreamController, IstreamIdx, Ostream, OstreamIdx};
+use stdio::{IstreamController, IstreamIdx, OstreamIdx};
 
 pub struct Router {
     readhub_threads: Vec<(IstreamIdx, JoinHandle<ReadHubResult>)>,
@@ -70,7 +70,7 @@ impl RouterBuilder {
         controller: Option<Box<IstreamController>>,
     ) -> IstreamIdx {
         let (hub, controller) = match stream {
-            Some(stream) => (Some(ReadHub::new(Istream::new(stream, controller))), None),
+            Some(stream) => (Some(ReadHub::new(stream, controller)), None),
             None => (None, controller),
         };
 
@@ -88,7 +88,7 @@ impl RouterBuilder {
         let idx = OstreamIdx(self.ostream_info.len());
         self.ostream_info.push(OstreamInfo {
             dst: None,
-            hub: stream.map(|p| WriteHub::new(Ostream::new(p), idx)),
+            hub: stream.map(|p| WriteHub::new(p, idx)),
         });
         idx
     }
@@ -105,13 +105,13 @@ impl RouterBuilder {
             assert!(istream.src.is_none());
             let (r, w) = pipe::create()?;
             istream.src = Some(w);
-            istream.hub = Some(ReadHub::new(Istream::new(r, istream.controller.take())));
+            istream.hub = Some(ReadHub::new(r, istream.controller.take()));
         }
         if ostream.hub.is_none() {
             assert!(ostream.dst.is_none());
             let (r, w) = pipe::create()?;
             ostream.dst = Some(r);
-            ostream.hub = Some(WriteHub::new(Ostream::new(w), ostream_idx));
+            ostream.hub = Some(WriteHub::new(w, ostream_idx));
         }
 
         istream

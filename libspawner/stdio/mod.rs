@@ -2,7 +2,6 @@ mod hub;
 pub(crate) mod router;
 
 use crate::Result;
-use pipe::{ReadPipe, WritePipe};
 use std::io::Write;
 use stdio::hub::WriteHub;
 
@@ -11,66 +10,37 @@ pub struct IstreamIdx(pub usize);
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct OstreamIdx(pub usize);
 
-pub struct Istream {
-    pipe: ReadPipe,
-    controller: Option<Box<IstreamController>>,
-}
-
-pub struct IstreamListeners<'a> {
-    write_hubs: &'a mut [WriteHub],
-    num_errors: usize,
-}
-
-pub struct IstreamListener<'a, 'b> {
-    listeners: &'a mut IstreamListeners<'b>,
-    idx: usize,
-}
+pub struct Ostreams<'a>(&'a mut [WriteHub]);
+pub struct Ostream<'a>(&'a mut WriteHub);
+pub struct OstreamsIterMut<'a>(std::slice::IterMut<'a, WriteHub>);
 
 pub trait IstreamController: Send {
-    fn handle_data(&mut self, data: &[u8], listeners: &mut IstreamListeners) -> Result<()>;
+    fn handle_data(&mut self, data: &[u8], ostreams: Ostreams) -> Result<()>;
 }
 
-pub struct Ostream {
-    pipe: WritePipe,
-}
-
-impl Istream {
-    pub fn new(pipe: ReadPipe, ctl: Option<Box<IstreamController>>) -> Self {
-        Self {
-            pipe: pipe,
-            controller: ctl,
-        }
+impl<'a> Ostreams<'a> {
+    pub fn iter_mut(&mut self) -> OstreamsIterMut {
+        OstreamsIterMut(self.0.iter_mut())
     }
 }
 
-impl Ostream {
-    pub fn new(pipe: WritePipe) -> Self {
-        Self { pipe: pipe }
-    }
-}
-
-impl<'a> IstreamListeners<'a> {
-    pub fn len(&self) -> usize {
-        self.write_hubs.len()
-    }
-
-    pub fn at<'b>(&'b mut self, i: usize) -> IstreamListener<'b, 'a> {
-        IstreamListener {
-            listeners: self,
-            idx: i,
-        }
-    }
-}
-
-impl<'a, 'b> IstreamListener<'a, 'b> {
-    pub fn ostream_idx(&self) -> OstreamIdx {
-        self.listeners.write_hubs[self.idx].ostream_idx()
-    }
-
+impl<'a> Ostream<'a> {
     pub fn write(&mut self, data: &[u8]) {
-        let wh = &mut self.listeners.write_hubs[self.idx];
-        if wh.write_all(data).is_err() {
-            self.listeners.num_errors += 1;
+        let _ = self.0.write_all(data);
+    }
+
+    pub fn idx(&self) -> OstreamIdx {
+        self.0.ostream_idx()
+    }
+}
+
+impl<'a> Iterator for OstreamsIterMut<'a> {
+    type Item = Ostream<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.0.next() {
+            Some(hub) => Some(Ostream(hub)),
+            None => None,
         }
     }
 }
