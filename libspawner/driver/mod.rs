@@ -1,4 +1,4 @@
-pub mod opts;
+mod opts;
 mod protocol;
 mod report;
 mod value_parser;
