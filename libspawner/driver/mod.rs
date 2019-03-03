@@ -9,7 +9,7 @@ mod tests;
 pub use driver::report::*;
 
 use crate::{Error, Result};
-use command::{CommandBuilder, CommandController, Limits};
+use command::{Command, CommandController, Limits};
 use driver::opts::{Options, PipeKind, StdioRedirectKind, StdioRedirectList};
 use driver::protocol::{
     AgentIdx, AgentStdout, AgentTermination, CommandIdx, Context, ControllerStdin,
@@ -214,23 +214,24 @@ impl SessionBuilderEx {
     fn add_cmds(&mut self, driver: &Driver) {
         for (cmd_idx, cmd_info) in driver.cmds.iter().enumerate() {
             let opts = &cmd_info.opts;
-            let cmd = CommandBuilder::new(opts.argv[0].clone())
-                .args(opts.argv.iter().skip(1))
-                .env_kind(opts.env)
-                .env_vars(&opts.env_vars)
-                .monitor_interval(opts.monitor_interval)
-                .show_gui(opts.show_window)
-                .spawn_suspended(cmd_info.kind.is_agent())
-                .limits(Limits {
+            let cmd = Command {
+                app: opts.argv[0].clone(),
+                args: opts.argv.iter().skip(1).map(|s| s.to_string()).collect(),
+                env_vars: opts.env_vars.clone(),
+                env_kind: opts.env,
+                monitor_interval: opts.monitor_interval,
+                show_gui: opts.show_window,
+                spawn_suspended: cmd_info.kind.is_agent(),
+                limits: Limits {
                     max_wall_clock_time: opts.wall_clock_time_limit,
                     max_idle_time: opts.idle_time_limit,
                     max_user_time: opts.time_limit,
                     max_memory_usage: opts.memory_limit.map(|v| mb2b(v)),
                     max_output_size: opts.write_limit.map(|v| mb2b(v)),
                     max_processes: opts.process_count,
-                })
-                .current_dir_opt(opts.working_directory.as_ref())
-                .build();
+                },
+                current_dir: opts.working_directory.clone(),
+            };
 
             let ctl = self.cmd_controller(cmd_idx, &driver);
             let mapping = self.base.add_cmd(cmd, ctl);
