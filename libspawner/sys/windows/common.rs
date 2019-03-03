@@ -2,6 +2,19 @@ use crate::{Error, Result};
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::u32;
+use winapi::um::handleapi::CloseHandle;
+use winapi::um::winnt::HANDLE;
+
+pub struct Handle(pub HANDLE);
+unsafe impl Send for Handle {}
+
+impl Drop for Handle {
+    fn drop(&mut self) {
+        unsafe {
+            CloseHandle(self.0);
+        }
+    }
+}
 
 pub trait IsZero {
     fn is_zero(&self) -> bool;
@@ -17,22 +30,7 @@ macro_rules! impl_is_zero {
     )*)
 }
 
-pub trait IsMinusOne {
-    fn is_minus_one(&self) -> bool;
-}
-
-macro_rules! impl_is_minus_one {
-    ($($type:ident)*) => ($(
-        impl IsMinusOne for $type {
-            fn is_minus_one(&self) -> bool {
-                *self == -1
-            }
-        }
-    )*)
-}
-
 impl_is_zero!(i8 i16 i32 i64 isize u8 u16 u32 u64 usize);
-impl_is_minus_one!(i8 i16 i32 i64 isize);
 
 impl<T> IsZero for *const T {
     fn is_zero(&self) -> bool {
@@ -46,24 +44,9 @@ impl<T> IsZero for *mut T {
     }
 }
 
-impl IsMinusOne for u32 {
-    fn is_minus_one(&self) -> bool {
-        *self == u32::MAX
-    }
-}
-
 /// Returns last os error if the value is zero.
-pub fn ok_nonzero<T: IsZero>(v: T) -> Result<T> {
+pub fn cvt<T: IsZero>(v: T) -> Result<T> {
     if v.is_zero() {
-        Err(Error::last_os_error())
-    } else {
-        Ok(v)
-    }
-}
-
-/// Returns last os error if the value is minus one.
-pub fn ok_neq_minus_one<T: IsMinusOne>(v: T) -> Result<T> {
-    if v.is_minus_one() {
         Err(Error::last_os_error())
     } else {
         Ok(v)
