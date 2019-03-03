@@ -224,7 +224,7 @@ impl<'a> From<&CommandReport<'a>> for ReportValues {
                     TerminationReason::WriteLimitExceeded => "WriteLimitExceeded",
                     TerminationReason::MemoryLimitExceeded => "MemoryLimitExceeded",
                     TerminationReason::ProcessLimitExceeded => "ProcessesCountLimitExceeded",
-                    TerminationReason::Other => "TerminatedByController",
+                    TerminationReason::ManuallyTerminated => "TerminatedByController",
                 }
                 .to_string(),
                 0,

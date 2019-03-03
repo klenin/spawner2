@@ -11,7 +11,7 @@ pub enum TerminationReason {
     WriteLimitExceeded,
     MemoryLimitExceeded,
     ProcessLimitExceeded,
-    Other,
+    ManuallyTerminated,
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -149,7 +149,9 @@ impl RunnerImpl {
             if let Ok(msg) = self.receiver.try_recv() {
                 match msg {
                     Message::Terminate => {
-                        self.exit_status = Some(ExitStatus::Terminated(TerminationReason::Other));
+                        self.exit_status = Some(ExitStatus::Terminated(
+                            TerminationReason::ManuallyTerminated,
+                        ));
                         break;
                     }
                     Message::Suspend => process.suspend()?,
