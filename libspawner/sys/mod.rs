@@ -1,7 +1,5 @@
 use cfg_if::cfg_if;
 
-mod process_common;
-
 cfg_if! {
     if #[cfg(windows)] {
         extern crate winapi;
@@ -10,4 +8,8 @@ cfg_if! {
     } else {
         compile_error!("spawner doesn't compile for this platform yet");
     }
+}
+
+pub trait IntoInner<T> {
+    fn into_inner(self) -> T;
 }

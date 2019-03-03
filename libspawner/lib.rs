@@ -8,16 +8,10 @@ extern crate winapi;
 
 pub mod command;
 pub mod driver;
+pub mod pipe;
+pub mod process;
 pub mod runner;
 pub mod session;
-
-pub mod process {
-    pub use sys::process::*;
-}
-
-pub mod pipe {
-    pub use sys::pipe::*;
-}
 
 pub use error::*;
 pub type Result<T> = std::result::Result<T, self::Error>;
