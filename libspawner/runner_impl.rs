@@ -111,7 +111,7 @@ impl RunnerImpl {
             TerminationReason::WriteLimitExceeded
         } else if gr(self.info.peak_memory_used, limits.max_memory_usage) {
             TerminationReason::MemoryLimitExceeded
-        } else if gr(self.info.total_processes, limits.max_processes) {
+        } else if gr(self.info.total_processes_created, limits.max_processes) {
             TerminationReason::ProcessLimitExceeded
         } else {
             return false;

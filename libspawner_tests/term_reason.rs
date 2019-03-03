@@ -77,7 +77,7 @@ pub fn ensure_write_limit_exceeded(report: CommandReport) {
 pub fn ensure_process_limit_exceeded(report: CommandReport) {
     let runner_report = report.runner_report.unwrap();
     let json = report.to_json();
-    let total_processes = runner_report.process_info.total_processes;
+    let total_processes = runner_report.process_info.total_processes_created;
     let process_limit = report.cmd.process_count.unwrap();
 
     assert_eq!(
