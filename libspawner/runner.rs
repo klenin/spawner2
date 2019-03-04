@@ -1,7 +1,7 @@
 use command::Command;
-use process::ProcessInfo;
-use runner_impl::Message;
 use std::sync::mpsc::Sender;
+use std::time::Duration;
+use sys::runner::RunnerMessage;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TerminationReason {
@@ -12,6 +12,24 @@ pub enum TerminationReason {
     MemoryLimitExceeded,
     ProcessLimitExceeded,
     ManuallyTerminated,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct ProcessInfo {
+    /// The amount of time elapsed since process creation.
+    pub wall_clock_time: Duration,
+    /// The total amount of user-mode execution time for all active processes,
+    /// as well as all terminated processes.
+    pub total_user_time: Duration,
+    /// The total amount of kernel-mode execution time for all active processes,
+    /// as well as all terminated processes.
+    pub total_kernel_time: Duration,
+    /// The peak memory usage of all active processes, in bytes.
+    pub peak_memory_used: u64,
+    /// The total number of processes created.
+    pub total_processes_created: usize,
+    /// Total bytes written by a process.
+    pub total_bytes_written: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -29,28 +47,45 @@ pub struct RunnerReport {
 }
 
 #[derive(Clone)]
-pub struct Runner {
-    pub(crate) sender: Sender<Message>,
-}
+pub struct Runner(Sender<RunnerMessage>);
 
 impl Runner {
-    fn send(&self, msg: Message) {
-        let _ = self.sender.send(msg);
+    fn send(&self, msg: RunnerMessage) {
+        let _ = self.0.send(msg);
     }
 
     pub fn terminate(&self) {
-        self.send(Message::Terminate);
+        self.send(RunnerMessage::Terminate);
     }
 
     pub fn suspend(&self) {
-        self.send(Message::Suspend);
+        self.send(RunnerMessage::Suspend);
     }
 
     pub fn resume(&self) {
-        self.send(Message::Resume);
+        self.send(RunnerMessage::Resume);
     }
 
     pub fn reset_timers(&self) {
-        self.send(Message::ResetTimers);
+        self.send(RunnerMessage::ResetTimers);
+    }
+}
+
+impl From<Sender<RunnerMessage>> for Runner {
+    fn from(s: Sender<RunnerMessage>) -> Self {
+        Self(s)
+    }
+}
+
+impl ProcessInfo {
+    pub fn zeroed() -> Self {
+        Self {
+            wall_clock_time: Duration::from_nanos(0),
+            total_user_time: Duration::from_nanos(0),
+            total_kernel_time: Duration::from_nanos(0),
+            peak_memory_used: 0,
+            total_bytes_written: 0,
+            total_processes_created: 0,
+        }
     }
 }

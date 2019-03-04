@@ -1,9 +1,8 @@
 use crate::{Error, Result};
 use command::{Command, CommandController, OnTerminate};
 use pipe::{ReadPipe, ShareMode, WritePipe};
-use process::ProcessStdio;
 use runner::{Runner, RunnerReport};
-use runner_impl::{self, RunnerThread};
+use runner_private::{self, ProcessStdio, RunnerThread};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt;
@@ -195,14 +194,14 @@ impl SessionBuilder {
 
         for target_info in self.targets.into_iter() {
             let mapping = target_info.stdio_mapping;
-            sess.runner_threads.push(runner_impl::spawn(
+            sess.runner_threads.push(runner_private::spawn(
                 target_info.cmd,
-                target_info.on_terminate,
                 ProcessStdio {
                     stdin: iolist.ostream_dsts[mapping.stdin.0].take().unwrap(),
                     stdout: iolist.istream_srcs[mapping.stdout.0].take().unwrap(),
                     stderr: iolist.istream_srcs[mapping.stderr.0].take().unwrap(),
                 },
+                target_info.on_terminate,
             )?);
             sess.stdio_mappings.push(mapping);
         }

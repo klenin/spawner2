@@ -1,8 +1,7 @@
 use driver::mb2b;
 use driver::opts::{Options, StdioRedirectList};
 use json::{array, object, JsonValue};
-use process::ProcessInfo;
-use runner::{ExitStatus, RunnerReport, TerminationReason};
+use runner::{ExitStatus, ProcessInfo, RunnerReport, TerminationReason};
 use session::{CommandErrors, CommandResult};
 use std::fmt::{self, Display, Formatter};
 use std::time::Duration;

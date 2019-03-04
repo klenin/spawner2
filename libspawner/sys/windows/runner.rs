@@ -1,50 +1,69 @@
 use crate::{Error, Result};
 use command::{Command, OnTerminate};
-use process::{Process, ProcessInfo, ProcessStatus, ProcessStdio};
-use runner::{ExitStatus, Runner, RunnerReport, TerminationReason};
+use runner::{ExitStatus, ProcessInfo, Runner, RunnerReport, TerminationReason};
 use std::sync::mpsc::{channel, Receiver};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+use sys::windows::pipe::{ReadPipe, WritePipe};
+use sys::windows::process::{Process, RawStdio, Status};
+use sys::IntoInner;
 
 pub struct RunnerThread {
     handle: JoinHandle<Result<RunnerReport>>,
     runner: Runner,
 }
 
-pub enum Message {
+pub enum RunnerMessage {
     Terminate,
     Suspend,
     Resume,
     ResetTimers,
 }
 
-struct RunnerImpl {
+pub struct ProcessStdio {
+    pub stdin: ReadPipe,
+    pub stdout: WritePipe,
+    pub stderr: WritePipe,
+}
+
+struct MonitoringLoop {
     cmd: Command,
-    info: ProcessInfo,
+    process: Process,
+    ps_info: ProcessInfo,
     last_check_time: Option<Instant>,
     total_idle_time: Duration,
     exit_status: Option<ExitStatus>,
-    receiver: Receiver<Message>,
-}
-
-struct OnTerminateGuard {
-    handler: Option<Box<OnTerminate>>,
+    receiver: Receiver<RunnerMessage>,
 }
 
 pub fn spawn(
     cmd: Command,
-    on_terminate: Option<Box<OnTerminate>>,
     stdio: ProcessStdio,
+    mut on_terminate: Option<Box<OnTerminate>>,
 ) -> Result<RunnerThread> {
-    let (sender, receiver) = channel::<Message>();
-    let monitoring_loop = RunnerImpl::new(cmd, receiver);
-
+    let (sender, receiver) = channel::<RunnerMessage>();
     thread::Builder::new()
-        .spawn(move || RunnerImpl::main_loop(monitoring_loop, on_terminate, stdio))
+        .spawn(move || {
+            let process = Process::spawn(
+                &cmd,
+                RawStdio {
+                    stdin: stdio.stdin.into_inner(),
+                    stdout: stdio.stdout.into_inner(),
+                    stderr: stdio.stderr.into_inner(),
+                },
+            )?;
+
+            let monitoring_loop = MonitoringLoop::new(cmd, process, receiver);
+            let report = monitoring_loop.run();
+            if let Some(handler) = on_terminate.as_mut() {
+                handler.on_terminate();
+            }
+            report
+        })
         .map_err(|e| Error::from(e))
         .map(|handle| RunnerThread {
             handle: handle,
-            runner: Runner { sender: sender },
+            runner: Runner::from(sender),
         })
 }
 
@@ -61,11 +80,12 @@ impl RunnerThread {
     }
 }
 
-impl RunnerImpl {
-    fn new(cmd: Command, receiver: Receiver<Message>) -> Self {
+impl MonitoringLoop {
+    fn new(cmd: Command, process: Process, receiver: Receiver<RunnerMessage>) -> Self {
         Self {
             cmd: cmd,
-            info: ProcessInfo::zeroed(),
+            process: process,
+            ps_info: ProcessInfo::zeroed(),
             last_check_time: None,
             total_idle_time: Duration::from_millis(0),
             exit_status: None,
@@ -76,7 +96,7 @@ impl RunnerImpl {
     fn check_limits(&mut self, new_info: ProcessInfo) -> bool {
         if let Some(last_check_time) = self.last_check_time {
             let dt = last_check_time.elapsed();
-            let mut d_user = new_info.total_user_time - self.info.total_user_time;
+            let mut d_user = new_info.total_user_time - self.ps_info.total_user_time;
             // FIXME: total_user_time contains user times of all processes created, therefore
             // it can be greater than the wall-clock time. Currently it is possible for 2 processes
             // to avoid idle time limit. Consider:
@@ -94,24 +114,24 @@ impl RunnerImpl {
             self.total_idle_time += dt - d_user;
         }
         self.last_check_time = Some(Instant::now());
-        self.info = new_info;
+        self.ps_info = new_info;
 
         fn gr<T: PartialOrd>(stat: T, limit: Option<T>) -> bool {
             limit.is_some() && stat > limit.unwrap()
         }
 
         let limits = &self.cmd.limits;
-        let term_reason = if gr(self.info.wall_clock_time, limits.max_wall_clock_time) {
+        let term_reason = if gr(self.ps_info.wall_clock_time, limits.max_wall_clock_time) {
             TerminationReason::WallClockTimeLimitExceeded
         } else if gr(self.total_idle_time, limits.max_idle_time) {
             TerminationReason::IdleTimeLimitExceeded
-        } else if gr(self.info.total_user_time, limits.max_user_time) {
+        } else if gr(self.ps_info.total_user_time, limits.max_user_time) {
             TerminationReason::UserTimeLimitExceeded
-        } else if gr(self.info.total_bytes_written, limits.max_output_size) {
+        } else if gr(self.ps_info.total_bytes_written, limits.max_output_size) {
             TerminationReason::WriteLimitExceeded
-        } else if gr(self.info.peak_memory_used, limits.max_memory_usage) {
+        } else if gr(self.ps_info.peak_memory_used, limits.max_memory_usage) {
             TerminationReason::MemoryLimitExceeded
-        } else if gr(self.info.total_processes_created, limits.max_processes) {
+        } else if gr(self.ps_info.total_processes_created, limits.max_processes) {
             TerminationReason::ProcessLimitExceeded
         } else {
             return false;
@@ -121,26 +141,41 @@ impl RunnerImpl {
         true
     }
 
-    fn main_loop(
-        mut self,
-        on_terminate: Option<Box<OnTerminate>>,
-        stdio: ProcessStdio,
-    ) -> Result<RunnerReport> {
-        let _on_terminate_guard = OnTerminateGuard::new(on_terminate);
-        let process = Process::spawn(&self.cmd, stdio)?;
+    fn process_info(&self) -> Result<ProcessInfo> {
+        let basic_and_io_info = self.process.basic_and_io_info()?;
+        let ext_limit_info = self.process.ext_limit_info()?;
 
+        // Total user time in 100-nanosecond ticks.
+        let total_user_time =
+            unsafe { *basic_and_io_info.BasicInfo.TotalUserTime.QuadPart() } as u64;
+        // Total kernel time in 100-nanosecond ticks.
+        let total_kernel_time =
+            unsafe { *basic_and_io_info.BasicInfo.TotalKernelTime.QuadPart() } as u64;
+
+        Ok(ProcessInfo {
+            wall_clock_time: self.process.creation_time().elapsed(),
+            total_user_time: Duration::from_nanos(total_user_time * 100),
+            total_kernel_time: Duration::from_nanos(total_kernel_time * 100),
+            peak_memory_used: ext_limit_info.PeakJobMemoryUsed as u64,
+            total_processes_created: basic_and_io_info.BasicInfo.TotalProcesses as usize,
+            total_bytes_written: basic_and_io_info.IoInfo.WriteTransferCount,
+        })
+    }
+
+    fn run(mut self) -> Result<RunnerReport> {
         loop {
-            match process.status()? {
-                ProcessStatus::Running => {
-                    if self.check_limits(process.info()?) {
+            match self.process.status()? {
+                Status::Running => {
+                    let new_info = self.process_info()?;
+                    if self.check_limits(new_info) {
                         break;
                     }
                 }
-                ProcessStatus::Finished(code) => {
+                Status::Finished(code) => {
                     self.exit_status = Some(ExitStatus::Finished(code));
                     break;
                 }
-                ProcessStatus::Crashed(code, cause) => {
+                Status::Crashed(code, cause) => {
                     self.exit_status = Some(ExitStatus::Crashed(code, cause));
                     break;
                 }
@@ -148,17 +183,17 @@ impl RunnerImpl {
 
             if let Ok(msg) = self.receiver.try_recv() {
                 match msg {
-                    Message::Terminate => {
+                    RunnerMessage::Terminate => {
                         self.exit_status = Some(ExitStatus::Terminated(
                             TerminationReason::ManuallyTerminated,
                         ));
                         break;
                     }
-                    Message::Suspend => process.suspend()?,
-                    Message::Resume => process.resume()?,
-                    Message::ResetTimers => {
-                        self.info.wall_clock_time = Duration::from_millis(0);
-                        self.info.total_user_time = Duration::from_millis(0);
+                    RunnerMessage::Suspend => self.process.suspend()?,
+                    RunnerMessage::Resume => self.process.resume()?,
+                    RunnerMessage::ResetTimers => {
+                        self.ps_info.wall_clock_time = Duration::from_millis(0);
+                        self.ps_info.total_user_time = Duration::from_millis(0);
                         self.total_idle_time = Duration::from_millis(0);
                     }
                 }
@@ -169,22 +204,8 @@ impl RunnerImpl {
 
         Ok(RunnerReport {
             command: self.cmd,
-            process_info: self.info,
+            process_info: self.ps_info,
             exit_status: self.exit_status.unwrap(),
         })
-    }
-}
-
-impl OnTerminateGuard {
-    fn new(handler: Option<Box<OnTerminate>>) -> Self {
-        Self { handler: handler }
-    }
-}
-
-impl Drop for OnTerminateGuard {
-    fn drop(&mut self) {
-        if let Some(handler) = self.handler.as_mut() {
-            handler.on_terminate();
-        }
     }
 }
