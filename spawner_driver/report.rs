@@ -1,8 +1,11 @@
-use driver::mb2b;
-use driver::opts::{Options, StdioRedirectList};
+use crate::misc::{b2mb, dur2sec, mb2b};
+use crate::opts::{Options, StdioRedirectList};
+
+use spawner::runner::{ExitStatus, ProcessInfo, RunnerReport, TerminationReason};
+use spawner::session::{CommandErrors, CommandResult};
+
 use json::{array, object, JsonValue};
-use runner::{ExitStatus, ProcessInfo, RunnerReport, TerminationReason};
-use session::{CommandErrors, CommandResult};
+
 use std::fmt::{self, Display, Formatter};
 use std::time::Duration;
 
@@ -253,20 +256,12 @@ fn secs_or_inf<W: fmt::Write>(
         None => write!(w, "{}Infinity\n", prefix),
     }
 }
+
 fn mb_or_inf<W: fmt::Write>(w: &mut W, prefix: &'static str, val: &Option<f64>) -> fmt::Result {
     match val {
         Some(v) => write!(w, "{}{:.6} (Mb)\n", prefix, v),
         None => write!(w, "{}Infinity\n", prefix),
     }
-}
-
-fn dur2sec(d: &Duration) -> f64 {
-    let us = d.as_secs() as f64 * 1e6 + d.subsec_micros() as f64;
-    us / 1e6
-}
-
-fn b2mb(bytes: u64) -> f64 {
-    bytes as f64 / (1024.0 * 1024.0)
 }
 
 fn json_limits(opts: &Options) -> JsonValue {

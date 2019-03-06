@@ -1,10 +1,14 @@
-use command::{EnvKind, EnvVar};
-use driver::value_parser::{
+use crate::value_parser::{
     DefaultValueParser, FileFlagsParser, MemValueParser, PercentValueParser, StderrRedirectParser,
     StdinRedirectParser, StdoutRedirectParser,
 };
-use pipe::ShareMode;
+
 use spawner_opts::{CmdLineOptions, OptionValueParser};
+
+use spawner::command::{EnvKind, EnvVar};
+use spawner::pipe::ShareMode;
+use spawner::VERSION;
+
 use std::env::{self, VarError};
 use std::f64;
 use std::fmt::{self, Display, Formatter};
@@ -334,7 +338,7 @@ impl Options {
 
     pub fn print_help() {
         let mut help = Self::help();
-        help.overview = Some(format!("Spawner sandbox v{}", crate::VERSION));
+        help.overview = Some(format!("Spawner sandbox v{}", VERSION));
         println!("{}", help);
         Self::print_redirect_examples();
         Self::print_env_help();

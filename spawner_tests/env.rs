@@ -1,6 +1,7 @@
+use crate::common::{read_all, TmpDir};
 use crate::exe;
-use common::{read_all, TmpDir};
-use spawner::driver::run;
+
+use spawner_driver::run;
 
 struct Env {
     data: String,

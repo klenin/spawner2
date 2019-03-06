@@ -1,5 +1,6 @@
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
+
 use std::fs;
 use std::io::prelude::*;
 use std::iter;

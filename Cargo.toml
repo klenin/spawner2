@@ -2,8 +2,8 @@
 
 members = [
 	"spawner",
+	"spawner_driver",
 	"spawner_opts",
 	"spawner_opts_derive",
 	"spawner_tests",
-	"sp",
 ]

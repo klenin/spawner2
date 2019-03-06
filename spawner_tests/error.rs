@@ -1,5 +1,6 @@
 use crate::exe;
-use spawner::driver::{run, CommandReport, Report};
+
+use spawner_driver::{run, CommandReport, Report};
 
 fn ensure_error(report: CommandReport, error: &str) {
     let json = report.to_json();

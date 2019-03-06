@@ -1,7 +1,10 @@
+use crate::common::TmpDir;
 use crate::{assert_approx_eq, assert_flt_eq, exe};
-use common::TmpDir;
-use spawner::driver::{run, CommandReport};
+
+use spawner_driver::{run, CommandReport};
+
 use spawner::runner::{ExitStatus, TerminationReason};
+
 use std::time::Duration;
 use std::u64;
 

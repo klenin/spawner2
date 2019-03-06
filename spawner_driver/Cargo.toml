@@ -1,0 +1,18 @@
+[package]
+name = "spawner_driver"
+version = "0.0.0"
+authors = ["ptslog <hsfk@yandex.ru>"]
+
+[lib]
+name = "spawner_driver"
+path = "lib.rs"
+crate-type = ["lib"]
+
+[[bin]]
+name = "sp"
+path = "sp.rs"
+
+[dependencies]
+spawner = { path = "../spawner" }
+spawner_opts = { path = "../spawner_opts" }
+json = "*"

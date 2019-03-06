@@ -1,8 +1,10 @@
-use crate::{Error, Result};
-use command::OnTerminate;
-use pipe::WritePipe;
-use runner::Runner;
-use session::StdioMapping;
+use spawner::command::OnTerminate;
+use spawner::pipe::WritePipe;
+use spawner::runner::Runner;
+use spawner::session::StdioMapping;
+use spawner::stdio::{IstreamController, OstreamIdx, Ostreams};
+use spawner::{Error, Result};
+
 use std::char;
 use std::collections::HashMap;
 use std::io::{self, Write};
@@ -10,7 +12,6 @@ use std::str;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use stdio::{IstreamController, OstreamIdx, Ostreams};
 
 #[derive(Copy, Clone, PartialEq)]
 pub struct CommandIdx(pub usize);

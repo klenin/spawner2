@@ -1,7 +1,10 @@
-use command::EnvKind;
-use driver::opts::*;
-use driver::value_parser::StdinRedirectParser;
+use crate::opts::*;
+use crate::value_parser::StdinRedirectParser;
+
+use spawner::command::EnvKind;
+
 use spawner_opts::{CmdLineOptions, OptionValueParser};
+
 use std::time::Duration;
 
 fn fsec2dur(s: f64) -> Duration {

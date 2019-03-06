@@ -2,6 +2,7 @@
 
 extern crate rand;
 extern crate spawner;
+extern crate spawner_driver;
 
 mod common;
 

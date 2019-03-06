@@ -1,29 +1,24 @@
-mod opts;
-mod protocol;
-mod report;
-mod value_parser;
-
-#[cfg(test)]
-mod tests;
-
-pub use driver::report::*;
-
-use crate::{Error, Result};
-use command::{Command, CommandController, Limits};
-use driver::opts::{Options, PipeKind, StdioRedirectKind, StdioRedirectList};
-use driver::protocol::{
+use crate::misc::mb2b;
+use crate::opts::{Options, PipeKind, StdioRedirectKind, StdioRedirectList};
+use crate::protocol::{
     AgentIdx, AgentStdout, AgentTermination, CommandIdx, Context, ControllerStdin,
     ControllerStdout, ControllerTermination,
 };
+use crate::report::{CommandReportKind, Report};
+
 use json::JsonValue;
-use pipe::{self, ReadPipe};
-use session::{IstreamDst, OstreamSrc, Session, SessionBuilder, StdioMapping};
+
+use spawner::command::{Command, CommandController, Limits};
+use spawner::pipe::{self, ReadPipe};
+use spawner::session::{IstreamDst, OstreamSrc, Session, SessionBuilder, StdioMapping};
+use spawner::stdio::{IstreamIdx, OstreamIdx};
+use spawner::{Error, Result};
+
 use spawner_opts::CmdLineOptions;
+
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
-use std::u64;
-use stdio::{IstreamIdx, OstreamIdx};
 
 pub enum CommandKind {
     Default,
@@ -108,12 +103,6 @@ where
         print_report(&report)?;
     }
     Ok(report)
-}
-
-pub fn main() {
-    if let Err(e) = run(std::env::args().skip(1)) {
-        eprintln!("{}", e);
-    }
 }
 
 fn print_report(report: &Report) -> io::Result<()> {
@@ -367,14 +356,5 @@ impl SessionBuilderEx {
         } else {
             Ok(())
         }
-    }
-}
-
-fn mb2b(mb: f64) -> u64 {
-    let b = mb * 1024.0 * 1024.0;
-    if b.is_infinite() {
-        u64::MAX
-    } else {
-        b as u64
     }
 }
