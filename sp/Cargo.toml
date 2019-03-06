@@ -8,4 +8,4 @@ name = "sp"
 path = "main.rs"
 
 [dependencies]
-spawner = { path = "../libspawner" }
+spawner = { path = "../spawner" }

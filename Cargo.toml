@@ -1,9 +1,9 @@
 [workspace]
 
 members = [
-	"libspawner",
-	"libspawner_opts",
-	"libspawner_opts_derive",
-	"libspawner_tests",
+	"spawner",
+	"spawner_opts",
+	"spawner_opts_derive",
+	"spawner_tests",
 	"sp",
 ]

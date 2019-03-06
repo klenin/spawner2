@@ -58,4 +58,4 @@ path = "bin/open_file.rs"
 
 [dependencies]
 rand = "0.6.5"
-spawner = { path = "../libspawner" }
+spawner = { path = "../spawner" }
