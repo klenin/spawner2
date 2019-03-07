@@ -37,7 +37,8 @@ extern crate syn;
 
 mod opts;
 
-use opts::expand_derive_cmd_line_options;
+use crate::opts::expand_derive_cmd_line_options;
+
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, DeriveInput, Error};

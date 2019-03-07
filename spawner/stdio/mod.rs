@@ -1,9 +1,10 @@
 mod hub;
 pub(crate) mod router;
 
+use crate::stdio::hub::WriteHub;
 use crate::Result;
+
 use std::io::Write;
-use stdio::hub::WriteHub;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct IstreamIdx(pub usize);

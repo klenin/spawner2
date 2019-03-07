@@ -1,9 +1,11 @@
 use crate::{Error, Result};
+
+use winapi::um::handleapi::CloseHandle;
+use winapi::um::winnt::HANDLE;
+
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::u32;
-use winapi::um::handleapi::CloseHandle;
-use winapi::um::winnt::HANDLE;
 
 pub struct Handle(pub HANDLE);
 unsafe impl Send for Handle {}

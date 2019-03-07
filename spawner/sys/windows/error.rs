@@ -1,10 +1,11 @@
-use std::ptr;
 use winapi::shared::minwindef::DWORD;
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::winbase::{
     FormatMessageW, FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MESSAGE_IGNORE_INSERTS,
 };
 use winapi::um::winnt::{LANG_ENGLISH, MAKELANGID, SUBLANG_ENGLISH_US, WCHAR};
+
+use std::ptr;
 
 pub fn last_os_error() -> String {
     let mut buf = [0 as WCHAR; 256];

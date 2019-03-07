@@ -1,9 +1,9 @@
+use crate::command::{Command, OnTerminate};
+use crate::pipe::{ReadPipe, WritePipe};
+use crate::runner::{Runner, RunnerReport};
+use crate::sys::runner as runner_impl;
+use crate::sys::IntoInner;
 use crate::Result;
-use command::{Command, OnTerminate};
-use pipe::{ReadPipe, WritePipe};
-use runner::{Runner, RunnerReport};
-use sys::runner as runner_impl;
-use sys::IntoInner;
 
 pub struct RunnerThread(runner_impl::RunnerThread);
 

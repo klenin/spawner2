@@ -1,9 +1,10 @@
+use crate::pipe::{ReadPipe, WritePipe};
+use crate::stdio::{IstreamController, OstreamIdx, Ostreams};
 use crate::{Error, Result};
-use pipe::{ReadPipe, WritePipe};
+
 use std::io::{self, BufWriter, Read, Write};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
-use stdio::{IstreamController, OstreamIdx, Ostreams};
 
 /// Splits the `ReadPipe` allowing multiple readers to receive data from it.
 pub struct ReadHub {

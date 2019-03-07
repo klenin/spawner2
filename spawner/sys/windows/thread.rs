@@ -1,10 +1,12 @@
-use std::mem;
-use sys::windows::common::Handle;
+use crate::sys::windows::common::Handle;
+
 use winapi::shared::minwindef::{DWORD, FALSE};
 use winapi::um::handleapi::INVALID_HANDLE_VALUE;
 use winapi::um::tlhelp32::{
     CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
 };
+
+use std::mem;
 
 struct ThreadInfo {
     snapshot: Handle,

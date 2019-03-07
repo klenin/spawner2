@@ -1,14 +1,15 @@
+use crate::command::{Command, CommandController, OnTerminate};
+use crate::pipe::{ReadPipe, ShareMode, WritePipe};
+use crate::runner::{Runner, RunnerReport};
+use crate::runner_private::{self, ProcessStdio, RunnerThread};
+use crate::stdio::router::{Router, RouterBuilder};
+use crate::stdio::{IstreamIdx, OstreamIdx};
 use crate::{Error, Result};
-use command::{Command, CommandController, OnTerminate};
-use pipe::{ReadPipe, ShareMode, WritePipe};
-use runner::{Runner, RunnerReport};
-use runner_private::{self, ProcessStdio, RunnerThread};
+
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use stdio::router::{Router, RouterBuilder};
-use stdio::{IstreamIdx, OstreamIdx};
 
 pub struct Session {
     router: Router,

@@ -1,6 +1,7 @@
+use crate::stdio::IstreamController;
+
 use std::time::Duration;
 use std::u64;
-use stdio::IstreamController;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Limits {

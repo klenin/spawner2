@@ -1,8 +1,9 @@
+use crate::sys::pipe as pipe_impl;
+use crate::sys::IntoInner;
 use crate::Result;
+
 use std::io::{self, Read, Write};
 use std::path::Path;
-use sys::pipe as pipe_impl;
-use sys::IntoInner;
 
 /// A reference to the reading end of a pipe or to the file opened in read mode.
 /// Returned by [`create`] function or by [`ReadPipe::open`] method.

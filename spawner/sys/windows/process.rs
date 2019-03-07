@@ -1,14 +1,8 @@
+use crate::command::{Command, EnvKind};
+use crate::sys::windows::common::{cvt, to_utf16, Handle};
+use crate::sys::windows::thread::ThreadIterator;
 use crate::{Error, Result};
-use command::{Command, EnvKind};
-use std::alloc::{alloc_zeroed, dealloc, Layout};
-use std::collections::HashMap;
-use std::fmt::{self, Write};
-use std::mem;
-use std::ptr;
-use std::time::Instant;
-use std::u32;
-use sys::windows::common::{cvt, to_utf16, Handle};
-use sys::windows::thread::ThreadIterator;
+
 use winapi::shared::basetsd::{DWORD_PTR, SIZE_T};
 use winapi::shared::minwindef::{DWORD, FALSE, TRUE, WORD};
 use winapi::um::errhandlingapi::SetErrorMode;
@@ -40,6 +34,14 @@ use winapi::um::winnt::{
     STATUS_REG_NAT_CONSUMPTION, STATUS_SINGLE_STEP, STATUS_STACK_OVERFLOW, THREAD_SUSPEND_RESUME,
 };
 use winapi::um::winuser::{SW_HIDE, SW_SHOW};
+
+use std::alloc::{alloc_zeroed, dealloc, Layout};
+use std::collections::HashMap;
+use std::fmt::{self, Write};
+use std::mem;
+use std::ptr;
+use std::time::Instant;
+use std::u32;
 
 pub struct Process {
     handle: Handle,

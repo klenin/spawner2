@@ -1,12 +1,13 @@
+use crate::command::{Command, OnTerminate};
+use crate::runner::{ExitStatus, ProcessInfo, Runner, RunnerReport, TerminationReason};
+use crate::sys::windows::pipe::{ReadPipe, WritePipe};
+use crate::sys::windows::process::{Process, RawStdio, Status};
+use crate::sys::IntoInner;
 use crate::{Error, Result};
-use command::{Command, OnTerminate};
-use runner::{ExitStatus, ProcessInfo, Runner, RunnerReport, TerminationReason};
+
 use std::sync::mpsc::{channel, Receiver};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
-use sys::windows::pipe::{ReadPipe, WritePipe};
-use sys::windows::process::{Process, RawStdio, Status};
-use sys::IntoInner;
 
 pub struct RunnerThread {
     handle: JoinHandle<Result<RunnerReport>>,

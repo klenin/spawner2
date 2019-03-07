@@ -1,7 +1,9 @@
+use crate::sys::error::last_os_error;
+
 use backtrace::Backtrace;
+
 use std::fmt;
 use std::io;
-use sys::error::last_os_error;
 
 #[derive(Debug)]
 enum ErrorKind {

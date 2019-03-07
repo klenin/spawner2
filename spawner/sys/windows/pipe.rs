@@ -1,10 +1,7 @@
+use crate::sys::windows::common::{cvt, to_utf16, Handle};
+use crate::sys::IntoInner;
 use crate::{Error, Result};
-use std::io::{self, Read, Write};
-use std::mem;
-use std::path::Path;
-use std::ptr;
-use sys::windows::common::{cvt, to_utf16, Handle};
-use sys::IntoInner;
+
 use winapi::shared::minwindef::{DWORD, TRUE};
 use winapi::um::fileapi::{CreateFileW, ReadFile, WriteFile, CREATE_ALWAYS, OPEN_EXISTING};
 use winapi::um::handleapi::{SetHandleInformation, INVALID_HANDLE_VALUE};
@@ -14,6 +11,11 @@ use winapi::um::winbase::HANDLE_FLAG_INHERIT;
 use winapi::um::winnt::{
     FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ, GENERIC_WRITE,
 };
+
+use std::io::{self, Read, Write};
+use std::mem;
+use std::path::Path;
+use std::ptr;
 
 pub struct ReadPipe {
     handle: Handle,

@@ -1,7 +1,8 @@
-use command::Command;
+use crate::command::Command;
+use crate::sys::runner::RunnerMessage;
+
 use std::sync::mpsc::Sender;
 use std::time::Duration;
-use sys::runner::RunnerMessage;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TerminationReason {

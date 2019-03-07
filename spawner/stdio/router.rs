@@ -1,9 +1,10 @@
+use crate::pipe::{self, ReadPipe, WritePipe};
+use crate::stdio::hub::{ReadHub, ReadHubResult, WriteHub};
+use crate::stdio::{IstreamController, IstreamIdx, OstreamIdx};
 use crate::{Error, Result};
-use pipe::{self, ReadPipe, WritePipe};
+
 use std::collections::HashMap;
 use std::thread::JoinHandle;
-use stdio::hub::{ReadHub, ReadHubResult, WriteHub};
-use stdio::{IstreamController, IstreamIdx, OstreamIdx};
 
 pub struct Router {
     readhub_threads: Vec<(IstreamIdx, JoinHandle<ReadHubResult>)>,
