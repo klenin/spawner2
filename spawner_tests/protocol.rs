@@ -1,11 +1,14 @@
 use crate::common::{read_all, write_all, TmpDir};
 use crate::exe;
-use crate::term_reason::{ensure_idle_time_limit_exceeded, ensure_user_time_limit_exceeded};
+use crate::term_reason::{
+    ensure_idle_time_limit_exceeded, ensure_user_time_limit_exceeded,
+    ensure_wall_clock_time_limit_exceeded,
+};
 
 use spawner_driver::{run, CommandReport};
 
 #[test]
-fn test_spawn_suspended() {
+fn spawn_suspended() {
     let report = run(&[
         "--separator=@",
         "-d=1",
@@ -22,7 +25,7 @@ fn test_spawn_suspended() {
 }
 
 #[test]
-fn test_resume_agent_on_controller_termination() {
+fn resume_agent_on_controller_termination() {
     let report = run(&[
         "--separator=@",
         "--controller",
@@ -37,7 +40,7 @@ fn test_resume_agent_on_controller_termination() {
 }
 
 #[test]
-fn test_resume_and_agent_termination_msgs() {
+fn resume_and_agent_termination_msgs() {
     let tmp = TmpDir::new();
     let stdin = tmp.file("stdin.txt");
     let stderr = tmp.file("stderr.txt");
@@ -60,7 +63,7 @@ fn test_resume_and_agent_termination_msgs() {
 }
 
 #[test]
-fn test_message_to_agent() {
+fn message_to_agent() {
     let tmp = TmpDir::new();
     let stdin = tmp.file("stdin.txt");
     let stderr1 = tmp.file("stderr1.txt");
@@ -89,7 +92,7 @@ fn test_message_to_agent() {
 }
 
 #[test]
-fn test_message_from_agent() {
+fn message_from_agent() {
     let tmp = TmpDir::new();
     let stdin = tmp.file("stdin.txt");
     let stderr = tmp.file("stderr.txt");
@@ -114,7 +117,7 @@ fn test_message_from_agent() {
 }
 
 #[test]
-fn test_controller_message_concatenation() {
+fn controller_message_concatenation() {
     let tmp = TmpDir::new();
     let stderr = tmp.file("stderr.txt");
     run(&[
@@ -141,7 +144,7 @@ fn test_controller_message_concatenation() {
 }
 
 #[test]
-fn test_agent_message_concatenation() {
+fn agent_message_concatenation() {
     let tmp = TmpDir::new();
     let stdin = tmp.file("stdin.txt");
     let stderr = tmp.file("stderr.txt");
@@ -174,7 +177,7 @@ pub fn ensure_terminated_by_controller(report: CommandReport) {
 }
 
 #[test]
-fn test_agent_terminated_by_controller() {
+fn agent_terminated_by_controller() {
     let report = run(&[
         "--separator=@",
         "-d=1",
@@ -196,7 +199,7 @@ fn test_agent_terminated_by_controller() {
 }
 
 #[test]
-fn test_agent_suspended_after_write() {
+fn agent_suspended_after_write() {
     let report = run(&[
         "--separator=@",
         "-d=1",
@@ -208,6 +211,72 @@ fn test_agent_suspended_after_write() {
         "-y=0.5",
         exe!("loop"),
         "message\n",
+    ])
+    .unwrap();
+    ensure_idle_time_limit_exceeded(report.at(1));
+}
+
+#[test]
+fn controller_suspended_after_write() {
+    let report = run(&[
+        "--separator=@",
+        "-d=1",
+        "--@",
+        "-y=0.5",
+        "--controller",
+        exe!("loop"),
+        "1message#\n",
+        "--@",
+        exe!("empty"),
+    ])
+    .unwrap();
+    ensure_idle_time_limit_exceeded(report.at(0));
+}
+
+#[test]
+fn controller_deadline() {
+    let report = run(&["-d=1", "--controller", exe!("loop")]).unwrap();
+    ensure_wall_clock_time_limit_exceeded(report.at(0));
+}
+
+#[test]
+fn controller_idle_time_limit() {
+    let report = run(&["-y=1", "--controller", exe!("sleep"), "2"]).unwrap();
+    ensure_idle_time_limit_exceeded(report.at(0));
+}
+
+#[test]
+fn agent_user_time_limit() {
+    let report = run(&[
+        "--separator=@",
+        "-d=1",
+        "--@",
+        "--controller",
+        exe!("loop"),
+        "1W#\n",
+        "--@",
+        "--in=*0.stdout",
+        "-tl=0.5",
+        exe!("loop"),
+    ])
+    .unwrap();
+    ensure_user_time_limit_exceeded(report.at(1));
+}
+
+#[test]
+fn agent_idle_time_limit() {
+    let report = run(&[
+        "--separator=@",
+        "-d=1",
+        "--@",
+        "--controller",
+        exe!("loop"),
+        "1W#\n",
+        "--@",
+        "--in=*0.stdout",
+        "-y=0.5",
+        exe!("sleep"),
+        "2",
     ])
     .unwrap();
     ensure_idle_time_limit_exceeded(report.at(1));
