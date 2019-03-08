@@ -4,7 +4,7 @@ use crate::exe;
 use spawner_driver::run;
 
 #[test]
-fn test_exclusive_read() {
+fn exclusive_read() {
     let tmp = TmpDir::new();
     let file = tmp.file("file.txt");
     let stdout = tmp.file("stdout.txt");
@@ -27,7 +27,7 @@ fn test_exclusive_read() {
 }
 
 #[test]
-fn test_exclusive_write() {
+fn exclusive_write() {
     let tmp = TmpDir::new();
     let file = tmp.file("file.txt");
     let stdout = tmp.file("stdout.txt");

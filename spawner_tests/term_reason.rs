@@ -128,19 +128,19 @@ pub fn ensure_abnormal_exit(report: CommandReport) {
 }
 
 #[test]
-fn test_mem_limit() {
+fn mem_limit() {
     let report = run(&["-ml=10", exe!("alloc"), "10"]).unwrap();
     ensure_mem_limit_exceeded(report.at(0));
 }
 
 #[test]
-fn test_user_time_limit() {
+fn user_time_limit() {
     let report = run(&["-tl=0.2", exe!("loop")]).unwrap();
     ensure_user_time_limit_exceeded(report.at(0));
 }
 
 #[test]
-fn test_write_limit() {
+fn write_limit() {
     let tmp = TmpDir::new();
     let report = run(&[
         "-wl=10",
@@ -153,7 +153,7 @@ fn test_write_limit() {
 }
 
 #[test]
-fn test_null_stdout_write_limit() {
+fn null_stdout_write_limit() {
     let report = run(&[
         "--out=*null",
         "-wl=8",
@@ -166,37 +166,37 @@ fn test_null_stdout_write_limit() {
 }
 
 #[test]
-fn test_process_limit() {
+fn process_limit() {
     let report = run(&["-process-count=1", exe!("two_proc")]).unwrap();
     ensure_process_limit_exceeded(report.at(0));
 }
 
 #[test]
-fn test_idle_time_limit() {
+fn idle_time_limit() {
     let report = run(&["-y=0.2", exe!("sleep"), "1"]).unwrap();
     ensure_idle_time_limit_exceeded(report.at(0));
 }
 
 #[test]
-fn test_wall_clock_time_limit_using_sleep() {
+fn wall_clock_time_limit_using_sleep() {
     let report = run(&["-d=0.2", exe!("sleep"), "1"]).unwrap();
     ensure_wall_clock_time_limit_exceeded(report.at(0));
 }
 
 #[test]
-fn test_wall_clock_time_limit_using_loop() {
+fn wall_clock_time_limit_using_loop() {
     let report = run(&["-d=0.2", exe!("loop")]).unwrap();
     ensure_wall_clock_time_limit_exceeded(report.at(0));
 }
 
 #[test]
-fn test_abnormal_exit() {
+fn abnormal_exit() {
     let report = run(&["-d=1", exe!("abnormal_exit")]).unwrap();
     ensure_abnormal_exit(report.at(0));
 }
 
 #[test]
-fn test_close_stdout_on_exit() {
+fn close_stdout_on_exit() {
     // if stdout_writer does not close stdout on exit then the reader will hang on stdin().read(...).
     let report = run(&[
         "-d=1",
@@ -219,7 +219,7 @@ fn test_close_stdout_on_exit() {
 }
 
 #[test]
-fn test_close_stdout_on_exit_2() {
+fn close_stdout_on_exit_2() {
     let report = run(&[
         "-d=1",
         "--separator=@",

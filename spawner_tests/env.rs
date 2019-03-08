@@ -36,19 +36,19 @@ impl Env {
 }
 
 #[test]
-fn test_clear_env() {
+fn clear_env() {
     let env = Env::new(&["-env=clear"]);
     assert_eq!(env.vars(), Vec::new());
 }
 
 #[test]
-fn test_define_var() {
+fn define_var() {
     let env = Env::new(&["-env=clear", "-D:NAME=VAR"]);
     assert_eq!(env.vars(), vec![("NAME", "VAR")]);
 }
 
 #[test]
-fn test_define_var_2() {
+fn define_var_2() {
     let env = Env::new(&["-env=clear", "-D:A=B", "-D:C=D"]);
     let mut vars = env.vars();
     vars.sort_by(|a, b| a.0.partial_cmp(b.0).unwrap());
@@ -56,7 +56,7 @@ fn test_define_var_2() {
 }
 
 #[test]
-fn test_overwrite_var() {
+fn overwrite_var() {
     let env = Env::new(&["-env=clear", "-D:NAME=VAR", "-D:NAME=VAR1"]);
     assert_eq!(env.vars(), vec![("NAME", "VAR1")]);
 }

@@ -4,7 +4,7 @@ use crate::exe;
 use spawner_driver::run;
 
 #[test]
-fn test_stdin_from_file() {
+fn stdin_from_file() {
     let tmp = TmpDir::new();
     let input_data = "1".repeat(30);
     let input = tmp.file("in.txt");
@@ -22,7 +22,7 @@ fn test_stdin_from_file() {
 }
 
 #[test]
-fn test_stdin_from_2_files() {
+fn stdin_from_2_files() {
     let tmp = TmpDir::new();
     let input_data = "1".repeat(60);
     let input_1 = tmp.file("in1.txt");
@@ -42,7 +42,7 @@ fn test_stdin_from_2_files() {
 }
 
 #[test]
-fn test_stdin_from_stdout() {
+fn stdin_from_stdout() {
     let tmp = TmpDir::new();
     let output = tmp.file("out.txt");
     run(&[
@@ -62,7 +62,7 @@ fn test_stdin_from_stdout() {
 }
 
 #[test]
-fn test_stdin_from_2_stdout() {
+fn stdin_from_2_stdouts() {
     let tmp = TmpDir::new();
     let output = tmp.file("out.txt");
     run(&[
@@ -87,7 +87,7 @@ fn test_stdin_from_2_stdout() {
 }
 
 #[test]
-fn test_stdout_to_file() {
+fn stdout_to_file() {
     let tmp = TmpDir::new();
     let output = tmp.file("out.txt");
     run(&[
@@ -101,7 +101,7 @@ fn test_stdout_to_file() {
 }
 
 #[test]
-fn test_stdout_to_2_files() {
+fn stdout_to_2_files() {
     let tmp = TmpDir::new();
     let output_1 = tmp.file("out1.txt");
     let output_2 = tmp.file("out2.txt");
@@ -118,7 +118,7 @@ fn test_stdout_to_2_files() {
 }
 
 #[test]
-fn test_2_stdout_to_2_stdin() {
+fn multiple_stdouts_to_multiple_stdins() {
     let tmp = TmpDir::new();
     let output_1 = tmp.file("out1.txt");
     let output_2 = tmp.file("out2.txt");
@@ -148,7 +148,7 @@ fn test_2_stdout_to_2_stdin() {
 }
 
 #[test]
-fn test_2_stdout_to_file() {
+fn multiple_stdouts_to_file() {
     let tmp = TmpDir::new();
     let out = tmp.file("out.txt");
     run(&[
