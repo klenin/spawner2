@@ -71,13 +71,6 @@ macro_rules! assert_approx_eq {
     }};
 }
 
-#[macro_export]
-macro_rules! assert_flt_eq {
-    ($a:expr, $b:expr) => {
-        assert_approx_eq!($a, $b, 1e-6);
-    };
-}
-
 pub fn read_all<P: AsRef<Path>>(path: P) -> String {
     let mut result = String::new();
     let _ = fs::File::open(path).unwrap().read_to_string(&mut result);
