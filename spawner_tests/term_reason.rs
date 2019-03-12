@@ -1,160 +1,87 @@
 use crate::common::TmpDir;
-use crate::{assert_approx_eq, assert_flt_eq, exe};
+use crate::{assert_approx_eq, exe};
 
-use spawner_driver::{run, CommandReport};
+use spawner_driver::{run, Report, TerminateReason};
 
-use spawner::runner::{ExitStatus, TerminationReason};
-
-use std::time::Duration;
 use std::u64;
 
 const MEM_ERR: u64 = 2 * 1024 * 1024; // 2MB
-const TIME_ERR: f64 = 0.005; // 5 ms
-const WRITE_ERR: u64 = 2 * 1024 * 1024;
+const TIME_ERR: f64 = 0.050; // 50 ms
+const WRITE_ERR: u64 = 2 * 1024 * 1024; // 2MB
 
-pub fn mb2b(mb: f64) -> u64 {
-    let b = mb * 1024.0 * 1024.0;
-    if b.is_infinite() {
-        u64::MAX
-    } else {
-        b as u64
-    }
+pub fn check_tr(report: &Report, tr: TerminateReason) {
+    assert!(report.spawner_error.is_empty());
+    assert_eq!(report.terminate_reason, tr);
 }
 
-fn dur2sec(d: &Duration) -> f64 {
-    let us = d.as_secs() as f64 * 1e6 + d.subsec_micros() as f64;
-    us / 1e6
+pub fn ensure_mem_limit_exceeded(report: &Report) {
+    check_tr(report, TerminateReason::MemoryLimitExceeded);
+    assert_approx_eq!(report.limit.memory.unwrap(), report.result.memory, MEM_ERR);
 }
 
-pub fn ensure_mem_limit_exceeded(report: CommandReport) {
-    let runner_report = report.runner_report.unwrap();
-    let json = report.to_json();
-    let mem_used = runner_report.process_info.peak_memory_used;
-    let mem_limit_b = mb2b(report.cmd.memory_limit.unwrap());
+pub fn ensure_user_time_limit_exceeded(report: &Report) {
+    check_tr(report, TerminateReason::TimeLimitExceeded);
+    assert_approx_eq!(report.limit.time.unwrap(), report.result.time, TIME_ERR);
+}
 
-    assert_eq!(
-        runner_report.exit_status,
-        ExitStatus::Terminated(TerminationReason::MemoryLimitExceeded)
+pub fn ensure_write_limit_exceeded(report: &Report) {
+    check_tr(report, TerminateReason::WriteLimitExceeded);
+    assert_approx_eq!(
+        report.limit.io_bytes.unwrap(),
+        report.result.bytes_written,
+        WRITE_ERR
     );
-    assert_approx_eq!(mem_used, mem_limit_b, MEM_ERR);
-    assert_eq!(json["Limit"]["Memory"], mem_limit_b);
-    assert_eq!(json["Result"]["Memory"], mem_used);
-    assert_eq!(json["TerminateReason"], "MemoryLimitExceeded");
-    assert_eq!(json["SpawnerError"][0], "<none>");
 }
 
-pub fn ensure_user_time_limit_exceeded(report: CommandReport) {
-    let runner_report = report.runner_report.unwrap();
-    let json = report.to_json();
-    let time_used = dur2sec(&runner_report.process_info.total_user_time);
-    let time_limit = dur2sec(report.cmd.time_limit.as_ref().unwrap());
+pub fn ensure_process_limit_exceeded(report: &Report) {
+    check_tr(report, TerminateReason::ProcessesCountLimitExceeded);
+}
 
-    assert_eq!(
-        runner_report.exit_status,
-        ExitStatus::Terminated(TerminationReason::UserTimeLimitExceeded)
+pub fn ensure_idle_time_limit_exceeded(report: &Report) {
+    check_tr(report, TerminateReason::IdleTimeLimitExceeded);
+}
+
+pub fn ensure_wall_clock_time_limit_exceeded(report: &Report) {
+    check_tr(report, TerminateReason::TimeLimitExceeded);
+    assert_approx_eq!(
+        report.limit.wall_clock_time.unwrap(),
+        report.result.wall_clock_time,
+        TIME_ERR
     );
-    assert_approx_eq!(time_used, time_limit, TIME_ERR);
-    assert_flt_eq!(json["Limit"]["Time"].as_f64().unwrap(), time_limit);
-    assert_flt_eq!(json["Result"]["Time"].as_f64().unwrap(), time_used);
-    assert_eq!(json["TerminateReason"], "TimeLimitExceeded");
-    assert_eq!(json["SpawnerError"][0], "<none>");
 }
 
-pub fn ensure_write_limit_exceeded(report: CommandReport) {
-    let runner_report = report.runner_report.unwrap();
-    let json = report.to_json();
-    let bytes_written = runner_report.process_info.total_bytes_written;
-    let write_limit = mb2b(report.cmd.write_limit.unwrap());
-
-    assert_eq!(
-        runner_report.exit_status,
-        ExitStatus::Terminated(TerminationReason::WriteLimitExceeded)
-    );
-    assert_approx_eq!(bytes_written, write_limit, WRITE_ERR);
-    assert_eq!(json["Limit"]["IOBytes"], write_limit);
-    assert_eq!(json["Result"]["BytesWritten"], bytes_written);
-    assert_eq!(json["TerminateReason"], "WriteLimitExceeded");
-    assert_eq!(json["SpawnerError"][0], "<none>");
-}
-
-pub fn ensure_process_limit_exceeded(report: CommandReport) {
-    let runner_report = report.runner_report.unwrap();
-    let json = report.to_json();
-    let total_processes = runner_report.process_info.total_processes_created;
-    let process_limit = report.cmd.process_count.unwrap();
-
-    assert_eq!(
-        runner_report.exit_status,
-        ExitStatus::Terminated(TerminationReason::ProcessLimitExceeded)
-    );
-    assert!(total_processes > process_limit);
-    assert_eq!(json["TerminateReason"], "ProcessesCountLimitExceeded");
-    assert_eq!(json["SpawnerError"][0], "<none>");
-}
-
-pub fn ensure_idle_time_limit_exceeded(report: CommandReport) {
-    let json = report.to_json();
-    let time_limit = dur2sec(report.cmd.idle_time_limit.as_ref().unwrap());
-
-    assert_eq!(
-        report.runner_report.unwrap().exit_status,
-        ExitStatus::Terminated(TerminationReason::IdleTimeLimitExceeded)
-    );
-    assert_flt_eq!(json["Limit"]["IdlenessTime"].as_f64().unwrap(), time_limit);
-    assert_eq!(json["TerminateReason"], "IdleTimeLimitExceeded");
-    assert_eq!(json["SpawnerError"][0], "<none>");
-}
-
-pub fn ensure_wall_clock_time_limit_exceeded(report: CommandReport) {
-    let runner_report = report.runner_report.unwrap();
-    let json = report.to_json();
-    let time_used = dur2sec(&runner_report.process_info.wall_clock_time);
-    let time_limit = dur2sec(report.cmd.wall_clock_time_limit.as_ref().unwrap());
-
-    assert_eq!(
-        runner_report.exit_status,
-        ExitStatus::Terminated(TerminationReason::WallClockTimeLimitExceeded)
-    );
-    assert_approx_eq!(time_used, time_limit, TIME_ERR);
-    assert_flt_eq!(json["Limit"]["WallClockTime"].as_f64().unwrap(), time_limit);
-    assert_flt_eq!(json["Result"]["WallClockTime"].as_f64().unwrap(), time_used);
-    assert_eq!(json["TerminateReason"], "TimeLimitExceeded");
-    assert_eq!(json["SpawnerError"][0], "<none>");
-}
-
-pub fn ensure_abnormal_exit(report: CommandReport) {
-    let json = report.to_json();
-    assert_eq!(json["TerminateReason"], "AbnormalExitProcess");
+pub fn ensure_abnormal_exit(report: &Report) {
+    check_tr(report, TerminateReason::AbnormalExitProcess);
 }
 
 #[test]
 fn mem_limit() {
-    let report = run(&["-ml=10", exe!("alloc"), "10"]).unwrap();
-    ensure_mem_limit_exceeded(report.at(0));
+    let r = run(&["-ml=10", exe!("alloc"), "10"]).unwrap();
+    ensure_mem_limit_exceeded(&r[0]);
 }
 
 #[test]
 fn user_time_limit() {
-    let report = run(&["-tl=0.2", exe!("loop")]).unwrap();
-    ensure_user_time_limit_exceeded(report.at(0));
+    let r = run(&["-tl=0.2", exe!("loop")]).unwrap();
+    ensure_user_time_limit_exceeded(&r[0]);
 }
 
 #[test]
 fn write_limit() {
     let tmp = TmpDir::new();
-    let report = run(&[
+    let r = run(&[
         "-wl=10",
         exe!("file_writer"),
         tmp.file("file.txt").as_str(),
         format!("{}", 20 * 1024).as_str(),
     ])
     .unwrap();
-    ensure_write_limit_exceeded(report.at(0));
+    ensure_write_limit_exceeded(&r[0]);
 }
 
 #[test]
 fn null_stdout_write_limit() {
-    let report = run(&[
+    let r = run(&[
         "--out=*null",
         "-wl=8",
         exe!("stdout_writer"),
@@ -162,43 +89,43 @@ fn null_stdout_write_limit() {
         format!("{}", 10 * 1024 * 1024).as_str(),
     ])
     .unwrap();
-    ensure_write_limit_exceeded(report.at(0));
+    ensure_write_limit_exceeded(&r[0]);
 }
 
 #[test]
 fn process_limit() {
-    let report = run(&["-process-count=1", exe!("two_proc")]).unwrap();
-    ensure_process_limit_exceeded(report.at(0));
+    let r = run(&["-process-count=1", exe!("two_proc")]).unwrap();
+    ensure_process_limit_exceeded(&r[0]);
 }
 
 #[test]
 fn idle_time_limit() {
-    let report = run(&["-y=0.2", exe!("sleep"), "1"]).unwrap();
-    ensure_idle_time_limit_exceeded(report.at(0));
+    let r = run(&["-y=0.2", exe!("sleep"), "1"]).unwrap();
+    ensure_idle_time_limit_exceeded(&r[0]);
 }
 
 #[test]
 fn wall_clock_time_limit_using_sleep() {
-    let report = run(&["-d=0.2", exe!("sleep"), "1"]).unwrap();
-    ensure_wall_clock_time_limit_exceeded(report.at(0));
+    let r = run(&["-d=0.2", exe!("sleep"), "1"]).unwrap();
+    ensure_wall_clock_time_limit_exceeded(&r[0]);
 }
 
 #[test]
 fn wall_clock_time_limit_using_loop() {
-    let report = run(&["-d=0.2", exe!("loop")]).unwrap();
-    ensure_wall_clock_time_limit_exceeded(report.at(0));
+    let r = run(&["-d=0.2", exe!("loop")]).unwrap();
+    ensure_wall_clock_time_limit_exceeded(&r[0]);
 }
 
 #[test]
 fn abnormal_exit() {
-    let report = run(&["-d=1", exe!("abnormal_exit")]).unwrap();
-    ensure_abnormal_exit(report.at(0));
+    let r = run(&["-d=1", exe!("abnormal_exit")]).unwrap();
+    ensure_abnormal_exit(&r[0]);
 }
 
 #[test]
 fn close_stdout_on_exit() {
     // if stdout_writer does not close stdout on exit then the reader will hang on stdin().read(...).
-    let report = run(&[
+    let reports = run(&[
         "-d=1",
         "--separator=@",
         "--@",
@@ -210,17 +137,15 @@ fn close_stdout_on_exit() {
         exe!("in2out"),
     ])
     .unwrap();
-    for cmd_report in report.iter() {
-        assert_eq!(
-            cmd_report.runner_report.unwrap().exit_status,
-            ExitStatus::Finished(0)
-        );
+    for r in reports.iter() {
+        check_tr(r, TerminateReason::ExitProcess);
+        assert_eq!(r.exit_code, 0);
     }
 }
 
 #[test]
 fn close_stdout_on_exit_2() {
-    let report = run(&[
+    let reports = run(&[
         "-d=1",
         "--separator=@",
         "--@",
@@ -237,13 +162,8 @@ fn close_stdout_on_exit_2() {
         exe!("in2out"),
     ])
     .unwrap();
-    let mut kek = 0;
-    for cmd_report in report.iter() {
-        kek += 1;
-        assert_eq!(
-            cmd_report.runner_report.unwrap().exit_status,
-            ExitStatus::Finished(0)
-        );
+    for r in reports.iter() {
+        check_tr(r, TerminateReason::ExitProcess);
+        assert_eq!(r.exit_code, 0);
     }
-    println!("{}", kek);
 }

@@ -1,10 +1,9 @@
 use crate::exe;
 
-use spawner_driver::{run, CommandReport, Report};
+use spawner_driver::{run, Report};
 
-fn ensure_error(report: CommandReport, error: &str) {
-    let json = report.to_json();
-    assert_eq!(json["SpawnerError"][0], error);
+fn ensure_error(report: &Report, error: &str) {
+    assert_eq!(report.spawner_error[0].to_string(), error);
 }
 
 #[test]
@@ -39,7 +38,7 @@ fn invalid_stdout_index() {
     assert_eq!(err.to_string(), "Stdout index '10' is out of range");
 }
 
-fn run_single_controller_cmd(cmd: &str) -> Report {
+fn run_single_controller_cmd(cmd: &str) -> Vec<Report> {
     run(&[
         "--separator=@",
         "-d=1",
@@ -56,21 +55,18 @@ fn run_single_controller_cmd(cmd: &str) -> Report {
 
 #[test]
 fn invalid_agent_index() {
-    let report = run_single_controller_cmd("10W#\n");
-    ensure_error(report.at(0), "Agent index '10' is out of range\n");
+    let r = run_single_controller_cmd("10W#\n");
+    ensure_error(&r[0], "Agent index '10' is out of range");
 }
 
 #[test]
 fn invalid_controller_command() {
-    let report = run_single_controller_cmd("10WWW#\n");
-    ensure_error(
-        report.at(0),
-        "Invalid controller command 'WWW' in '10WWW'\n",
-    );
+    let r = run_single_controller_cmd("10WWW#\n");
+    ensure_error(&r[0], "Invalid controller command 'WWW' in '10WWW'");
 }
 
 #[test]
 fn invalid_controller_command_2() {
-    let report = run_single_controller_cmd("A\n");
-    ensure_error(report.at(0), "Missing '#' in controller message\n");
+    let r = run_single_controller_cmd("A\n");
+    ensure_error(&r[0], "Missing '#' in controller message");
 }

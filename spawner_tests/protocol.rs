@@ -1,15 +1,15 @@
 use crate::common::{read_all, write_all, TmpDir};
 use crate::exe;
 use crate::term_reason::{
-    ensure_idle_time_limit_exceeded, ensure_user_time_limit_exceeded,
+    check_tr, ensure_idle_time_limit_exceeded, ensure_user_time_limit_exceeded,
     ensure_wall_clock_time_limit_exceeded,
 };
 
-use spawner_driver::{run, CommandReport};
+use spawner_driver::{run, Report, TerminateReason};
 
 #[test]
 fn spawn_suspended() {
-    let report = run(&[
+    let r = run(&[
         "--separator=@",
         "-d=1",
         "--@",
@@ -21,12 +21,12 @@ fn spawn_suspended() {
         exe!("loop"),
     ])
     .unwrap();
-    ensure_idle_time_limit_exceeded(report.at(1));
+    ensure_idle_time_limit_exceeded(&r[1]);
 }
 
 #[test]
 fn resume_agent_on_controller_termination() {
-    let report = run(&[
+    let r = run(&[
         "--separator=@",
         "--controller",
         exe!("empty"),
@@ -36,7 +36,7 @@ fn resume_agent_on_controller_termination() {
         exe!("loop"),
     ])
     .unwrap();
-    ensure_user_time_limit_exceeded(report.at(1));
+    ensure_user_time_limit_exceeded(&r[1]);
 }
 
 #[test]
@@ -171,14 +171,13 @@ fn agent_message_concatenation() {
     assert_eq!("1W#\n1#message\n1T#\n", read_all(stderr));
 }
 
-pub fn ensure_terminated_by_controller(report: CommandReport) {
-    let json = report.to_json();
-    assert_eq!(json["TerminateReason"], "TerminatedByController");
+pub fn ensure_terminated_by_controller(report: &Report) {
+    check_tr(report, TerminateReason::TerminatedByController);
 }
 
 #[test]
 fn agent_terminated_by_controller() {
-    let report = run(&[
+    let r = run(&[
         "--separator=@",
         "-d=1",
         "--@",
@@ -194,13 +193,13 @@ fn agent_terminated_by_controller() {
         exe!("loop"),
     ])
     .unwrap();
-    ensure_terminated_by_controller(report.at(1));
-    ensure_terminated_by_controller(report.at(2));
+    ensure_terminated_by_controller(&r[1]);
+    ensure_terminated_by_controller(&r[2]);
 }
 
 #[test]
 fn agent_suspended_after_write() {
-    let report = run(&[
+    let r = run(&[
         "--separator=@",
         "-d=1",
         "--@",
@@ -213,14 +212,14 @@ fn agent_suspended_after_write() {
         "message\n",
     ])
     .unwrap();
-    ensure_idle_time_limit_exceeded(report.at(1));
+    ensure_idle_time_limit_exceeded(&r[1]);
 }
 
 #[test]
 fn controller_suspended_after_write() {
-    let report = run(&[
+    let r = run(&[
         "--separator=@",
-        "-d=1",
+        "-d=2",
         "--@",
         "-y=0.5",
         "--controller",
@@ -230,24 +229,24 @@ fn controller_suspended_after_write() {
         exe!("empty"),
     ])
     .unwrap();
-    ensure_idle_time_limit_exceeded(report.at(0));
+    ensure_idle_time_limit_exceeded(&r[0]);
 }
 
 #[test]
 fn controller_deadline() {
-    let report = run(&["-d=1", "--controller", exe!("loop")]).unwrap();
-    ensure_wall_clock_time_limit_exceeded(report.at(0));
+    let r = run(&["-d=1", "--controller", exe!("loop")]).unwrap();
+    ensure_wall_clock_time_limit_exceeded(&r[0]);
 }
 
 #[test]
 fn controller_idle_time_limit() {
-    let report = run(&["-y=1", "--controller", exe!("sleep"), "2"]).unwrap();
-    ensure_idle_time_limit_exceeded(report.at(0));
+    let r = run(&["-y=1", "--controller", exe!("sleep"), "2"]).unwrap();
+    ensure_idle_time_limit_exceeded(&r[0]);
 }
 
 #[test]
 fn agent_user_time_limit() {
-    let report = run(&[
+    let r = run(&[
         "--separator=@",
         "-d=1",
         "--@",
@@ -260,12 +259,12 @@ fn agent_user_time_limit() {
         exe!("loop"),
     ])
     .unwrap();
-    ensure_user_time_limit_exceeded(report.at(1));
+    ensure_user_time_limit_exceeded(&r[1]);
 }
 
 #[test]
 fn agent_idle_time_limit() {
-    let report = run(&[
+    let r = run(&[
         "--separator=@",
         "-d=1",
         "--@",
@@ -279,5 +278,5 @@ fn agent_idle_time_limit() {
         "2",
     ])
     .unwrap();
-    ensure_idle_time_limit_exceeded(report.at(1));
+    ensure_idle_time_limit_exceeded(&r[1]);
 }

@@ -1,299 +1,420 @@
 use crate::misc::{b2mb, dur2sec, mb2b};
 use crate::opts::{Options, StdioRedirectList};
 
-use spawner::runner::{ExitStatus, ProcessInfo, RunnerReport, TerminationReason};
-use spawner::session::{CommandErrors, CommandResult};
+use spawner::runner::{ExitStatus, RunnerReport, TerminationReason};
+use spawner::session::CommandResult;
+use spawner::Error;
 
 use json::{array, object, JsonValue};
 
 use std::fmt::{self, Display, Formatter};
-use std::time::Duration;
 
 #[derive(Debug)]
 pub struct Report {
-    pub runner_reports: Vec<CommandResult>,
-    pub cmds: Vec<Options>,
+    pub application: String,
+    pub arguments: Vec<String>,
+    pub kind: ReportKind,
+    pub limit: ReportLimit,
+    pub options: ReportOptions,
+    pub working_directory: Option<String>,
+    pub create_process_method: String,
+    pub user_name: String,
+    pub stdin: Vec<String>,
+    pub stdout: Vec<String>,
+    pub stderr: Vec<String>,
+    pub result: ReportResult,
+    pub terminate_reason: TerminateReason,
+    pub exit_code: u32,
+    pub exit_status: String,
+    pub spawner_error: Vec<Error>,
 }
 
-pub enum CommandReportKind {
-    Json(JsonValue),
-    Legacy(String),
+#[derive(Debug, PartialEq)]
+pub enum ReportKind {
+    Json,
+    Legacy,
 }
 
-pub struct CommandReport<'a> {
-    pub runner_report: std::result::Result<&'a RunnerReport, &'a CommandErrors>,
-    pub cmd: &'a Options,
+#[derive(Debug)]
+pub struct ReportOptions {
+    pub search_in_path: bool,
 }
 
-pub struct CommandReportIterator<'a> {
-    report: &'a Report,
-    pos: usize,
+#[derive(Default, Debug)]
+pub struct ReportResult {
+    pub time: f64,
+    pub wall_clock_time: f64,
+    pub memory: u64,
+    pub bytes_written: u64,
+    pub kernel_time: f64,
+    pub processor_load: f64,
 }
 
-struct ReportValues {
-    ps_info: ProcessInfo,
-    error: String,
-    term_reason: String,
-    exit_status: String,
-    exit_code: u32,
+#[derive(Debug)]
+pub struct ReportLimit {
+    pub time: Option<f64>,
+    pub wall_clock_time: Option<f64>,
+    pub memory: Option<u64>,
+    pub security_level: Option<u32>,
+    pub io_bytes: Option<u64>,
+    pub idleness_time: Option<f64>,
+    pub idleness_processor_load: Option<f64>,
 }
+
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum TerminateReason {
+    ExitProcess,
+    AbnormalExitProcess,
+    TimeLimitExceeded,
+    IdleTimeLimitExceeded,
+    WriteLimitExceeded,
+    MemoryLimitExceeded,
+    ProcessesCountLimitExceeded,
+    TerminatedByController,
+}
+
+#[derive(Debug)]
+pub struct LegacyReport<'a> {
+    pub application: &'a String,
+    pub parameters: &'a Vec<String>,
+    pub security_level: Option<u32>,
+    pub create_process_method: &'a String,
+    pub user_name: &'a String,
+    pub user_time_limit: Option<f64>,
+    pub deadline: Option<f64>,
+    pub memory_limit: Option<f64>,
+    pub write_limit: Option<f64>,
+    pub user_time: f64,
+    pub peak_memory_used: f64,
+    pub written: f64,
+    pub terminate_reason: TerminateReason,
+    pub exit_code: u32,
+    pub exit_status: &'a String,
+    pub spawner_error: &'a Vec<Error>,
+}
+
+struct NoneOrJoin<T, U>(T)
+where
+    T: IntoIterator<Item = U> + Clone,
+    U: AsRef<str>;
+
+struct MbOrInf(Option<f64>);
+struct FltSecsOrInf(Option<f64>);
+struct Mb(f64);
+struct FltSecs(f64);
 
 impl Report {
-    pub fn at(&self, idx: usize) -> CommandReport {
-        CommandReport {
-            runner_report: self.runner_reports[idx].as_ref(),
-            cmd: &self.cmds[idx],
+    pub fn new(opts: &Options, result: CommandResult) -> Self {
+        let mut report = Report::from(opts);
+        match result {
+            Ok(runner_report) => {
+                report.result = ReportResult::from(&runner_report);
+                match runner_report.exit_status {
+                    ExitStatus::Finished(code) => {
+                        report.exit_code = code;
+                        report.exit_status = code.to_string();
+                    }
+                    ExitStatus::Terminated(term_reason) => {
+                        report.terminate_reason = TerminateReason::from(term_reason);
+                    }
+                    ExitStatus::Crashed(code, cause) => {
+                        report.terminate_reason = TerminateReason::AbnormalExitProcess;
+                        report.exit_code = code;
+                        report.exit_status = cause.to_string();
+                    }
+                }
+            }
+            Err(e) => report.spawner_error = e.errors,
         }
-    }
-
-    pub fn iter(&self) -> CommandReportIterator {
-        CommandReportIterator {
-            report: self,
-            pos: 0,
-        }
-    }
-}
-
-impl<'a> CommandReport<'a> {
-    pub fn kind(&self) -> CommandReportKind {
-        if self.cmd.use_json {
-            CommandReportKind::Json(self.to_json())
-        } else {
-            CommandReportKind::Legacy(self.to_legacy())
-        }
+        report
     }
 
     pub fn to_json(&self) -> JsonValue {
-        let values = ReportValues::from(self);
         object! {
-            "Application" => self.cmd.argv[0].clone(),
-            "Arguments" => self.cmd.argv[1..].to_vec(),
-            "Limit" => json_limits(self.cmd),
+            "Application" => self.application.clone(),
+            "Arguments" => self.arguments.clone(),
+            "Limit" => self.limit.to_json(),
             "Options" => object! {
-                "SearchInPath" => self.cmd.use_syspath
+                "SearchInPath" => self.options.search_in_path,
             },
-            "StdIn" => json_redirect_list(&self.cmd.stdin_redirect),
-            "StdOut" => json_redirect_list(&self.cmd.stdout_redirect),
-            "StdErr" => json_redirect_list(&self.cmd.stderr_redirect),
-            "CreateProcessMethod" => "CreateProcess",
+            "WorkingDirectory" => match self.working_directory {
+                Some(ref dir) => dir.clone(),
+                None => String::new(),
+            },
+            "CreateProcessMethod" => self.create_process_method.clone(),
+            "UserName" => self.user_name.clone(),
+            "StdIn" => self.stdin.clone(),
+            "StdOut" => self.stdout.clone(),
+            "StdErr" => self.stderr.clone(),
             "Result" => object! {
-                "Time" => dur2sec(&values.ps_info.total_user_time),
-                "WallClockTime" => dur2sec(&values.ps_info.wall_clock_time),
-                "Memory" => values.ps_info.peak_memory_used,
-                "BytesWritten" => values.ps_info.total_bytes_written,
-                "KernelTime" =>  dur2sec(&values.ps_info.total_kernel_time),
-                "ProcessorLoad" => values.proc_load(),
-                "WorkingDirectory" => self.cmd.working_directory
-                    .as_ref().map_or(String::new(), |d| d.clone()),
+                "Time" => self.result.time,
+                "WallClockTime" => self.result.wall_clock_time,
+                "Memory" => self.result.memory,
+                "BytesWritten" => self.result.bytes_written,
+                "KernelTime" =>  self.result.kernel_time,
+                "ProcessorLoad" => self.result.processor_load,
             },
-            "UserName" => "",
-            "TerminateReason" => values.term_reason,
-            "ExitCode" => values.exit_code,
-            "ExitStatus" => values.exit_status,
-            "SpawnerError" => array![values.error],
+            "TerminateReason" => self.terminate_reason.to_string(),
+            "ExitCode" => self.exit_code,
+            "ExitStatus" => self.exit_status.clone(),
+            "SpawnerError" => if self.spawner_error.is_empty() {
+                array!["<none>"]
+            } else {
+                self.spawner_error
+                    .iter()
+                    .map(|e| e.to_string().into())
+                    .collect::<Vec<JsonValue>>()
+                    .into()
+            }
         }
     }
 
-    pub fn to_legacy(&self) -> String {
-        let mut s = String::new();
-        self.write_legacy(&mut s).unwrap();
-        s
+    fn as_legacy(&self) -> LegacyReport {
+        LegacyReport {
+            application: &self.application,
+            parameters: &self.arguments,
+            security_level: self.limit.security_level,
+            create_process_method: &self.create_process_method,
+            user_name: &self.user_name,
+            user_time_limit: self.limit.time,
+            deadline: self.limit.wall_clock_time,
+            memory_limit: self.limit.memory.map(|b| b2mb(b)),
+            write_limit: self.limit.io_bytes.map(|b| b2mb(b)),
+            user_time: self.result.time,
+            peak_memory_used: b2mb(self.result.memory),
+            written: b2mb(self.result.bytes_written),
+            terminate_reason: self.terminate_reason,
+            exit_code: self.exit_code,
+            exit_status: &self.exit_status,
+            spawner_error: &self.spawner_error,
+        }
     }
+}
 
-    pub fn write_legacy<W: fmt::Write>(&self, w: &mut W) -> fmt::Result {
-        let params = if self.cmd.argv.len() == 1 {
-            "<none>".to_string()
-        } else {
-            self.cmd.argv[1..].join(" ")
-        };
-        write!(w, "\n")?;
-        write!(w, "--------------- Spawner report ---------------\n")?;
-        write!(w, "Application:               {}\n", self.cmd.argv[0])?;
-        write!(w, "Parameters:                {}\n", params)?;
-        write!(w, "SecurityLevel:             {}\n", self.cmd.secure as u32)?;
-        write!(w, "CreateProcessMethod:       CreateProcess\n")?;
-        write!(w, "UserName:                  \n")?;
+impl Display for Report {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self.kind {
+            ReportKind::Json => write!(f, "{:#}", self.to_json()),
+            ReportKind::Legacy => write!(f, "{}", self.as_legacy()),
+        }
+    }
+}
 
-        secs_or_inf(w, "UserTimeLimit:             ", &self.cmd.time_limit)?;
-        secs_or_inf(
-            w,
-            "DeadLine:                  ",
-            &self.cmd.wall_clock_time_limit,
-        )?;
-        mb_or_inf(w, "MemoryLimit:               ", &self.cmd.memory_limit)?;
-        mb_or_inf(w, "WriteLimit:                ", &self.cmd.write_limit)?;
-        write!(w, "----------------------------------------------\n")?;
+impl From<&Options> for Report {
+    fn from(opts: &Options) -> Self {
+        assert!(opts.argv.len() > 0);
 
-        let values = ReportValues::from(self);
-        let user_time = dur2sec(&values.ps_info.total_user_time);
-        let mem_used = b2mb(values.ps_info.peak_memory_used);
-        let written = b2mb(values.ps_info.total_bytes_written);
-        write!(w, "UserTime:                  {:.6} (sec)\n", user_time)?;
-        write!(w, "PeakMemoryUsed:            {:.6} (Mb)\n", mem_used)?;
-        write!(w, "Written:                   {:.6} (Mb)\n", written)?;
-        write!(w, "TerminateReason:           {}\n", values.term_reason)?;
-        write!(w, "ExitCode:                  {}\n", values.exit_code)?;
-        write!(w, "ExitStatus:                {}\n", values.exit_status)?;
-        write!(w, "----------------------------------------------\n")?;
-        write!(w, "SpawnerError:              {}\n", values.error)?;
+        let limit = ReportLimit::from(opts);
+        let mut argv = opts.argv.iter();
+        Self {
+            application: argv.next().unwrap().clone(),
+            arguments: argv.map(|a| a.clone()).collect(),
+            kind: if opts.use_json {
+                ReportKind::Json
+            } else {
+                ReportKind::Legacy
+            },
+            limit: limit,
+            options: ReportOptions {
+                search_in_path: opts.use_syspath,
+            },
+            working_directory: opts.working_directory.clone(),
+            create_process_method: "CreateProcess".to_string(),
+            user_name: "".to_string(),
+            stdin: Vec::from(&opts.stdin_redirect),
+            stdout: Vec::from(&opts.stdout_redirect),
+            stderr: Vec::from(&opts.stderr_redirect),
+            result: ReportResult::default(),
+            terminate_reason: TerminateReason::ExitProcess,
+            exit_code: 0,
+            exit_status: "0".to_string(),
+            spawner_error: Vec::new(),
+        }
+    }
+}
+
+impl ReportKind {
+    pub fn is_json(&self) -> bool {
+        match self {
+            ReportKind::Json => true,
+            _ => false,
+        }
+    }
+}
+
+impl From<&RunnerReport> for ReportResult {
+    fn from(report: &RunnerReport) -> Self {
+        let time = dur2sec(&report.process_info.total_user_time);
+        let wc_time = dur2sec(&report.process_info.wall_clock_time);
+        Self {
+            time: time,
+            wall_clock_time: wc_time,
+            memory: report.process_info.peak_memory_used,
+            bytes_written: report.process_info.total_bytes_written,
+            kernel_time: dur2sec(&report.process_info.total_kernel_time),
+            processor_load: if wc_time <= 1e-8 { 0.0 } else { time / wc_time },
+        }
+    }
+}
+
+impl ReportLimit {
+    fn to_json(&self) -> JsonValue {
+        let mut limit = JsonValue::new_object();
+        if let Some(t) = self.time {
+            limit["Time"] = t.into();
+        }
+        if let Some(t) = self.wall_clock_time {
+            limit["WallClockTime"] = t.into();
+        }
+        if let Some(v) = self.memory {
+            limit["Memory"] = v.into();
+        }
+        if let Some(lvl) = self.security_level {
+            limit["SecurityLevel"] = lvl.into();
+        }
+        if let Some(b) = self.io_bytes {
+            limit["IOBytes"] = b.into();
+        }
+        if let Some(t) = self.idleness_time {
+            limit["IdlenessTime"] = t.into();
+        }
+        if let Some(v) = self.idleness_processor_load {
+            limit["IdlenessProcessorLoad"] = v.into();
+        }
+        limit
+    }
+}
+
+impl From<&Options> for ReportLimit {
+    fn from(opts: &Options) -> Self {
+        Self {
+            time: opts.time_limit.map(|ref d| dur2sec(d)),
+            wall_clock_time: opts.wall_clock_time_limit.map(|ref d| dur2sec(d)),
+            memory: opts.memory_limit.map(|x| mb2b(x)),
+            security_level: match opts.secure {
+                true => Some(1),
+                false => None,
+            },
+            io_bytes: opts.write_limit.map(|x| mb2b(x)),
+            idleness_time: opts.idle_time_limit.map(|ref d| dur2sec(d)),
+            idleness_processor_load: Some(opts.load_ratio),
+        }
+    }
+}
+
+impl Display for TerminateReason {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        f.write_str(match self {
+            TerminateReason::ExitProcess => "ExitProcess",
+            TerminateReason::AbnormalExitProcess => "AbnormalExitProcess",
+            TerminateReason::TimeLimitExceeded => "TimeLimitExceeded",
+            TerminateReason::IdleTimeLimitExceeded => "IdleTimeLimitExceeded",
+            TerminateReason::WriteLimitExceeded => "WriteLimitExceeded",
+            TerminateReason::MemoryLimitExceeded => "MemoryLimitExceeded",
+            TerminateReason::ProcessesCountLimitExceeded => "ProcessesCountLimitExceeded",
+            TerminateReason::TerminatedByController => "TerminatedByController",
+        })
+    }
+}
+
+impl From<TerminationReason> for TerminateReason {
+    fn from(reason: TerminationReason) -> Self {
+        match reason {
+            TerminationReason::WallClockTimeLimitExceeded => TerminateReason::TimeLimitExceeded,
+            TerminationReason::IdleTimeLimitExceeded => TerminateReason::IdleTimeLimitExceeded,
+            TerminationReason::UserTimeLimitExceeded => TerminateReason::TimeLimitExceeded,
+            TerminationReason::WriteLimitExceeded => TerminateReason::WriteLimitExceeded,
+            TerminationReason::MemoryLimitExceeded => TerminateReason::MemoryLimitExceeded,
+            TerminationReason::ProcessLimitExceeded => TerminateReason::ProcessesCountLimitExceeded,
+            TerminationReason::ManuallyTerminated => TerminateReason::TerminatedByController,
+        }
+    }
+}
+
+macro_rules! line {
+    ($f:expr, $name:expr, $val:expr) => {
+        write!($f, "{0: <27}{1}\n", $name, $val)
+    };
+}
+
+impl<'a> Display for LegacyReport<'a> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "\n--------------- Spawner report ---------------\n")?;
+        line!(f, "Application:", self.application)?;
+        line!(f, "Parameters:", NoneOrJoin(self.parameters.iter()))?;
+        line!(f, "SecurityLevel:", self.security_level.unwrap_or(0))?;
+        line!(f, "CreateProcessMethod:", self.create_process_method)?;
+        line!(f, "UserName:", self.user_name)?;
+        line!(f, "UserTimeLimit:", FltSecsOrInf(self.user_time_limit))?;
+        line!(f, "DeadLine:", FltSecsOrInf(self.deadline))?;
+        line!(f, "MemoryLimit:", MbOrInf(self.memory_limit))?;
+        line!(f, "WriteLimit:", MbOrInf(self.write_limit))?;
+        write!(f, "----------------------------------------------\n")?;
+        line!(f, "UserTime:", FltSecs(self.user_time))?;
+        line!(f, "PeakMemoryUsed:", Mb(self.peak_memory_used))?;
+        line!(f, "Written:", Mb(self.written))?;
+        line!(f, "TerminateReason:", self.terminate_reason)?;
+        line!(f, "ExitCode:", self.exit_code)?;
+        line!(f, "ExitStatus:", self.exit_status)?;
+        write!(f, "----------------------------------------------\n")?;
+        line!(
+            f,
+            "SpawnerError:",
+            NoneOrJoin(self.spawner_error.iter().map(|e| e.to_string()))
+        )
+    }
+}
+
+impl From<&StdioRedirectList> for Vec<String> {
+    fn from(list: &StdioRedirectList) -> Vec<String> {
+        list.items.iter().map(|x| x.to_string()).collect()
+    }
+}
+
+impl<T, U> Display for NoneOrJoin<T, U>
+where
+    T: IntoIterator<Item = U> + Clone,
+    U: AsRef<str>,
+{
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        let mut empty = true;
+        for i in self.0.clone().into_iter() {
+            empty = false;
+            write!(f, "{} ", i.as_ref())?;
+        }
+        if empty {
+            f.write_str("<none>")?;
+        }
         Ok(())
     }
 }
 
-impl CommandReportKind {
-    pub fn is_json(&self) -> bool {
-        match self {
-            CommandReportKind::Json(_) => true,
-            _ => false,
-        }
-    }
-
-    pub fn into_json(self) -> JsonValue {
-        match self {
-            CommandReportKind::Json(v) => v,
-            _ => unreachable!(),
-        }
-    }
-}
-
-impl Display for CommandReportKind {
+impl Display for Mb {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self {
-            CommandReportKind::Json(v) => write!(f, "{:#}", v),
-            CommandReportKind::Legacy(s) => s.fmt(f),
-        }
+        write!(f, "{:.6} (Mb)", self.0)
     }
 }
 
-impl<'a> Display for CommandReport<'a> {
+impl Display for FltSecs {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        if self.cmd.use_json {
-            write!(f, "{:#}", self.to_json())
-        } else {
-            self.write_legacy(f)
+        write!(f, "{:.6} (sec)", self.0)
+    }
+}
+
+impl Display for MbOrInf {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self.0 {
+            Some(v) => write!(f, "{}", Mb(v)),
+            None => write!(f, "Infinity"),
         }
     }
 }
 
-impl<'a> Iterator for CommandReportIterator<'a> {
-    type Item = CommandReport<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.pos < self.report.cmds.len() {
-            let report = Some(self.report.at(self.pos));
-            self.pos += 1;
-            report
-        } else {
-            None
+impl Display for FltSecsOrInf {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self.0 {
+            Some(v) => write!(f, "{}", FltSecs(v)),
+            None => write!(f, "Infinity"),
         }
     }
-}
-
-impl ReportValues {
-    fn proc_load(&self) -> f64 {
-        // C++ spawner computes processor load as total user time / wall clock time.
-        // Making it possible for the processor load to be greater than 1.0
-        let wc = dur2sec(&self.ps_info.wall_clock_time);
-        if wc <= 1e-8 {
-            0.0
-        } else {
-            dur2sec(&self.ps_info.total_user_time) / wc
-        }
-    }
-}
-
-impl<'a> From<&CommandReport<'a>> for ReportValues {
-    fn from(cr: &CommandReport) -> Self {
-        let (ps_info, exit_status, error) = match cr.runner_report {
-            Ok(report) => (
-                report.process_info,
-                report.exit_status.clone(),
-                "<none>".to_string(),
-            ),
-            Err(err) => (
-                ProcessInfo::zeroed(),
-                ExitStatus::Finished(0),
-                err.to_string(),
-            ),
-        };
-        let (term_reason, code, status) = match exit_status {
-            ExitStatus::Finished(code) => ("ExitProcess".to_string(), code, code.to_string()),
-            ExitStatus::Terminated(ref reason) => (
-                match reason {
-                    TerminationReason::WallClockTimeLimitExceeded => "TimeLimitExceeded",
-                    TerminationReason::IdleTimeLimitExceeded => "IdleTimeLimitExceeded",
-                    TerminationReason::UserTimeLimitExceeded => "TimeLimitExceeded",
-                    TerminationReason::WriteLimitExceeded => "WriteLimitExceeded",
-                    TerminationReason::MemoryLimitExceeded => "MemoryLimitExceeded",
-                    TerminationReason::ProcessLimitExceeded => "ProcessesCountLimitExceeded",
-                    TerminationReason::ManuallyTerminated => "TerminatedByController",
-                }
-                .to_string(),
-                0,
-                "0".to_string(),
-            ),
-            ExitStatus::Crashed(code, cause) => {
-                ("AbnormalExitProcess".to_string(), code, cause.to_string())
-            }
-        };
-        Self {
-            ps_info: ps_info,
-            error: error,
-            term_reason: term_reason,
-            exit_status: status,
-            exit_code: code,
-        }
-    }
-}
-
-fn secs_or_inf<W: fmt::Write>(
-    w: &mut W,
-    prefix: &'static str,
-    val: &Option<Duration>,
-) -> fmt::Result {
-    match val {
-        Some(v) => write!(w, "{}{:.6} (sec)\n", prefix, dur2sec(v)),
-        None => write!(w, "{}Infinity\n", prefix),
-    }
-}
-
-fn mb_or_inf<W: fmt::Write>(w: &mut W, prefix: &'static str, val: &Option<f64>) -> fmt::Result {
-    match val {
-        Some(v) => write!(w, "{}{:.6} (Mb)\n", prefix, v),
-        None => write!(w, "{}Infinity\n", prefix),
-    }
-}
-
-fn json_limits(opts: &Options) -> JsonValue {
-    let mut limits = JsonValue::new_object();
-    if let Some(v) = &opts.time_limit {
-        limits["Time"] = dur2sec(v).into();
-    }
-    if let Some(v) = &opts.wall_clock_time_limit {
-        limits["WallClockTime"] = dur2sec(v).into();
-    }
-    if let Some(v) = opts.memory_limit {
-        limits["Memory"] = mb2b(v).into();
-    }
-    if opts.secure {
-        limits["SecurityLevel"] = 1.into();
-    }
-    if let Some(v) = opts.write_limit {
-        limits["IOBytes"] = mb2b(v).into();
-    }
-    if let Some(v) = &opts.idle_time_limit {
-        limits["IdlenessTime"] = dur2sec(v).into();
-    }
-
-    // The "IdlenessProcessorLoad" seems to be always present in c++ spawner.
-    limits["IdlenessProcessorLoad"] = opts.load_ratio.into();
-    limits
-}
-
-fn json_redirect_list(list: &StdioRedirectList) -> JsonValue {
-    list.items
-        .iter()
-        .map(|x| x.to_string().into())
-        .collect::<Vec<JsonValue>>()
-        .into()
 }
