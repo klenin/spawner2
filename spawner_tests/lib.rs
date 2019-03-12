@@ -23,6 +23,3 @@ mod other;
 
 #[cfg(test)]
 mod error;
-
-#[cfg(test)]
-mod report;
