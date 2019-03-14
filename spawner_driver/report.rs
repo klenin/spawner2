@@ -18,7 +18,7 @@ pub struct Report {
     pub options: ReportOptions,
     pub working_directory: Option<String>,
     pub create_process_method: String,
-    pub user_name: String,
+    pub username: Option<String>,
     pub stdin: Vec<String>,
     pub stdout: Vec<String>,
     pub stderr: Vec<String>,
@@ -79,7 +79,7 @@ pub struct LegacyReport<'a> {
     pub parameters: &'a Vec<String>,
     pub security_level: Option<u32>,
     pub create_process_method: &'a String,
-    pub user_name: &'a String,
+    pub username: &'a Option<String>,
     pub user_time_limit: Option<f64>,
     pub deadline: Option<f64>,
     pub memory_limit: Option<f64>,
@@ -142,7 +142,10 @@ impl Report {
                 None => String::new(),
             },
             "CreateProcessMethod" => self.create_process_method.clone(),
-            "UserName" => self.user_name.clone(),
+            "UserName" => match self.username {
+                Some(ref name) => name.clone(),
+                None => String::new(),
+            },
             "StdIn" => self.stdin.clone(),
             "StdOut" => self.stdout.clone(),
             "StdErr" => self.stderr.clone(),
@@ -175,7 +178,7 @@ impl Report {
             parameters: &self.arguments,
             security_level: self.limit.security_level,
             create_process_method: &self.create_process_method,
-            user_name: &self.user_name,
+            username: &self.username,
             user_time_limit: self.limit.time,
             deadline: self.limit.wall_clock_time,
             memory_limit: self.limit.memory.map(|b| b2mb(b)),
@@ -220,7 +223,7 @@ impl From<&Options> for Report {
             },
             working_directory: opts.working_directory.clone(),
             create_process_method: "CreateProcess".to_string(),
-            user_name: "".to_string(),
+            username: opts.username.clone(),
             stdin: Vec::from(&opts.stdin_redirect),
             stdout: Vec::from(&opts.stdout_redirect),
             stderr: Vec::from(&opts.stderr_redirect),
@@ -344,7 +347,11 @@ impl<'a> Display for LegacyReport<'a> {
         line!(f, "Parameters:", NoneOrJoin(self.parameters.iter()))?;
         line!(f, "SecurityLevel:", self.security_level.unwrap_or(0))?;
         line!(f, "CreateProcessMethod:", self.create_process_method)?;
-        line!(f, "UserName:", self.user_name)?;
+        line!(
+            f,
+            "UserName:",
+            self.username.as_ref().unwrap_or(&String::new())
+        )?;
         line!(f, "UserTimeLimit:", FltSecsOrInf(self.user_time_limit))?;
         line!(f, "DeadLine:", FltSecsOrInf(self.deadline))?;
         line!(f, "MemoryLimit:", MbOrInf(self.memory_limit))?;

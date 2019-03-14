@@ -44,7 +44,7 @@ fn parse_basic_opts() {
     check_opt!(&["-ho=1"], hide_output, true);
     check_opt!(&["-runas=1"], delegated, true);
     check_opt!(&["--delegated=1"], delegated, true);
-    check_opt!(&["-u=user"], login, Some(String::from("user")));
+    check_opt!(&["-u=user"], username, Some(String::from("user")));
     check_opt!(&["-p=password"], password, Some(String::from("password")));
     check_opt!(&["-c"], use_syspath, true);
     check_opt!(&["--systempath"], use_syspath, true);

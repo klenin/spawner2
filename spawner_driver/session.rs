@@ -74,8 +74,8 @@ impl<'a> SessionBuilderEx<'a> {
                     env_vars: cmd.env_vars.clone(),
                     env_kind: cmd.env,
                     monitor_interval: cmd.monitor_interval,
-                    show_gui: cmd.show_window,
-                    spawn_suspended: role.is_agent(),
+                    show_window: cmd.show_window,
+                    create_suspended: role.is_agent(),
                     limits: Limits {
                         max_wall_clock_time: cmd.wall_clock_time_limit,
                         max_idle_time: cmd.idle_time_limit,
@@ -84,7 +84,7 @@ impl<'a> SessionBuilderEx<'a> {
                         max_output_size: cmd.write_limit.map(|v| mb2b(v)),
                         max_processes: cmd.process_count,
                     },
-                    current_dir: cmd.working_directory.clone(),
+                    working_directory: cmd.working_directory.clone(),
                 },
                 ctl,
             );

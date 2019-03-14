@@ -1,7 +1,8 @@
 use crate::command::{Command, OnTerminate};
 use crate::runner::{ExitStatus, ProcessInfo, Runner, RunnerReport, TerminationReason};
 use crate::sys::windows::pipe::{ReadPipe, WritePipe};
-use crate::sys::windows::process::{Process, RawStdio, Status};
+use crate::sys::windows::process::{Process, Status};
+use crate::sys::windows::utils::Stdio;
 use crate::sys::IntoInner;
 use crate::{Error, Result};
 
@@ -47,7 +48,7 @@ pub fn spawn(
         .spawn(move || {
             let process = Process::spawn(
                 &cmd,
-                RawStdio {
+                Stdio {
                     stdin: stdio.stdin.into_inner(),
                     stdout: stdio.stdout.into_inner(),
                     stderr: stdio.stderr.into_inner(),

@@ -163,7 +163,7 @@ pub struct Options {
         desc = "Run executable under <user>",
         value_desc = "<user>"
     )]
-    pub login: Option<String>,
+    pub username: Option<String>,
 
     #[opt(name = "-p", desc = "Password for <user>", value_desc = "<password>")]
     pub password: Option<String>,
@@ -261,7 +261,7 @@ impl Default for Options {
             hide_report: false,
             hide_output: false,
             delegated: false,
-            login: None,
+            username: None,
             password: None,
             use_syspath: false,
             output_file: None,
@@ -322,7 +322,7 @@ impl Options {
         parse_env_var!(opts.hide_report, "SP_HIDE_REPORT");
         parse_env_var!(opts.hide_output, "SP_HIDE_OUTPUT");
         parse_env_var!(opts.delegated, "SP_RUNAS");
-        parse_env_var!(opts.login, "SP_USER");
+        parse_env_var!(opts.username, "SP_USER");
         parse_env_var!(opts.password, "SP_PASSWORD");
         parse_env_var!(opts.use_syspath, "SP_SYSTEM_PATH");
         parse_env_var!(opts.output_file, "SP_REPORT_FILE");

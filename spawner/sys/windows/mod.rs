@@ -1,6 +1,6 @@
 mod common;
 mod process;
-mod thread;
+mod utils;
 
 pub mod error;
 pub mod pipe;
