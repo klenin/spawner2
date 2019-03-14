@@ -43,6 +43,8 @@ pub struct Command {
     pub monitor_interval: Duration,
     pub env_kind: EnvKind,
     pub env_vars: Vec<EnvVar>,
+    pub username: Option<String>,
+    pub password: Option<String>,
 }
 
 pub trait OnTerminate: Send {
@@ -79,6 +81,8 @@ impl Command {
             monitor_interval: Duration::from_millis(1),
             env_kind: EnvKind::Inherit,
             env_vars: Vec::new(),
+            username: None,
+            password: None,
         }
     }
 }

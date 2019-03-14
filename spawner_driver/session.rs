@@ -85,6 +85,8 @@ impl<'a> SessionBuilderEx<'a> {
                         max_processes: cmd.process_count,
                     },
                     working_directory: cmd.working_directory.clone(),
+                    username: cmd.username.clone(),
+                    password: cmd.password.clone(),
                 },
                 ctl,
             );
