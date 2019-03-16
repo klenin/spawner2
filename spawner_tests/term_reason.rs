@@ -7,7 +7,6 @@ use std::u64;
 
 const MEM_ERR: u64 = 2 * 1024 * 1024; // 2MB
 const TIME_ERR: f64 = 0.050; // 50 ms
-const WRITE_ERR: u64 = 2 * 1024 * 1024; // 2MB
 
 pub fn check_tr(report: &Report, tr: TerminateReason) {
     assert!(report.spawner_error.is_empty());
@@ -26,11 +25,7 @@ pub fn ensure_user_time_limit_exceeded(report: &Report) {
 
 pub fn ensure_write_limit_exceeded(report: &Report) {
     check_tr(report, TerminateReason::WriteLimitExceeded);
-    assert_approx_eq!(
-        report.limit.io_bytes.unwrap(),
-        report.result.bytes_written,
-        WRITE_ERR
-    );
+    assert!(report.result.bytes_written >= report.limit.io_bytes.unwrap());
 }
 
 pub fn ensure_process_limit_exceeded(report: &Report) {
