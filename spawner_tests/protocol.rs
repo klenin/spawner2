@@ -215,8 +215,6 @@ fn agent_suspended_after_write() {
         "message\n",
     ])
     .unwrap();
-    println!("{}", r[0]);
-    println!("{}", r[1]);
     ensure_idle_time_limit_exceeded(&r[1]);
 }
 
