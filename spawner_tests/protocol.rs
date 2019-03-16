@@ -201,35 +201,23 @@ fn agent_terminated_by_controller() {
 fn agent_suspended_after_write() {
     let r = run(&[
         "--separator=@",
-        "-d=1",
+        "-d=4",
+        "--json",
         "--@",
         "--controller",
         exe!("loop"),
         "1W#\n",
         "--@",
-        "-y=0.5",
+        "-y=1",
+        "--in=*0.stdout",
+        "--out=*0.stdin",
         exe!("loop"),
         "message\n",
     ])
     .unwrap();
+    println!("{}", r[0]);
+    println!("{}", r[1]);
     ensure_idle_time_limit_exceeded(&r[1]);
-}
-
-#[test]
-fn controller_suspended_after_write() {
-    let r = run(&[
-        "--separator=@",
-        "-d=2",
-        "--@",
-        "-y=0.5",
-        "--controller",
-        exe!("loop"),
-        "1message#\n",
-        "--@",
-        exe!("empty"),
-    ])
-    .unwrap();
-    ensure_idle_time_limit_exceeded(&r[0]);
 }
 
 #[test]
