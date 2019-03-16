@@ -2,7 +2,8 @@ use crate::sys::windows::common::{cvt, to_utf16, Handle};
 use crate::{Error, Result};
 
 use winapi::shared::basetsd::{DWORD_PTR, SIZE_T};
-use winapi::shared::minwindef::{DWORD, FALSE, TRUE, WORD};
+use winapi::shared::minwindef::{DWORD, FALSE, HWINSTA, TRUE, WORD};
+use winapi::shared::windef::HDESK;
 use winapi::um::errhandlingapi::SetErrorMode;
 use winapi::um::handleapi::INVALID_HANDLE_VALUE;
 use winapi::um::processthreadsapi::{
@@ -19,8 +20,14 @@ use winapi::um::winbase::{
     LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, SEM_FAILCRITICALERRORS,
     SEM_NOGPFAULTERRORBOX, STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
-use winapi::um::winnt::{HANDLE, PVOID};
-use winapi::um::winuser::{SW_HIDE, SW_SHOW};
+use winapi::um::winnt::{DELETE, HANDLE, PVOID, READ_CONTROL, WCHAR, WRITE_DAC, WRITE_OWNER};
+use winapi::um::winuser::{
+    CloseDesktop, CloseWindowStation, CreateDesktopW, CreateWindowStationW,
+    GetProcessWindowStation, GetUserObjectInformationW, SetProcessWindowStation,
+    DESKTOP_CREATEMENU, DESKTOP_CREATEWINDOW, DESKTOP_ENUMERATE, DESKTOP_HOOKCONTROL,
+    DESKTOP_JOURNALPLAYBACK, DESKTOP_JOURNALRECORD, DESKTOP_READOBJECTS, DESKTOP_SWITCHDESKTOP,
+    DESKTOP_WRITEOBJECTS, SW_HIDE, SW_SHOW, UOI_NAME, WINSTA_ALL_ACCESS,
+};
 
 use std::alloc::{alloc_zeroed, dealloc, Layout};
 use std::collections::HashMap;
@@ -35,7 +42,10 @@ pub struct Stdio {
 }
 
 pub struct User {
-    pub handle: Handle,
+    pub token: Handle,
+    winsta: HWINSTA,
+    desktop: HDESK,
+    desktop_name: Vec<u16>,
 }
 
 pub struct CreateProcessOptions {
@@ -80,8 +90,22 @@ struct AttList {
     len: usize,
 }
 
+const DESKTOP_ALL: DWORD = DESKTOP_CREATEMENU
+    | DESKTOP_CREATEWINDOW
+    | DESKTOP_ENUMERATE
+    | DESKTOP_HOOKCONTROL
+    | DESKTOP_JOURNALPLAYBACK
+    | DESKTOP_JOURNALRECORD
+    | DESKTOP_READOBJECTS
+    | DESKTOP_SWITCHDESKTOP
+    | DESKTOP_WRITEOBJECTS
+    | DELETE
+    | READ_CONTROL
+    | WRITE_DAC
+    | WRITE_OWNER;
+
 impl User {
-    pub fn logon<T, U>(user: T, password: Option<U>) -> Result<Self>
+    pub fn create<T, U>(user: T, password: Option<U>) -> Result<Self>
     where
         T: AsRef<str>,
         U: AsRef<str>,
@@ -101,11 +125,61 @@ impl User {
                 /*dwLogonProvider=*/ LOGON32_PROVIDER_DEFAULT,
                 /*phToken=*/ &mut token,
             ))?;
-        }
 
-        Ok(Self {
-            handle: Handle(token),
-        })
+            let new_winsta = cvt(CreateWindowStationW(
+                /*lpwinsta=*/ ptr::null(),
+                /*dwFlags=*/ 0,
+                /*dwDesiredAccess=*/ WINSTA_ALL_ACCESS,
+                /*lpsa=*/ ptr::null_mut(),
+            ))?;
+
+            let old_winsta = cvt(GetProcessWindowStation())?;
+            cvt(SetProcessWindowStation(new_winsta))?;
+            let desktop_name = "desktop";
+            let desktop = CreateDesktopW(
+                /*lpszDesktop=*/ to_utf16(desktop_name).as_ptr(),
+                /*lpszDevice=*/ ptr::null(),
+                /*pDevmode=*/ ptr::null_mut(),
+                /*dwFlags=*/ 0,
+                /*dwDesiredAccess=*/ DESKTOP_ALL,
+                /*lpsa=*/ ptr::null_mut(),
+            );
+            cvt(SetProcessWindowStation(old_winsta))?;
+            cvt(desktop)?;
+
+            let mut winsta_name_bytes = 0;
+            let mut winsta_name_buf = [0 as WCHAR; 128];
+            cvt(GetUserObjectInformationW(
+                /*hObj=*/ mem::transmute(new_winsta),
+                /*nIndex=*/ UOI_NAME as i32,
+                /*pvInfo=*/ mem::transmute(winsta_name_buf.as_mut_ptr()),
+                /*nLength=*/ (mem::size_of::<WCHAR>() * winsta_name_buf.len()) as DWORD,
+                /*lpnLengthNeeded=*/ &mut winsta_name_bytes,
+            ))?;
+
+            let winsta_name_len = winsta_name_bytes as usize / mem::size_of::<WCHAR>() - 1;
+            let winsta_name = &winsta_name_buf[..winsta_name_len];
+
+            Ok(Self {
+                token: Handle(token),
+                winsta: new_winsta,
+                desktop: desktop,
+                desktop_name: to_utf16(format!(
+                    "{}\\{}",
+                    String::from_utf16(winsta_name).map_err(|e| Error::from(e.to_string()))?,
+                    desktop_name
+                )),
+            })
+        }
+    }
+}
+
+impl Drop for User {
+    fn drop(&mut self) {
+        unsafe {
+            CloseDesktop(self.desktop);
+            CloseWindowStation(self.winsta);
+        }
     }
 }
 
@@ -188,8 +262,12 @@ impl CreateProcessOptions {
             .map_or(ptr::null(), |dir| dir.as_ptr());
 
         let mut inherited_handles = [self.stdio.stdin.0, self.stdio.stdout.0, self.stdio.stderr.0];
-        let mut startup_info =
-            StartupInfo::create(&self.stdio, &mut inherited_handles, self.show_window)?;
+        let mut startup_info = StartupInfo::create(
+            &self.stdio,
+            &mut inherited_handles,
+            self.user.as_mut().map(|u| &mut u.desktop_name),
+            self.show_window,
+        )?;
 
         let mut process_info: PROCESS_INFORMATION = unsafe { mem::zeroed() };
 
@@ -200,7 +278,7 @@ impl CreateProcessOptions {
 
             let result = if let Some(ref user) = self.user {
                 CreateProcessAsUserW(
-                    /*hToken=*/ user.handle.0,
+                    /*hToken=*/ user.token.0,
                     /*lpApplicationName=*/ ptr::null(),
                     /*lpCommandLine=*/ cmd,
                     /*lpProcessAttributes=*/ ptr::null_mut(),
@@ -277,7 +355,7 @@ impl EnvBlock {
             cvt(CreateEnvironmentBlock(
                 mem::transmute(&mut block),
                 match user {
-                    Some(u) => u.handle.0,
+                    Some(u) => u.token.0,
                     None => ptr::null_mut(),
                 },
                 FALSE,
@@ -371,7 +449,12 @@ impl ThreadSnapshot {
 }
 
 impl StartupInfo {
-    fn create(stdio: &Stdio, inherited_handles: &mut [HANDLE], show_window: bool) -> Result<Self> {
+    fn create(
+        stdio: &Stdio,
+        inherited_handles: &mut [HANDLE],
+        desktop_name: Option<&mut Vec<u16>>,
+        show_window: bool,
+    ) -> Result<Self> {
         // Unfortunately, winapi-rs does not define this.
         const PROC_THREAD_ATTRIBUTE_HANDLE_LIST: DWORD_PTR = 131074;
 
@@ -388,11 +471,13 @@ impl StartupInfo {
         info.lpAttributeList = att_list.ptr;
         info.StartupInfo.cb = mem::size_of_val(&info) as DWORD;
         info.StartupInfo.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
-        info.StartupInfo.lpDesktop = ptr::null_mut();
         info.StartupInfo.wShowWindow = if show_window { SW_SHOW } else { SW_HIDE } as WORD;
         info.StartupInfo.hStdInput = stdio.stdin.0;
         info.StartupInfo.hStdOutput = stdio.stdout.0;
         info.StartupInfo.hStdError = stdio.stderr.0;
+        info.StartupInfo.lpDesktop = desktop_name
+            .map(|v| v.as_mut_ptr())
+            .unwrap_or(ptr::null_mut());
 
         Ok(StartupInfo {
             base: info,

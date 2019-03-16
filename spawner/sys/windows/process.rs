@@ -168,7 +168,7 @@ impl<'a> UserContext<'a> {
     fn enter(user: &'a Option<User>) -> Result<Self> {
         if let Some(u) = user {
             unsafe {
-                cvt(ImpersonateLoggedOnUser(u.handle.0))?;
+                cvt(ImpersonateLoggedOnUser(u.token.0))?;
             }
         }
         Ok(Self(user))
@@ -198,7 +198,7 @@ fn create_suspended(cmd: &Command, stdio: Stdio) -> Result<ProcessInformation> {
     }
 
     let user = match cmd.username {
-        Some(ref name) => Some(User::logon(name, cmd.password.as_ref())?),
+        Some(ref name) => Some(User::create(name, cmd.password.as_ref())?),
         None => None,
     };
 
