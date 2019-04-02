@@ -247,14 +247,14 @@ impl ReportKind {
 
 impl From<&RunnerReport> for ReportResult {
     fn from(report: &RunnerReport) -> Self {
-        let time = dur2sec(&report.process_info.total_user_time);
-        let wc_time = dur2sec(&report.process_info.wall_clock_time);
+        let time = dur2sec(&report.statistics.total_user_time);
+        let wc_time = dur2sec(&report.statistics.wall_clock_time);
         Self {
             time: time,
             wall_clock_time: wc_time,
-            memory: report.process_info.peak_memory_used,
-            bytes_written: report.process_info.total_bytes_written,
-            kernel_time: dur2sec(&report.process_info.total_kernel_time),
+            memory: report.statistics.peak_memory_used,
+            bytes_written: report.statistics.total_bytes_written,
+            kernel_time: dur2sec(&report.statistics.total_kernel_time),
             processor_load: if wc_time <= 1e-8 { 0.0 } else { time / wc_time },
         }
     }

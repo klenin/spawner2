@@ -16,7 +16,7 @@ pub enum TerminationReason {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct ProcessInfo {
+pub struct Statistics {
     /// The amount of time elapsed since process creation.
     pub wall_clock_time: Duration,
     /// The total amount of user-mode execution time for all active processes,
@@ -43,7 +43,7 @@ pub enum ExitStatus {
 #[derive(Clone, Debug)]
 pub struct RunnerReport {
     pub command: Command,
-    pub process_info: ProcessInfo,
+    pub statistics: Statistics,
     pub exit_status: ExitStatus,
 }
 
@@ -78,7 +78,7 @@ impl From<Sender<RunnerMessage>> for Runner {
     }
 }
 
-impl ProcessInfo {
+impl Statistics {
     pub fn zeroed() -> Self {
         Self {
             wall_clock_time: Duration::from_nanos(0),
