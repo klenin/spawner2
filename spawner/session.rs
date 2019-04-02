@@ -1,7 +1,7 @@
 use crate::command::{Command, CommandController, OnTerminate};
 use crate::pipe::{ReadPipe, ShareMode, WritePipe};
 use crate::runner::{Runner, RunnerReport};
-use crate::runner_private::{self, ProcessStdio, RunnerThread};
+use crate::runner_private::{MonitoringLoop, ProcessStdio, RunnerThread};
 use crate::stdio::router::{Router, RouterBuilder};
 use crate::stdio::{IstreamIdx, OstreamIdx};
 use crate::{Error, Result};
@@ -44,14 +44,8 @@ pub struct StdioMapping {
     pub stderr: IstreamIdx,
 }
 
-struct TargetInfo {
-    cmd: Command,
-    on_terminate: Option<Box<OnTerminate>>,
-    stdio_mapping: StdioMapping,
-}
-
 pub struct SessionBuilder {
-    targets: Vec<TargetInfo>,
+    targets: Vec<Target>,
     builder: RouterBuilder,
     output_files: HashMap<PathBuf, OstreamIdx>,
 }
@@ -62,6 +56,18 @@ pub struct CommandErrors {
 }
 
 pub type CommandResult = std::result::Result<RunnerReport, CommandErrors>;
+
+struct Target {
+    cmd: Command,
+    on_terminate: Option<Box<OnTerminate>>,
+    stdio_mapping: StdioMapping,
+}
+
+struct ThreadData {
+    ml: MonitoringLoop,
+    on_terminate: Option<Box<OnTerminate>>,
+    mapping: StdioMapping,
+}
 
 impl Session {
     pub fn runners(&self) -> Vec<Runner> {
@@ -151,7 +157,7 @@ impl SessionBuilder {
             stdout: self.builder.add_istream(None, ctl.stdout_controller),
             stderr: self.builder.add_istream(None, None),
         };
-        self.targets.push(TargetInfo {
+        self.targets.push(Target {
             cmd: cmd,
             on_terminate: ctl.on_terminate,
             stdio_mapping: mapping,
@@ -193,18 +199,31 @@ impl SessionBuilder {
             stdio_mappings: Vec::new(),
         };
 
-        for target_info in self.targets.into_iter() {
-            let mapping = target_info.stdio_mapping;
-            sess.runner_threads.push(runner_private::spawn(
-                target_info.cmd,
+        let mapped_targets = self.targets.into_iter().map(|target| {
+            let mapping = target.stdio_mapping;
+            let on_terminate = target.on_terminate;
+            MonitoringLoop::create(
+                target.cmd,
                 ProcessStdio {
                     stdin: iolist.ostream_dsts[mapping.stdin.0].take().unwrap(),
                     stdout: iolist.istream_srcs[mapping.stdout.0].take().unwrap(),
                     stderr: iolist.istream_srcs[mapping.stderr.0].take().unwrap(),
                 },
-                target_info.on_terminate,
+            )
+            .map(|ml| ThreadData {
+                ml: ml,
+                mapping: mapping,
+                on_terminate: on_terminate,
+            })
+        });
+
+        for thread_data_result in mapped_targets {
+            let thread_data = thread_data_result?;
+            sess.stdio_mappings.push(thread_data.mapping);
+            sess.runner_threads.push(RunnerThread::spawn(
+                thread_data.ml,
+                thread_data.on_terminate,
             )?);
-            sess.stdio_mappings.push(mapping);
         }
 
         Ok(sess)
