@@ -29,7 +29,6 @@ use winapi::um::winnt::{
 
 use std::mem;
 use std::ptr;
-use std::time::Instant;
 use std::u32;
 
 pub struct Process {
@@ -37,7 +36,6 @@ pub struct Process {
     id: DWORD,
     job: Handle,
     user: Option<User>,
-    creation_time: Instant,
 }
 
 pub enum Status {
@@ -49,7 +47,7 @@ pub enum Status {
 struct UserContext<'a>(&'a Option<User>);
 
 impl Process {
-    pub fn spawn(cmd: &Command, stdio: Stdio) -> Result<Self> {
+    pub fn spawn_suspended(cmd: &Command, stdio: Stdio) -> Result<Self> {
         let info = create_suspended(cmd, stdio)?;
         drop(Handle(info.base.hThread));
 
@@ -63,19 +61,12 @@ impl Process {
             }
         };
 
-        let ps = Process {
+        Ok(Process {
             handle: Handle(info.base.hProcess),
             id: info.base.dwProcessId,
             job: job,
             user: info.user,
-            creation_time: Instant::now(),
-        };
-
-        if !cmd.create_suspended {
-            ps.resume()?;
-        }
-
-        Ok(ps)
+        })
     }
 
     pub fn status(&self) -> Result<Status> {
@@ -149,10 +140,6 @@ impl Process {
             ))
             .map(|_| ext_info)
         }
-    }
-
-    pub fn creation_time(&self) -> Instant {
-        self.creation_time
     }
 }
 

@@ -1,5 +1,7 @@
 use cfg_if::cfg_if;
 
+mod runner_common;
+
 cfg_if! {
     if #[cfg(windows)] {
         extern crate winapi;
