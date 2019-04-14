@@ -6,9 +6,9 @@ use crate::protocol::{
 };
 
 use spawner::command::{Command, CommandController, Limits};
+use spawner::iograph::{IstreamId, OstreamId};
 use spawner::pipe::{self, ReadPipe};
 use spawner::session::{IstreamDst, OstreamSrc, Session, SessionBuilder, StdioMapping};
-use spawner::stdio::{IstreamIdx, OstreamIdx};
 use spawner::{Error, Result};
 
 use std::cell::RefCell;
@@ -53,7 +53,13 @@ impl<'a> SessionBuilderEx<'a> {
         }
 
         let sess = self.base.into_inner().spawn()?;
-        self.ctx.init(sess.runners(), self.mappings);
+        self.ctx.init(
+            sess.controllers()
+                .map(|c| c.runner_controller().clone())
+                .collect(),
+            sess.io_graph().clone(),
+            self.mappings,
+        );
         Ok(sess)
     }
 
@@ -67,7 +73,7 @@ impl<'a> SessionBuilderEx<'a> {
             .zip(ctls.into_iter())
             .zip(roles.into_iter())
         {
-            let mapping = self.base.borrow_mut().add_cmd(
+            let mapping = self.base.borrow_mut().add_task(
                 Command {
                     app: cmd.argv[0].clone(),
                     args: cmd.argv.iter().skip(1).map(|s| s.to_string()).collect(),
@@ -89,7 +95,7 @@ impl<'a> SessionBuilderEx<'a> {
                     password: cmd.password.clone(),
                 },
                 ctl,
-            );
+            )?;
             self.mappings.push(mapping);
         }
 
@@ -104,7 +110,7 @@ impl<'a> SessionBuilderEx<'a> {
 
     fn redirect_istream(
         &self,
-        istream: IstreamIdx,
+        istream: IstreamId,
         redirect_list: &StdioRedirectList,
     ) -> Result<()> {
         for redirect in redirect_list.items.iter() {
@@ -133,7 +139,7 @@ impl<'a> SessionBuilderEx<'a> {
 
     fn redirect_ostream(
         &self,
-        ostream: OstreamIdx,
+        ostream: OstreamId,
         redirect_list: &StdioRedirectList,
     ) -> Result<()> {
         for redirect in redirect_list.items.iter() {

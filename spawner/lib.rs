@@ -5,10 +5,11 @@ extern crate cfg_if;
 extern crate winapi;
 
 pub mod command;
+pub mod iograph;
 pub mod pipe;
 pub mod runner;
+pub mod rwhub;
 pub mod session;
-pub mod stdio;
 
 pub use error::*;
 pub type Result<T> = std::result::Result<T, self::Error>;

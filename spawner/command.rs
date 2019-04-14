@@ -1,4 +1,4 @@
-use crate::stdio::IstreamController;
+use crate::rwhub::ReadHubController;
 
 use std::time::Duration;
 use std::u64;
@@ -53,7 +53,7 @@ pub trait OnTerminate: Send {
 
 pub struct CommandController {
     pub on_terminate: Option<Box<OnTerminate>>,
-    pub stdout_controller: Option<Box<IstreamController>>,
+    pub stdout_controller: Option<Box<ReadHubController>>,
 }
 
 impl Limits {
