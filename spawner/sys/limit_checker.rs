@@ -20,10 +20,6 @@ impl LimitChecker {
         }
     }
 
-    pub fn stats(&self) -> Statistics {
-        self.stats
-    }
-
     pub fn reset_timers(&mut self) {
         self.stats.wall_clock_time = Duration::from_millis(0);
         self.stats.total_user_time = Duration::from_millis(0);
