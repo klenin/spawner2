@@ -1,7 +1,11 @@
-use crate::command::Command;
-use crate::sys::runner::RunnerMessage;
+use crate::command::{Command, Limits, OnTerminate};
+use crate::pipe::{ReadPipe, WritePipe};
+use crate::sys::runner as runner_impl;
+use crate::sys::IntoInner;
+use crate::{Error, Result};
 
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -35,7 +39,7 @@ pub struct Statistics {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExitStatus {
-    Crashed(u32, &'static str),
+    Crashed(String),
     Finished(u32),
     Terminated(TerminationReason),
 }
@@ -47,35 +51,29 @@ pub struct RunnerReport {
     pub exit_status: ExitStatus,
 }
 
-#[derive(Clone)]
-pub struct Runner(Sender<RunnerMessage>);
-
-impl Runner {
-    fn send(&self, msg: RunnerMessage) {
-        let _ = self.0.send(msg);
-    }
-
-    pub fn terminate(&self) {
-        self.send(RunnerMessage::Terminate);
-    }
-
-    pub fn suspend(&self) {
-        self.send(RunnerMessage::Suspend);
-    }
-
-    pub fn resume(&self) {
-        self.send(RunnerMessage::Resume);
-    }
-
-    pub fn reset_timers(&self) {
-        self.send(RunnerMessage::ResetTimers);
-    }
+pub struct ProcessStdio {
+    pub stdin: ReadPipe,
+    pub stdout: WritePipe,
+    pub stderr: WritePipe,
 }
 
-impl From<Sender<RunnerMessage>> for Runner {
-    fn from(s: Sender<RunnerMessage>) -> Self {
-        Self(s)
-    }
+pub struct Process(runner_impl::Process);
+
+enum Message {
+    Terminate,
+    Suspend,
+    Resume,
+    ResetTimers,
+}
+
+pub struct Runner<'a>(runner_impl::Runner<'a>);
+
+#[derive(Clone)]
+pub struct RunnerController(Sender<Message>);
+
+pub struct RunnerThread {
+    ctl: RunnerController,
+    handle: JoinHandle<Result<RunnerReport>>,
 }
 
 impl Statistics {
@@ -87,6 +85,150 @@ impl Statistics {
             peak_memory_used: 0,
             total_bytes_written: 0,
             total_processes_created: 0,
+        }
+    }
+}
+
+impl Process {
+    pub fn suspended(cmd: &Command, stdio: ProcessStdio) -> Result<Self> {
+        runner_impl::Process::suspended(
+            cmd,
+            runner_impl::ProcessStdio {
+                stdin: stdio.stdin.into_inner(),
+                stdout: stdio.stdout.into_inner(),
+                stderr: stdio.stderr.into_inner(),
+            },
+        )
+        .map(Self)
+    }
+}
+
+impl<'a> Runner<'a> {
+    pub fn new(ps: &'a mut Process, limits: Limits) -> Self {
+        Self(runner_impl::Runner::new(&mut ps.0, limits))
+    }
+
+    pub fn exit_status(&self) -> Result<Option<ExitStatus>> {
+        self.0.exit_status()
+    }
+
+    pub fn suspend_process(&self) -> Result<()> {
+        self.0.suspend_process()
+    }
+
+    pub fn resume_process(&self) -> Result<()> {
+        self.0.resume_process()
+    }
+
+    pub fn reset_timers(&mut self) -> Result<()> {
+        self.0.reset_timers()
+    }
+
+    pub fn check_limits(&mut self, stats: Statistics) -> Result<Option<TerminationReason>> {
+        self.0.check_limits(stats)
+    }
+
+    pub fn current_stats(&self) -> Result<Statistics> {
+        self.0.current_stats()
+    }
+}
+
+impl RunnerController {
+    fn send(&self, m: Message) {
+        let _ = self.0.send(m);
+    }
+
+    pub fn terminate(&self) {
+        self.send(Message::Terminate)
+    }
+
+    pub fn suspend(&self) {
+        self.send(Message::Suspend)
+    }
+
+    pub fn resume(&self) {
+        self.send(Message::Resume)
+    }
+
+    pub fn reset_timers(&self) {
+        self.send(Message::ResetTimers)
+    }
+}
+
+impl RunnerThread {
+    pub fn spawn(
+        cmd: Command,
+        ps: Process,
+        mut on_terminate: Option<Box<OnTerminate>>,
+    ) -> Result<Self> {
+        let (sender, receiver) = channel();
+        thread::Builder::new()
+            .spawn(move || {
+                let result = RunnerThread::entry(cmd, ps, receiver);
+                if let Some(handler) = on_terminate.as_mut() {
+                    handler.on_terminate();
+                }
+                result
+            })
+            .map_err(|e| Error::from(e))
+            .map(|handle| RunnerThread {
+                handle: handle,
+                ctl: RunnerController(sender),
+            })
+    }
+
+    pub fn controller(&self) -> RunnerController {
+        self.ctl.clone()
+    }
+
+    pub fn join(self) -> Result<RunnerReport> {
+        self.handle
+            .join()
+            .unwrap_or(Err(Error::from("Runner thread panicked")))
+    }
+
+    fn entry(cmd: Command, mut ps: Process, receiver: Receiver<Message>) -> Result<RunnerReport> {
+        let mut runner = Runner::new(&mut ps, cmd.limits);
+        let exit_status = RunnerThread::monitor_process(&mut runner, &cmd, receiver)?;
+        let stats = runner.current_stats()?;
+        Ok(RunnerReport {
+            command: cmd,
+            statistics: stats,
+            exit_status: exit_status,
+        })
+    }
+
+    fn monitor_process(
+        runner: &mut Runner,
+        cmd: &Command,
+        receiver: Receiver<Message>,
+    ) -> Result<ExitStatus> {
+        if !cmd.create_suspended {
+            runner.resume_process()?;
+        }
+
+        loop {
+            if let Some(exit_status) = runner.exit_status()? {
+                return Ok(exit_status);
+            }
+
+            let stats = runner.current_stats()?;
+            if let Some(tr) = runner.check_limits(stats)? {
+                return Ok(ExitStatus::Terminated(tr));
+            }
+
+            if let Ok(msg) = receiver.try_recv() {
+                match msg {
+                    Message::Terminate => {
+                        return Ok(ExitStatus::Terminated(
+                            TerminationReason::ManuallyTerminated,
+                        ));
+                    }
+                    Message::Suspend => runner.suspend_process()?,
+                    Message::Resume => runner.resume_process()?,
+                    Message::ResetTimers => runner.reset_timers()?,
+                }
+            }
         }
     }
 }

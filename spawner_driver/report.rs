@@ -2,7 +2,7 @@ use crate::misc::{b2mb, dur2sec, mb2b};
 use crate::opts::{Options, StdioRedirectList};
 
 use spawner::runner::{ExitStatus, RunnerReport, TerminationReason};
-use spawner::session::CommandResult;
+use spawner::session::WaitResult;
 use spawner::Error;
 
 use json::{array, object, JsonValue};
@@ -104,7 +104,7 @@ struct Mb(f64);
 struct FltSecs(f64);
 
 impl Report {
-    pub fn new(opts: &Options, result: CommandResult) -> Self {
+    pub fn new(opts: &Options, result: WaitResult) -> Self {
         let mut report = Report::from(opts);
         match result {
             Ok(runner_report) => {
@@ -117,9 +117,8 @@ impl Report {
                     ExitStatus::Terminated(term_reason) => {
                         report.terminate_reason = TerminateReason::from(term_reason);
                     }
-                    ExitStatus::Crashed(code, cause) => {
+                    ExitStatus::Crashed(cause) => {
                         report.terminate_reason = TerminateReason::AbnormalExitProcess;
-                        report.exit_code = code;
                         report.exit_status = cause.to_string();
                     }
                 }
