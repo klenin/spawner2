@@ -1,17 +1,17 @@
-use crate::command::Limits;
 use crate::runner::{Statistics, TerminationReason};
+use crate::task::ResourceLimits;
 
 use std::time::{Duration, Instant};
 
 pub struct LimitChecker {
-    limits: Limits,
+    limits: ResourceLimits,
     stats: Statistics,
     last_check_time: Option<Instant>,
     total_idle_time: Duration,
 }
 
 impl LimitChecker {
-    pub fn new(limits: Limits) -> Self {
+    pub fn new(limits: ResourceLimits) -> Self {
         Self {
             limits: limits,
             stats: Statistics::zeroed(),

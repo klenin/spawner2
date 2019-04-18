@@ -1,7 +1,7 @@
-use crate::command::{Command, Limits, OnTerminate};
 use crate::pipe::{ReadPipe, WritePipe};
 use crate::sys::runner as runner_impl;
 use crate::sys::IntoInner;
+use crate::task::{OnTerminate, ResourceLimits, Task};
 use crate::{Error, Result};
 
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -46,7 +46,6 @@ pub enum ExitStatus {
 
 #[derive(Clone, Debug)]
 pub struct RunnerReport {
-    pub command: Command,
     pub statistics: Statistics,
     pub exit_status: ExitStatus,
 }
@@ -90,9 +89,9 @@ impl Statistics {
 }
 
 impl Process {
-    pub fn suspended(cmd: &Command, stdio: ProcessStdio) -> Result<Self> {
+    pub fn suspended(task: &Task, stdio: ProcessStdio) -> Result<Self> {
         runner_impl::Process::suspended(
-            cmd,
+            task,
             runner_impl::ProcessStdio {
                 stdin: stdio.stdin.into_inner(),
                 stdout: stdio.stdout.into_inner(),
@@ -104,7 +103,7 @@ impl Process {
 }
 
 impl<'a> Runner<'a> {
-    pub fn new(ps: &'a mut Process, limits: Limits) -> Self {
+    pub fn new(ps: &'a mut Process, limits: ResourceLimits) -> Self {
         Self(runner_impl::Runner::new(&mut ps.0, limits))
     }
 
@@ -157,14 +156,14 @@ impl RunnerController {
 
 impl RunnerThread {
     pub fn spawn(
-        cmd: Command,
+        task: Task,
         ps: Process,
         mut on_terminate: Option<Box<OnTerminate>>,
     ) -> Result<Self> {
         let (sender, receiver) = channel();
         thread::Builder::new()
             .spawn(move || {
-                let result = RunnerThread::entry(cmd, ps, receiver);
+                let result = RunnerThread::entry(task, ps, receiver);
                 if let Some(handler) = on_terminate.as_mut() {
                     handler.on_terminate();
                 }
@@ -187,12 +186,11 @@ impl RunnerThread {
             .unwrap_or(Err(Error::from("Runner thread panicked")))
     }
 
-    fn entry(cmd: Command, mut ps: Process, receiver: Receiver<Message>) -> Result<RunnerReport> {
-        let mut runner = Runner::new(&mut ps, cmd.limits);
-        let exit_status = RunnerThread::monitor_process(&mut runner, &cmd, receiver)?;
+    fn entry(task: Task, mut ps: Process, receiver: Receiver<Message>) -> Result<RunnerReport> {
+        let mut runner = Runner::new(&mut ps, task.limits);
+        let exit_status = RunnerThread::monitor_process(&mut runner, &task, receiver)?;
         let stats = runner.current_stats()?;
         Ok(RunnerReport {
-            command: cmd,
             statistics: stats,
             exit_status: exit_status,
         })
@@ -200,10 +198,10 @@ impl RunnerThread {
 
     fn monitor_process(
         runner: &mut Runner,
-        cmd: &Command,
+        task: &Task,
         receiver: Receiver<Message>,
     ) -> Result<ExitStatus> {
-        if !cmd.create_suspended {
+        if !task.create_suspended {
             runner.resume_process()?;
         }
 

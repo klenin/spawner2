@@ -1,4 +1,3 @@
-use crate::command::{Command, EnvKind, Limits};
 use crate::runner::{ExitStatus, Statistics, TerminationReason};
 use crate::sys::limit_checker::LimitChecker;
 use crate::sys::windows::common::{cvt, Handle};
@@ -7,6 +6,7 @@ use crate::sys::windows::utils::{
     CreateProcessOptions, EnvBlock, ProcessInformation, Stdio, ThreadIterator, User,
 };
 use crate::sys::IntoInner;
+use crate::task::{EnvKind, ResourceLimits, Task};
 use crate::{Error, Result};
 
 use winapi::shared::minwindef::{DWORD, FALSE};
@@ -60,9 +60,9 @@ pub struct Runner<'a> {
 struct UserContext<'a>(&'a Option<User>);
 
 impl Process {
-    pub fn suspended(cmd: &Command, stdio: ProcessStdio) -> Result<Self> {
+    pub fn suspended(task: &Task, stdio: ProcessStdio) -> Result<Self> {
         let info = create_suspended_process(
-            cmd,
+            task,
             Stdio {
                 stdin: stdio.stdin.into_inner(),
                 stdout: stdio.stdout.into_inner(),
@@ -129,7 +129,7 @@ impl Drop for Process {
 }
 
 impl<'a> Runner<'a> {
-    pub fn new(ps: &'a mut Process, limits: Limits) -> Self {
+    pub fn new(ps: &'a mut Process, limits: ResourceLimits) -> Self {
         Self {
             ps: ps,
             creation_time: Instant::now(),
@@ -231,24 +231,25 @@ impl<'a> Drop for UserContext<'a> {
     }
 }
 
-fn create_suspended_process(cmd: &Command, stdio: Stdio) -> Result<ProcessInformation> {
+fn create_suspended_process(task: &Task, stdio: Stdio) -> Result<ProcessInformation> {
     let mut opts = CreateProcessOptions::new(
-        std::iter::once(cmd.app.as_str()).chain(cmd.args.iter().map(|a| a.as_str())),
+        std::iter::once(task.app.as_str()).chain(task.args.iter().map(|a| a.as_str())),
         stdio,
     );
-    opts.show_window(cmd.show_window)
+    opts.show_window(task.show_window)
         .create_suspended(true)
         .hide_errors(true);
-    if let Some(ref dir) = cmd.working_directory {
+    if let Some(ref dir) = task.working_directory {
         opts.working_directory(dir);
     }
 
-    let user = match cmd.username {
-        Some(ref name) => Some(User::create(name, cmd.password.as_ref())?),
-        None => None,
-    };
+    let user = task
+        .username
+        .as_ref()
+        .map(|uname| User::create(uname, task.password.as_ref()))
+        .transpose()?;
 
-    match cmd.env_kind {
+    match task.env_kind {
         EnvKind::Inherit => {
             opts.envs(std::env::vars());
         }
@@ -265,11 +266,7 @@ fn create_suspended_process(cmd: &Command, stdio: Stdio) -> Result<ProcessInform
         }
     }
 
-    opts.envs(
-        cmd.env_vars
-            .iter()
-            .map(|v| (v.name.as_str(), v.val.as_str())),
-    );
+    opts.envs(task.env_vars.iter().map(|(k, v)| (k.as_str(), v.as_str())));
 
     if let Some(u) = user {
         opts.user(u);
