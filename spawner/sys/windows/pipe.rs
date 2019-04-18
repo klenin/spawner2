@@ -84,7 +84,7 @@ impl Read for ReadPipe {
                 &mut bytes_read,
                 ptr::null_mut(),
             ))
-            .map_err(|e| e.into_io_error())?;
+            .map_err(|_| io::Error::last_os_error())?;
         }
         Ok(bytes_read as usize)
     }
@@ -127,7 +127,7 @@ impl Write for WritePipe {
                 &mut bytes_written,
                 ptr::null_mut(),
             ))
-            .map_err(|e| e.into_io_error())?;
+            .map_err(|_| io::Error::last_os_error())?;
         }
         Ok(bytes_written as usize)
     }

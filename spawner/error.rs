@@ -1,4 +1,4 @@
-use crate::sys::error::last_os_error;
+use crate::sys::error::SysError;
 
 use backtrace::Backtrace;
 
@@ -7,9 +7,9 @@ use std::io;
 
 #[derive(Debug)]
 enum ErrorKind {
+    Sys(SysError),
+    Other(String),
     Io(io::Error),
-    Str(String),
-    StaticStr(&'static str),
 }
 
 #[derive(Debug)]
@@ -27,19 +27,11 @@ impl Error {
     }
 
     pub fn last_os_error() -> Self {
-        Self::from(last_os_error())
+        Error::from(SysError::last())
     }
 
     pub fn call_stack(&self) -> String {
         format!("{:?}", self.backtrace)
-    }
-
-    pub fn into_io_error(self) -> io::Error {
-        match self.kind {
-            ErrorKind::Io(e) => e,
-            ErrorKind::Str(s) => io::Error::new(io::ErrorKind::Other, s),
-            ErrorKind::StaticStr(s) => io::Error::new(io::ErrorKind::Other, s),
-        }
     }
 }
 
@@ -49,8 +41,8 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.kind {
             ErrorKind::Io(e) => write!(f, "{}", e),
-            ErrorKind::Str(s) => write!(f, "{}", s),
-            ErrorKind::StaticStr(s) => write!(f, "{}", s),
+            ErrorKind::Sys(e) => write!(f, "{}", e),
+            ErrorKind::Other(s) => write!(f, "{}", s),
         }
     }
 }
@@ -63,12 +55,18 @@ impl From<io::Error> for Error {
 
 impl From<String> for Error {
     fn from(s: String) -> Self {
-        Error::new(ErrorKind::Str(s))
+        Error::new(ErrorKind::Other(s))
     }
 }
 
 impl From<&'static str> for Error {
     fn from(s: &'static str) -> Self {
-        Error::new(ErrorKind::StaticStr(s))
+        Error::from(s.to_string())
+    }
+}
+
+impl From<SysError> for Error {
+    fn from(e: SysError) -> Self {
+        Error::new(ErrorKind::Sys(e))
     }
 }

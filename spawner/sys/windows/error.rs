@@ -5,26 +5,46 @@ use winapi::um::winbase::{
 };
 use winapi::um::winnt::{LANG_ENGLISH, MAKELANGID, SUBLANG_ENGLISH_US, WCHAR};
 
+use std::char::{decode_utf16, REPLACEMENT_CHARACTER};
+use std::fmt::{self, Write};
 use std::ptr;
 
-pub fn last_os_error() -> String {
-    let mut buf = [0 as WCHAR; 256];
-    unsafe {
-        let ecode = GetLastError();
-        let msg_len = FormatMessageW(
-            /*dwFlags=*/
-            FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-            /*lpSource=*/ ptr::null(),
-            /*dwMessageId=*/ ecode,
-            /*dwLanguageId=*/ MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US) as DWORD,
-            /*lpBuffer=*/ buf.as_mut_ptr(),
-            /*nSize=*/ buf.len() as DWORD,
-            /*Arguments=*/ ptr::null_mut(),
-        );
+#[derive(Debug)]
+pub struct SysError(DWORD);
+
+impl SysError {
+    pub fn last() -> Self {
+        unsafe { Self(GetLastError()) }
+    }
+}
+
+impl std::error::Error for SysError {}
+
+impl fmt::Display for SysError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut buf = [0 as WCHAR; 256];
+        let msg_len = unsafe {
+            FormatMessageW(
+                /*dwFlags=*/
+                FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                /*lpSource=*/ ptr::null(),
+                /*dwMessageId=*/ self.0,
+                /*dwLanguageId=*/ MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US) as DWORD,
+                /*lpBuffer=*/ buf.as_mut_ptr(),
+                /*nSize=*/ buf.len() as DWORD,
+                /*Arguments=*/ ptr::null_mut(),
+            ) as usize
+        };
+
         if msg_len == 0 {
-            String::from("Unable to format error message")
+            f.write_str("Unable to format error message")
         } else {
-            String::from_utf16_lossy(&buf[..msg_len as usize])
+            for c in decode_utf16(buf.iter().cloned().take(msg_len))
+                .map(|r| r.unwrap_or(REPLACEMENT_CHARACTER))
+            {
+                f.write_char(c)?;
+            }
+            Ok(())
         }
     }
 }
