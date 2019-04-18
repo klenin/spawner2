@@ -1,8 +1,8 @@
+use crate::cmd::{Command, RedirectList};
 use crate::misc::{b2mb, dur2sec, mb2b};
-use crate::opts::{Options, StdioRedirectList};
 
 use spawner::runner::{ExitStatus, RunnerReport, TerminationReason};
-use spawner::session::WaitResult;
+use spawner::task::TaskResult;
 use spawner::Error;
 
 use json::{array, object, JsonValue};
@@ -104,8 +104,8 @@ struct Mb(f64);
 struct FltSecs(f64);
 
 impl Report {
-    pub fn new(opts: &Options, result: WaitResult) -> Self {
-        let mut report = Report::from(opts);
+    pub fn new(cmd: &Command, result: TaskResult) -> Self {
+        let mut report = Report::from(cmd);
         match result {
             Ok(runner_report) => {
                 report.result = ReportResult::from(&runner_report);
@@ -202,30 +202,30 @@ impl Display for Report {
     }
 }
 
-impl From<&Options> for Report {
-    fn from(opts: &Options) -> Self {
-        assert!(opts.argv.len() > 0);
+impl From<&Command> for Report {
+    fn from(cmd: &Command) -> Self {
+        assert!(cmd.argv.len() > 0);
 
-        let limit = ReportLimit::from(opts);
-        let mut argv = opts.argv.iter();
+        let limit = ReportLimit::from(cmd);
+        let mut argv = cmd.argv.iter();
         Self {
             application: argv.next().unwrap().clone(),
             arguments: argv.map(|a| a.clone()).collect(),
-            kind: if opts.use_json {
+            kind: if cmd.use_json {
                 ReportKind::Json
             } else {
                 ReportKind::Legacy
             },
             limit: limit,
             options: ReportOptions {
-                search_in_path: opts.use_syspath,
+                search_in_path: cmd.use_syspath,
             },
-            working_directory: opts.working_directory.clone(),
+            working_directory: cmd.working_directory.clone(),
             create_process_method: "CreateProcess".to_string(),
-            username: opts.username.clone(),
-            stdin: Vec::from(&opts.stdin_redirect),
-            stdout: Vec::from(&opts.stdout_redirect),
-            stderr: Vec::from(&opts.stderr_redirect),
+            username: cmd.username.clone(),
+            stdin: Vec::from(&cmd.stdin_redirect),
+            stdout: Vec::from(&cmd.stdout_redirect),
+            stderr: Vec::from(&cmd.stderr_redirect),
             result: ReportResult::default(),
             terminate_reason: TerminateReason::ExitProcess,
             exit_code: 0,
@@ -287,19 +287,19 @@ impl ReportLimit {
     }
 }
 
-impl From<&Options> for ReportLimit {
-    fn from(opts: &Options) -> Self {
+impl From<&Command> for ReportLimit {
+    fn from(cmd: &Command) -> Self {
         Self {
-            time: opts.time_limit.map(|ref d| dur2sec(d)),
-            wall_clock_time: opts.wall_clock_time_limit.map(|ref d| dur2sec(d)),
-            memory: opts.memory_limit.map(|x| mb2b(x)),
-            security_level: match opts.secure {
+            time: cmd.time_limit.map(|ref d| dur2sec(d)),
+            wall_clock_time: cmd.wall_clock_time_limit.map(|ref d| dur2sec(d)),
+            memory: cmd.memory_limit.map(|x| mb2b(x)),
+            security_level: match cmd.secure {
                 true => Some(1),
                 false => None,
             },
-            io_bytes: opts.write_limit.map(|x| mb2b(x)),
-            idleness_time: opts.idle_time_limit.map(|ref d| dur2sec(d)),
-            idleness_processor_load: Some(opts.load_ratio),
+            io_bytes: cmd.write_limit.map(|x| mb2b(x)),
+            idleness_time: cmd.idle_time_limit.map(|ref d| dur2sec(d)),
+            idleness_processor_load: Some(cmd.load_ratio),
         }
     }
 }
@@ -371,8 +371,8 @@ impl<'a> Display for LegacyReport<'a> {
     }
 }
 
-impl From<&StdioRedirectList> for Vec<String> {
-    fn from(list: &StdioRedirectList) -> Vec<String> {
+impl From<&RedirectList> for Vec<String> {
+    fn from(list: &RedirectList) -> Vec<String> {
         list.items.iter().map(|x| x.to_string()).collect()
     }
 }

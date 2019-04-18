@@ -1,7 +1,7 @@
-use crate::opts::*;
+use crate::cmd::*;
 use crate::value_parser::StdinRedirectParser;
 
-use spawner::command::EnvKind;
+use spawner::task::EnvKind;
 
 use spawner_opts::{CmdLineOptions, OptionValueParser};
 
@@ -13,9 +13,9 @@ fn fsec2dur(s: f64) -> Duration {
 
 macro_rules! check_opt {
     ($argv:expr, $field:ident, $value:expr) => {{
-        let mut opts = Options::default();
-        let _ = opts.parse($argv);
-        assert_eq!(opts.$field, $value);
+        let mut cmd = Command::default();
+        let _ = cmd.parse($argv);
+        assert_eq!(cmd.$field, $value);
     }};
 }
 
@@ -53,27 +53,26 @@ fn parse_basic_opts() {
     check_opt!(&["-process-count=10"], process_count, Some(10));
     check_opt!(&["--controller"], controller, true);
     check_opt!(&["-j"], use_json, true);
-    // todo: shared_memory
     check_opt!(&["--json"], use_json, true);
 }
 
 #[test]
 fn parse_env_type() {
-    let mut opts = Options::default();
-    let _ = opts.parse(&["-env=clear"]);
-    match opts.env {
+    let mut cmd = Command::default();
+    let _ = cmd.parse(&["-env=clear"]);
+    match cmd.env {
         EnvKind::Clear => {}
         _ => unreachable!(),
     }
 
-    let _ = opts.parse(&["-env=inherit"]);
-    match opts.env {
+    let _ = cmd.parse(&["-env=inherit"]);
+    match cmd.env {
         EnvKind::Inherit => {}
         _ => unreachable!(),
     }
 
-    let _ = opts.parse(&["-env=user-default"]);
-    match opts.env {
+    let _ = cmd.parse(&["-env=user-default"]);
+    match cmd.env {
         EnvKind::UserDefault => {}
         _ => unreachable!(),
     }
@@ -81,25 +80,25 @@ fn parse_env_type() {
 
 #[test]
 fn parse_env_var() {
-    let mut opts = Options::default();
-    let _ = opts.parse(&["-D:a=b", "-D:c=d"]);
-    let v0 = &opts.env_vars[0];
-    assert_eq!(v0.name, "a");
-    assert_eq!(v0.val, "b");
-    let v1 = &opts.env_vars[1];
-    assert_eq!(v1.name, "c");
-    assert_eq!(v1.val, "d");
+    let mut cmd = Command::default();
+    let _ = cmd.parse(&["-D:a=b", "-D:c=d"]);
+    let v0 = &cmd.env_vars[0];
+    assert_eq!(v0.0, "a");
+    assert_eq!(v0.1, "b");
+    let v1 = &cmd.env_vars[1];
+    assert_eq!(v1.0, "c");
+    assert_eq!(v1.1, "d");
 }
 
 macro_rules! check_file_flags {
     ($init_flush:expr, $init_exclusive:expr, $input:expr, $expected_flush:expr, $expected_exclusive:expr) => {{
-        let mut opts = Options::default();
-        opts.stdout_redirect.default_flags.flush = $init_flush;
-        opts.stdout_redirect.default_flags.exclusive = $init_flush;
-        let _ = opts.parse(&["-ff", $input]);
-        assert_eq!(opts.stdout_redirect.default_flags.flush, $expected_flush);
+        let mut cmd = Command::default();
+        cmd.stdout_redirect.default_flags.flush = $init_flush;
+        cmd.stdout_redirect.default_flags.exclusive = $init_flush;
+        let _ = cmd.parse(&["-ff", $input]);
+        assert_eq!(cmd.stdout_redirect.default_flags.flush, $expected_flush);
         assert_eq!(
-            opts.stdout_redirect.default_flags.exclusive,
+            cmd.stdout_redirect.default_flags.exclusive,
             $expected_exclusive
         );
     }};
@@ -117,9 +116,9 @@ fn parse_file_flags() {
 
 macro_rules! check_mem_value {
     ($input:expr, $expected:expr) => {{
-        let mut opts = Options::default();
-        let _ = opts.parse(&["-ml", $input]);
-        assert_eq!(opts.memory_limit, Some($expected));
+        let mut cmd = Command::default();
+        let _ = cmd.parse(&["-ml", $input]);
+        assert_eq!(cmd.memory_limit, Some($expected));
     }};
 }
 
@@ -184,9 +183,9 @@ fn parse_mem_value_suffix() {
 
 macro_rules! check_time_value {
     ($input:expr, $expected:expr) => {{
-        let mut opts = Options::default();
-        let _ = opts.parse(&["-tl", $input]);
-        assert_eq!(opts.time_limit, Some(fsec2dur($expected)));
+        let mut cmd = Command::default();
+        let _ = cmd.parse(&["-tl", $input]);
+        assert_eq!(cmd.time_limit, Some(fsec2dur($expected)));
     }};
 }
 
@@ -220,7 +219,7 @@ fn parse_time_value_suffix() {
     check_time_value!("1000000fd", 0.000086);
 }
 
-impl ToString for StdioRedirectList {
+impl ToString for RedirectList {
     fn to_string(&self) -> String {
         match self.items.len() {
             0 => format!("*{}:", self.default_flags.to_string()),
@@ -231,16 +230,16 @@ impl ToString for StdioRedirectList {
 
 macro_rules! check_redirect {
     ($default:expr, ($($input:expr),*), $expected:expr) => {{
-        let mut opts = Options::default();
-        let _ = StdinRedirectParser::parse(&mut opts.stdin_redirect, $default);
-        let _ = opts.parse(&[$("-i", $input),*]);
-        assert_eq!(opts.stdin_redirect.to_string(), $expected);
+        let mut cmd = Command::default();
+        let _ = StdinRedirectParser::parse(&mut cmd.stdin_redirect, $default);
+        let _ = cmd.parse(&[$("-i", $input),*]);
+        assert_eq!(cmd.stdin_redirect.to_string(), $expected);
     }};
 
     (($($input:expr),*), $expected:expr) => {{
-        let mut opts = Options::default();
-        let _ = opts.parse(&[$("-i", $input),*]);
-        assert_eq!(opts.stdin_redirect.to_string(), $expected);
+        let mut cmd = Command::default();
+        let _ = cmd.parse(&[$("-i", $input),*]);
+        assert_eq!(cmd.stdin_redirect.to_string(), $expected);
     }};
 }
 

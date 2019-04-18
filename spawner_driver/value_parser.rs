@@ -1,9 +1,9 @@
-use crate::opts::{
-    Options, PipeKind, RedirectFlags, StderrRedirectList, StdinRedirectList, StdioRedirect,
-    StdioRedirectKind, StdioRedirectList, StdoutRedirectList,
+use crate::cmd::{
+    Command, Redirect, RedirectFlags, RedirectKind, RedirectList, StderrRedirectList,
+    StdinRedirectList, StdoutRedirectList,
 };
 
-use spawner::command::{EnvKind, EnvVar};
+use spawner::task::EnvKind;
 
 use spawner_opts::OptionValueParser;
 
@@ -65,7 +65,7 @@ impl OptionValueParser<EnvKind> for DefaultValueParser {
             "user-default" => *env = EnvKind::UserDefault,
             _ => {
                 return Err(format!(
-                    "Unknown envieronment type '{}' expected one of: clear, inherit, user-default",
+                    "Unknown environment type '{}' expected one of: clear, inherit, user-default",
                     v
                 ));
             }
@@ -74,17 +74,14 @@ impl OptionValueParser<EnvKind> for DefaultValueParser {
     }
 }
 
-impl OptionValueParser<Vec<EnvVar>> for DefaultValueParser {
-    fn parse(vars: &mut Vec<EnvVar>, v: &str) -> Result<(), String> {
+impl OptionValueParser<Vec<(String, String)>> for DefaultValueParser {
+    fn parse(vars: &mut Vec<(String, String)>, v: &str) -> Result<(), String> {
         if let Some(pos) = v.find(|x| x == '=') {
-            vars.push(EnvVar {
-                name: v[0..pos].to_string(),
-                val: v[pos + 1..v.len()].to_string(),
-            });
+            vars.push((v[0..pos].to_string(), v[pos + 1..v.len()].to_string()));
             Ok(())
         } else {
             Err(format!(
-                "Invalid envieronment variable '{}'. Expected NAME=VAL",
+                "Invalid environment variable '{}'. Expected NAME=VAL",
                 v
             ))
         }
@@ -132,17 +129,13 @@ impl OptionValueParser<f64> for PercentValueParser {
 
 macro_rules! check_redirect {
     ($redirect:expr, $expected:ident, invalid => ($a:ident, $b:ident)) => {{
-        if let StdioRedirectKind::Pipe(ref kind) = $redirect.kind {
-            match kind {
-                PipeKind::$a(i) | PipeKind::$b(i) => Err(format!(
-                    "Expected '{}' but got '{}' instead",
-                    PipeKind::$expected(*i),
-                    kind
-                )),
-                _ => Ok(()),
-            }
-        } else {
-            Ok(())
+        match $redirect.kind {
+            RedirectKind::$a(i) | RedirectKind::$b(i) => Err(format!(
+                "Expected '{}' but got '{}' instead",
+                RedirectKind::$expected(i),
+                $redirect.kind
+            )),
+            _ => Ok(()),
         }
     }};
 }
@@ -324,49 +317,55 @@ fn parse_redirect_flags(
     Ok(default_flags)
 }
 
-fn parse_pipe_redirect(s: &str, flags: RedirectFlags) -> Result<StdioRedirect, String> {
+fn parse_pipe_redirect(s: &str, flags: RedirectFlags) -> Result<Redirect, String> {
     if let Some(pos) = s.find(|c| c == '.') {
         let (num_str, pipe_kind) = (&s[0..pos], &s[pos + 1..s.len()]);
-        usize::from_str_radix(num_str, 10).ok().map_or(
-            Err(format!("Invalid pipe index '{}'", num_str)),
-            |v| match pipe_kind {
-                "stdin" => Ok(StdioRedirect::pipe(PipeKind::Stdin(v), flags)),
-                "stdout" => Ok(StdioRedirect::pipe(PipeKind::Stdout(v), flags)),
-                "stderr" => Ok(StdioRedirect::pipe(PipeKind::Stderr(v), flags)),
-                _ => Err(format!("Invalid suffix '{}' in '{}'", pipe_kind, s)),
-            },
-        )
-    } else {
-        match s {
-            "std" => Ok(StdioRedirect::pipe(PipeKind::Std, flags)),
-            "null" => Ok(StdioRedirect::pipe(PipeKind::Null, flags)),
-            _ => Err(format!("Invalid pipe redirect '{}'", s)),
+        match usize::from_str_radix(num_str, 10).ok() {
+            Some(v) => Ok(Redirect {
+                kind: match pipe_kind {
+                    "stdin" => RedirectKind::Stdin(v),
+                    "stdout" => RedirectKind::Stdout(v),
+                    "stderr" => RedirectKind::Stderr(v),
+                    _ => return Err(format!("Invalid suffix '{}' in '{}'", pipe_kind, s)),
+                },
+                flags: flags,
+            }),
+            None => Err(format!("Invalid pipe index '{}'", num_str)),
         }
+    } else {
+        Ok(Redirect {
+            kind: match s {
+                "std" => RedirectKind::Std,
+                "null" => RedirectKind::Null,
+                _ => return Err(format!("Invalid pipe redirect '{}'", s)),
+            },
+            flags: flags,
+        })
     }
 }
 
-fn parse_file_redirect(s: &str, flags: RedirectFlags) -> StdioRedirect {
-    StdioRedirect::file(s.to_string(), flags)
+fn parse_file_redirect(s: &str, flags: RedirectFlags) -> Redirect {
+    Redirect {
+        kind: RedirectKind::File(s.to_string()),
+        flags: flags,
+    }
 }
 
-fn parse_pipe_or_file_redirect(s: &str, flags: RedirectFlags) -> StdioRedirect {
+fn parse_pipe_or_file_redirect(s: &str, flags: RedirectFlags) -> Redirect {
     parse_pipe_redirect(s, flags)
         .ok()
         .unwrap_or(parse_file_redirect(s, flags))
 }
 
-fn parse_stdio_redirect(
-    s: &str,
-    list: &mut StdioRedirectList,
-) -> Result<Option<StdioRedirect>, String> {
+fn parse_stdio_redirect(s: &str, list: &mut RedirectList) -> Result<Option<Redirect>, String> {
     let len = s.len();
     if !s.starts_with("*") {
         // file
-        Ok(Some(parse_file_redirect(s, Options::DEFAULT_FILE_FLAGS)))
+        Ok(Some(parse_file_redirect(s, Command::DEFAULT_FILE_FLAGS)))
     } else if s.starts_with("*:") {
         // *: or *:file or *:n.stdio
         if len == 2 {
-            list.default_flags = Options::DEFAULT_FILE_FLAGS;
+            list.default_flags = Command::DEFAULT_FILE_FLAGS;
             Ok(None)
         } else {
             Ok(Some(parse_pipe_or_file_redirect(
@@ -388,7 +387,7 @@ fn parse_stdio_redirect(
         // *n.stdio
         Ok(Some(parse_pipe_redirect(
             &s[1..],
-            Options::DEFAULT_PIPE_FLAGS,
+            Command::DEFAULT_PIPE_FLAGS,
         )?))
     }
 }

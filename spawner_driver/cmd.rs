@@ -5,8 +5,8 @@ use crate::value_parser::{
 
 use spawner_opts::{CmdLineOptions, OptionValueParser};
 
-use spawner::command::{EnvKind, EnvVar};
 use spawner::pipe::ShareMode;
+use spawner::task::EnvKind;
 use spawner::VERSION;
 
 use std::env::{self, VarError};
@@ -21,7 +21,8 @@ pub struct RedirectFlags {
 }
 
 #[derive(Clone, Debug)]
-pub enum PipeKind {
+pub enum RedirectKind {
+    File(String),
     Null,
     Std,
     Stdout(usize),
@@ -30,26 +31,20 @@ pub enum PipeKind {
 }
 
 #[derive(Clone, Debug)]
-pub enum StdioRedirectKind {
-    File(String),
-    Pipe(PipeKind),
-}
-
-#[derive(Clone, Debug)]
-pub struct StdioRedirect {
-    pub kind: StdioRedirectKind,
+pub struct Redirect {
+    pub kind: RedirectKind,
     pub flags: RedirectFlags,
 }
 
 #[derive(Clone, Debug)]
-pub struct StdioRedirectList {
-    pub items: Vec<StdioRedirect>,
+pub struct RedirectList {
+    pub items: Vec<Redirect>,
     pub default_flags: RedirectFlags,
 }
 
-pub type StdinRedirectList = StdioRedirectList;
-pub type StdoutRedirectList = StdioRedirectList;
-pub type StderrRedirectList = StdioRedirectList;
+pub type StdinRedirectList = RedirectList;
+pub type StdoutRedirectList = RedirectList;
+pub type StderrRedirectList = RedirectList;
 
 #[derive(CmdLineOptions, Clone, Debug)]
 #[optcont(
@@ -57,7 +52,7 @@ pub type StderrRedirectList = StdioRedirectList;
     usage = "sp [options] executable [arguments]",
     default_parser = "DefaultValueParser"
 )]
-pub struct Options {
+pub struct Command {
     #[opt(
         name = "-tl",
         desc = "Set the time limit for an executable (user time)",
@@ -189,7 +184,7 @@ pub struct Options {
         desc = "Define an additional environment variable for an executable",
         value_desc = "<var>"
     )]
-    pub env_vars: Vec<EnvVar>,
+    pub env_vars: Vec<(String, String)>,
 
     #[opt(
         names("-i", "--in"),
@@ -243,7 +238,7 @@ pub struct Options {
     pub argv: Vec<String>,
 }
 
-impl Default for Options {
+impl Default for Command {
     fn default() -> Self {
         Self {
             time_limit: None,
@@ -267,9 +262,9 @@ impl Default for Options {
             output_file: None,
             env: EnvKind::Inherit,
             env_vars: Vec::new(),
-            stdin_redirect: StdioRedirectList::default(),
-            stdout_redirect: StdioRedirectList::default(),
-            stderr_redirect: StdioRedirectList::default(),
+            stdin_redirect: RedirectList::default(),
+            stdout_redirect: RedirectList::default(),
+            stderr_redirect: RedirectList::default(),
             separator: None,
             controller: false,
             shared_memory: None,
@@ -295,7 +290,7 @@ macro_rules! parse_env_var {
     };
 }
 
-impl Options {
+impl Command {
     pub const DEFAULT_FILE_FLAGS: RedirectFlags = RedirectFlags {
         flush: false,
         exclusive: false,
@@ -407,39 +402,11 @@ impl Options {
     }
 }
 
-impl StdioRedirect {
-    pub fn pipe(kind: PipeKind, flags: RedirectFlags) -> Self {
-        Self {
-            kind: StdioRedirectKind::Pipe(kind),
-            flags: flags,
-        }
-    }
-
-    pub fn file(path: String, flags: RedirectFlags) -> Self {
-        Self {
-            kind: StdioRedirectKind::File(path),
-            flags: flags,
-        }
-    }
-}
-
-impl Default for StdioRedirectList {
+impl Default for RedirectList {
     fn default() -> Self {
         Self {
             items: Vec::new(),
-            default_flags: Options::DEFAULT_FILE_FLAGS,
-        }
-    }
-}
-
-impl Display for PipeKind {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self {
-            PipeKind::Null => write!(f, "null"),
-            PipeKind::Std => write!(f, "std"),
-            PipeKind::Stdout(i) => write!(f, "{}.stdout", i),
-            PipeKind::Stdin(i) => write!(f, "{}.stdin", i),
-            PipeKind::Stderr(i) => write!(f, "{}.stderr", i),
+            default_flags: Command::DEFAULT_FILE_FLAGS,
         }
     }
 }
@@ -471,16 +438,20 @@ impl Display for RedirectFlags {
     }
 }
 
-impl Display for StdioRedirectKind {
+impl Display for RedirectKind {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            StdioRedirectKind::Pipe(p) => write!(f, "{}", p),
-            StdioRedirectKind::File(filename) => write!(f, "{}", filename),
+            RedirectKind::File(filename) => write!(f, "{}", filename),
+            RedirectKind::Null => write!(f, "null"),
+            RedirectKind::Std => write!(f, "std"),
+            RedirectKind::Stdout(i) => write!(f, "{}.stdout", i),
+            RedirectKind::Stdin(i) => write!(f, "{}.stdin", i),
+            RedirectKind::Stderr(i) => write!(f, "{}.stderr", i),
         }
     }
 }
 
-impl Display for StdioRedirect {
+impl Display for Redirect {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "*{}:{}", self.flags, self.kind)
     }
