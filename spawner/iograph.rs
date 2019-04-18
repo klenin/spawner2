@@ -1,8 +1,9 @@
-use crate::pipe::{self, ReadPipe, WritePipe};
+use crate::pipe::{self, ReadPipe, ShareMode, WritePipe};
 use crate::rwhub::{ReadHub, ReadHubController, WriteHub};
 use crate::Result;
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct IstreamId(usize);
@@ -31,9 +32,22 @@ pub struct IoGraph {
     ostream_edges: Vec<Vec<IstreamId>>,
 }
 
+pub enum IstreamDst {
+    Pipe(WritePipe),
+    File(PathBuf, ShareMode),
+    Ostream(OstreamId),
+}
+
+pub enum OstreamSrc {
+    Pipe(ReadPipe),
+    File(PathBuf, ShareMode),
+    Istream(IstreamId),
+}
+
 pub struct IoBuilder {
     iostreams: IoStreams,
     iograph: IoGraph,
+    output_files: HashMap<PathBuf, OstreamId>,
 }
 
 impl IoGraph {
@@ -43,6 +57,30 @@ impl IoGraph {
 
     pub fn ostream_edges(&self, id: OstreamId) -> &Vec<IstreamId> {
         &self.ostream_edges[id.0]
+    }
+}
+
+impl From<WritePipe> for IstreamDst {
+    fn from(p: WritePipe) -> IstreamDst {
+        IstreamDst::Pipe(p)
+    }
+}
+
+impl From<OstreamId> for IstreamDst {
+    fn from(id: OstreamId) -> IstreamDst {
+        IstreamDst::Ostream(id)
+    }
+}
+
+impl From<ReadPipe> for OstreamSrc {
+    fn from(p: ReadPipe) -> OstreamSrc {
+        OstreamSrc::Pipe(p)
+    }
+}
+
+impl From<IstreamId> for OstreamSrc {
+    fn from(id: IstreamId) -> OstreamSrc {
+        OstreamSrc::Istream(id)
     }
 }
 
@@ -57,6 +95,7 @@ impl IoBuilder {
                 istream_edges: Vec::new(),
                 ostream_edges: Vec::new(),
             },
+            output_files: HashMap::new(),
         }
     }
 
@@ -86,6 +125,29 @@ impl IoBuilder {
         Ok(id)
     }
 
+    pub fn add_istream_dst<D: Into<IstreamDst>>(
+        &mut self,
+        istream: IstreamId,
+        dst: D,
+    ) -> Result<()> {
+        let ostream = match dst.into() {
+            IstreamDst::Pipe(p) => self.add_ostream(Some(p))?,
+            IstreamDst::File(file, mode) => match self.output_files.get(&file).map(|&id| id) {
+                Some(id) => id,
+                None => {
+                    let pipe = WritePipe::open(&file, mode)?;
+                    let id = self.add_ostream(Some(pipe))?;
+                    self.output_files.insert(file, id);
+                    id
+                }
+            },
+            IstreamDst::Ostream(i) => i,
+        };
+
+        self.connect(istream, ostream);
+        Ok(())
+    }
+
     pub fn add_ostream(&mut self, pipe: Option<WritePipe>) -> Result<OstreamId> {
         let id = OstreamId(self.iostreams.ostreams.len());
         self.iostreams.ostreams.insert(
@@ -106,6 +168,22 @@ impl IoBuilder {
         );
         self.iograph.ostream_edges.push(Vec::new());
         Ok(id)
+    }
+
+    pub fn add_ostream_src<S: Into<OstreamSrc>>(
+        &mut self,
+        ostream: OstreamId,
+        src: S,
+    ) -> Result<()> {
+        let istream = match src.into() {
+            OstreamSrc::Pipe(p) => self.add_istream(Some(p), None)?,
+            OstreamSrc::File(file, mode) => {
+                self.add_istream(Some(ReadPipe::open(file, mode)?), None)?
+            }
+            OstreamSrc::Istream(i) => i,
+        };
+        self.connect(istream, ostream);
+        Ok(())
     }
 
     pub fn connect(&mut self, istream_id: IstreamId, ostream_id: OstreamId) {
