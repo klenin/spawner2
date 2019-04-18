@@ -227,6 +227,8 @@ impl RunnerThread {
                     Message::ResetTimers => runner.reset_timers()?,
                 }
             }
+
+            thread::sleep(task.monitor_interval);
         }
     }
 }
