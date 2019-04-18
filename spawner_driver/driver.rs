@@ -1,109 +1,226 @@
-use crate::opts::Options;
-use crate::report::Report;
-use crate::session::SessionBuilderEx;
+use crate::cmd::{Command, RedirectKind, RedirectList};
+use crate::misc::mb2b;
+use crate::protocol::{
+    AgentIdx, AgentStdout, AgentTermination, CommandIdx, Context, ControllerStdin,
+    ControllerStdout, ControllerTermination,
+};
 
-use json::JsonValue;
-
+use spawner::iograph::{IstreamDst, IstreamId, OstreamId, OstreamSrc};
+use spawner::pipe::{self, ReadPipe};
+use spawner::task::{ResourceLimits, Spawner, StdioMapping, Task, Tasks};
 use spawner::{Error, Result};
 
-use spawner_opts::CmdLineOptions;
+pub struct Driver<'a> {
+    tasks: Tasks,
+    ctx: Context,
+    cmds: &'a Vec<Command>,
+    controller_stdin_r: ReadPipe,
+    controller_stdin_w: ControllerStdin,
+}
 
-use std::collections::HashMap;
-use std::fs;
-use std::io::{self, Write};
+enum Role {
+    Default,
+    Agent(AgentIdx),
+    Controller,
+}
 
-pub struct Driver(Vec<Options>);
+impl<'a> Driver<'a> {
+    pub fn from_cmds(cmds: &'a Vec<Command>) -> Result<Self> {
+        let (r, w) = pipe::create()?;
+        let mut driver = Driver {
+            tasks: Tasks::new(),
+            cmds: cmds,
+            ctx: Context::new(),
+            controller_stdin_r: r,
+            controller_stdin_w: ControllerStdin::new(w),
+        };
 
-impl Driver {
-    pub fn from_argv<T, U>(argv: T) -> Result<Self>
-    where
-        T: IntoIterator<Item = U>,
-        U: AsRef<str>,
-    {
-        let argv: Vec<String> = argv.into_iter().map(|x| x.as_ref().to_string()).collect();
-        let mut default_opts = Options::from_env()?;
-        let mut pos = 0;
-        let mut cmds: Vec<Options> = Vec::new();
-        let mut controller_exists = false;
-
-        while pos < argv.len() {
-            let mut opts = default_opts.clone();
-            let num_opts = match opts.parse(&argv[pos..]) {
-                Ok(n) => n,
-                Err(s) => return Err(Error::from(s)),
-            };
-            pos += num_opts;
-
-            let mut sep_pos = argv.len();
-            if let Some(sep) = &opts.separator {
-                let full_sep = format!("--{}", sep);
-                if let Some(i) = argv[pos..].iter().position(|x| x == &full_sep) {
-                    sep_pos = pos + i;
-                }
-            }
-            opts.argv.extend_from_slice(&argv[pos..sep_pos]);
-            pos = sep_pos + 1;
-
-            if opts.argv.is_empty() {
-                if opts.controller {
-                    return Err(Error::from("Controller must have an argv"));
-                }
-                default_opts = opts;
-            } else if opts.controller && controller_exists {
-                return Err(Error::from("There can be at most one controller"));
-            } else {
-                controller_exists = controller_exists || opts.controller;
-                default_opts.separator = opts.separator.clone();
-                cmds.push(opts);
-            }
-        }
-
-        Ok(Driver(cmds))
+        driver.setup_stdio()?;
+        Ok(driver)
     }
 
-    pub fn run(self) -> Result<Vec<Report>> {
-        let runner_reports = SessionBuilderEx::from_cmds(&self.0)?.spawn()?.wait();
-        let reports: Vec<Report> = runner_reports
-            .into_iter()
-            .zip(self.0.iter())
-            .map(|(result, opts)| Report::new(opts, result))
-            .collect();
-
-        if reports.is_empty() {
-            Options::print_help();
-        } else {
-            self.print_reports(&reports)?;
+    pub fn spawn(mut self) -> Result<Spawner> {
+        if let Some(controller_idx) = self.cmds.iter().position(|cmd| cmd.controller) {
+            let stdin = self.tasks.stdio_mapping(controller_idx).stdin;
+            self.tasks
+                .io()
+                .add_ostream_src(stdin, self.controller_stdin_r)?;
         }
-        Ok(reports)
+
+        let stdio_mappings = self.tasks.stdio_mappings().collect();
+        let spawner = Spawner::spawn(self.tasks)?;
+        self.ctx.init(
+            spawner
+                .controllers()
+                .map(|ctl| ctl.runner_controller().clone())
+                .collect(),
+            spawner.io_graph().clone(),
+            stdio_mappings,
+        );
+        Ok(spawner)
     }
 
-    fn print_reports(&self, reports: &Vec<Report>) -> io::Result<()> {
-        let mut output_files: HashMap<&String, Vec<&Report>> = HashMap::new();
-        for (i, cmd) in self.0.iter().enumerate() {
-            if !cmd.hide_report && reports.len() == 1 {
-                println!("{}", reports[i]);
-            }
-            if let Some(filename) = &cmd.output_file {
-                output_files
-                    .entry(filename)
-                    .or_insert(Vec::new())
-                    .push(&reports[i]);
-            }
-        }
+    fn stdio_mapping(&self, i: usize) -> StdioMapping {
+        self.tasks.stdio_mapping(i)
+    }
 
-        for (filename, file_reports) in output_files.into_iter() {
-            let _ = fs::remove_file(filename);
-            let mut file = fs::File::create(filename)?;
+    fn setup_stdio(&mut self) -> Result<()> {
+        let tasks = create_tasks(&self.ctx, &self.cmds, &self.controller_stdin_w);
+        self.tasks.extend(tasks.into_iter())?;
 
-            if file_reports.len() == 1 && !file_reports[0].kind.is_json() {
-                write!(&mut file, "{}", file_reports[0])?;
-            } else if file_reports.iter().all(|r| r.kind.is_json()) {
-                let json_reports =
-                    JsonValue::Array(file_reports.into_iter().map(|r| r.to_json()).collect());
-                json_reports.write_pretty(&mut file, 4)?;
-            }
+        for (idx, cmd) in self.cmds.iter().enumerate() {
+            let mapping = self.stdio_mapping(idx);
+            self.redirect_ostream(mapping.stdin, &cmd.stdin_redirect)?;
+            self.redirect_istream(mapping.stdout, &cmd.stdout_redirect)?;
+            self.redirect_istream(mapping.stderr, &cmd.stderr_redirect)?;
         }
 
         Ok(())
     }
+
+    fn redirect_istream(&mut self, istream: IstreamId, redirect_list: &RedirectList) -> Result<()> {
+        for redirect in redirect_list.items.iter() {
+            let dst = match &redirect.kind {
+                RedirectKind::File(f) => {
+                    Some(IstreamDst::File(f.into(), redirect.flags.share_mode()))
+                }
+                RedirectKind::Stdin(i) => {
+                    self.check_stdio_idx("Stdin", *i)?;
+                    Some(self.stdio_mapping(*i).stdin.into())
+                }
+                RedirectKind::Stderr(i) => {
+                    self.check_stdio_idx("Stderr", *i)?;
+                    Some(self.stdio_mapping(*i).stdin.into())
+                }
+                _ => None,
+            };
+            if let Some(dst) = dst {
+                self.tasks.io().add_istream_dst(istream, dst)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn redirect_ostream(&mut self, ostream: OstreamId, redirect_list: &RedirectList) -> Result<()> {
+        for redirect in redirect_list.items.iter() {
+            let src = match &redirect.kind {
+                RedirectKind::File(f) => {
+                    Some(OstreamSrc::File(f.into(), redirect.flags.share_mode()))
+                }
+                RedirectKind::Stdout(i) => {
+                    self.check_stdio_idx("Stdout", *i)?;
+                    Some(self.stdio_mapping(*i).stdout.into())
+                }
+                _ => None,
+            };
+            if let Some(src) = src {
+                self.tasks.io().add_ostream_src(ostream, src)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn check_stdio_idx(&self, stream: &str, idx: usize) -> Result<()> {
+        if idx >= self.cmds.len() {
+            Err(Error::from(format!(
+                "{} index '{}' is out of range",
+                stream, idx
+            )))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl Role {
+    fn is_agent(&self) -> bool {
+        match self {
+            Role::Agent(_) => true,
+            _ => false,
+        }
+    }
+}
+
+fn create_tasks(
+    ctx: &Context,
+    cmds: &Vec<Command>,
+    controller_stdin: &ControllerStdin,
+) -> Vec<Task> {
+    let roles = create_roles(cmds);
+    let agent_indices = create_agent_indices(&roles);
+
+    cmds.iter()
+        .zip(roles.iter())
+        .enumerate()
+        .map(|(idx, (cmd, role))| Task {
+            app: cmd.argv[0].clone(),
+            args: cmd.argv[1..].iter().cloned().collect(),
+            env_vars: cmd.env_vars.clone(),
+            env_kind: cmd.env,
+            monitor_interval: cmd.monitor_interval,
+            show_window: cmd.show_window,
+            create_suspended: role.is_agent(),
+            limits: ResourceLimits {
+                max_wall_clock_time: cmd.wall_clock_time_limit,
+                max_idle_time: cmd.idle_time_limit,
+                max_user_time: cmd.time_limit,
+                max_memory_usage: cmd.memory_limit.map(|v| mb2b(v)),
+                max_output_size: cmd.write_limit.map(|v| mb2b(v)),
+                max_processes: cmd.process_count,
+            },
+            working_directory: cmd.working_directory.clone(),
+            username: cmd.username.clone(),
+            password: cmd.password.clone(),
+            on_terminate: match role {
+                Role::Default => None,
+                Role::Agent(agent_idx) => {
+                    AgentTermination::new(*agent_idx, controller_stdin.clone()).into()
+                }
+                Role::Controller => {
+                    ControllerTermination::new(ctx.clone(), agent_indices.clone()).into()
+                }
+            },
+            stdout_controller: match role {
+                Role::Default => None,
+                Role::Agent(agent_idx) => {
+                    AgentStdout::new(ctx.clone(), *agent_idx, CommandIdx(idx)).into()
+                }
+                Role::Controller => {
+                    ControllerStdout::new(ctx.clone(), CommandIdx(idx), agent_indices.clone())
+                        .into()
+                }
+            },
+        })
+        .collect()
+}
+
+fn create_roles(cmds: &Vec<Command>) -> Vec<Role> {
+    if let Some(ctl_pos) = cmds.iter().position(|cmd| cmd.controller) {
+        let mut agent_idx = 0;
+        cmds.iter()
+            .enumerate()
+            .map(|(idx, _)| {
+                if idx == ctl_pos {
+                    Role::Controller
+                } else {
+                    let agent = Role::Agent(AgentIdx(agent_idx));
+                    agent_idx += 1;
+                    agent
+                }
+            })
+            .collect()
+    } else {
+        cmds.iter().map(|_| Role::Default).collect()
+    }
+}
+
+fn create_agent_indices(roles: &Vec<Role>) -> Vec<CommandIdx> {
+    roles
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, role)| match role {
+            Role::Agent(_) => Some(CommandIdx(idx)),
+            _ => None,
+        })
+        .collect()
 }

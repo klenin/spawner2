@@ -1,10 +1,9 @@
-use spawner::command::OnTerminate;
 use spawner::iograph::IoGraph;
 use spawner::iograph::OstreamId;
 use spawner::pipe::WritePipe;
 use spawner::runner::RunnerController;
 use spawner::rwhub::{ReadHubController, WriteHub};
-use spawner::session::StdioMapping;
+use spawner::task::{OnTerminate, StdioMapping};
 use spawner::{Error, Result};
 
 use std::char;
@@ -214,6 +213,12 @@ impl ReadHubController for ControllerStdout {
     }
 }
 
+impl Into<Option<Box<ReadHubController>>> for ControllerStdout {
+    fn into(self) -> Option<Box<ReadHubController>> {
+        Some(Box::new(self))
+    }
+}
+
 impl AgentStdout {
     pub fn new(ctx: Context, agent_idx: AgentIdx, cmd_idx: CommandIdx) -> Self {
         let mut buf = MessageBuf::new();
@@ -254,6 +259,12 @@ impl ReadHubController for AgentStdout {
     }
 }
 
+impl Into<Option<Box<ReadHubController>>> for AgentStdout {
+    fn into(self) -> Option<Box<ReadHubController>> {
+        Some(Box::new(self))
+    }
+}
+
 impl AgentTermination {
     pub fn new(agent_idx: AgentIdx, stdin: ControllerStdin) -> Self {
         Self {
@@ -268,6 +279,12 @@ impl OnTerminate for AgentTermination {
         let _ = self
             .stdin
             .write_all(format!("{}T#\n", self.idx.0 + 1).as_bytes());
+    }
+}
+
+impl Into<Option<Box<OnTerminate>>> for AgentTermination {
+    fn into(self) -> Option<Box<OnTerminate>> {
+        Some(Box::new(self))
     }
 }
 
@@ -287,6 +304,12 @@ impl OnTerminate for ControllerTermination {
                 self.ctx.runner_controller(*i).resume();
             }
         }
+    }
+}
+
+impl Into<Option<Box<OnTerminate>>> for ControllerTermination {
+    fn into(self) -> Option<Box<OnTerminate>> {
+        Some(Box::new(self))
     }
 }
 
