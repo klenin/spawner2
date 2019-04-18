@@ -13,7 +13,6 @@ use winapi::shared::minwindef::{DWORD, FALSE};
 use winapi::um::jobapi2::{
     AssignProcessToJobObject, CreateJobObjectW, QueryInformationJobObject, TerminateJobObject,
 };
-use winapi::um::minwinbase::STILL_ACTIVE;
 use winapi::um::processthreadsapi::{
     GetExitCodeProcess, OpenThread, ResumeThread, SuspendThread, TerminateProcess,
 };
@@ -138,18 +137,20 @@ impl<'a> Runner<'a> {
     }
 
     pub fn exit_status(&self) -> Result<Option<ExitStatus>> {
-        let mut exit_code: DWORD = 0;
-        unsafe {
-            cvt(GetExitCodeProcess(self.ps.handle.0, &mut exit_code))?;
-        }
-        Ok(match exit_code {
-            STILL_ACTIVE => None,
-            _ => Some(if let Some(cause) = crash_cause(exit_code) {
-                ExitStatus::Crashed(cause.to_string())
+        let basic_and_io_info = self.ps.basic_and_io_info()?;
+        if basic_and_io_info.BasicInfo.ActiveProcesses == 0 {
+            let mut exit_code: DWORD = 0;
+            unsafe {
+                cvt(GetExitCodeProcess(self.ps.handle.0, &mut exit_code))?;
+            }
+            if let Some(cause) = crash_cause(exit_code) {
+                Ok(Some(ExitStatus::Crashed(cause.to_string())))
             } else {
-                ExitStatus::Finished(exit_code)
-            }),
-        })
+                Ok(Some(ExitStatus::Finished(exit_code)))
+            }
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn suspend_process(&self) -> Result<()> {
