@@ -494,7 +494,7 @@ impl AttList {
             let ptr: *mut PROC_THREAD_ATTRIBUTE_LIST =
                 mem::transmute(alloc_zeroed(Layout::from_size_align_unchecked(len, 4)));
 
-            if ptr == ptr::null_mut() {
+            if ptr.is_null() {
                 return Err(Error::from(
                     "Cannot allocate memory for PROC_THREAD_ATTRIBUTE_LIST",
                 ));
