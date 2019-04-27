@@ -1,12 +1,17 @@
-use crate::runner::{Statistics, TerminationReason};
-use crate::task::ResourceLimits;
+use crate::process::{LimitViolation, ResourceLimits, ResourceUsage};
 
 use std::time::{Duration, Instant};
 
+struct PrevCheck {
+    time: Instant,
+    total_user_time: Duration,
+}
+
 pub struct LimitChecker {
     limits: ResourceLimits,
-    stats: Statistics,
-    last_check_time: Option<Instant>,
+    prev_check: Option<PrevCheck>,
+    wall_clock_time_zero: Duration,
+    user_time_zero: Duration,
     total_idle_time: Duration,
 }
 
@@ -14,22 +19,27 @@ impl LimitChecker {
     pub fn new(limits: ResourceLimits) -> Self {
         Self {
             limits: limits,
-            stats: Statistics::zeroed(),
-            last_check_time: None,
+            prev_check: None,
+            wall_clock_time_zero: Duration::from_millis(0),
+            user_time_zero: Duration::from_millis(0),
             total_idle_time: Duration::from_millis(0),
         }
     }
 
-    pub fn reset_timers(&mut self) {
-        self.stats.wall_clock_time = Duration::from_millis(0);
-        self.stats.total_user_time = Duration::from_millis(0);
+    pub fn reset_timers(&mut self, wall_clock_time_zero: Duration, user_time_zero: Duration) {
+        self.wall_clock_time_zero = wall_clock_time_zero;
+        self.user_time_zero = user_time_zero;
         self.total_idle_time = Duration::from_millis(0);
+        self.prev_check = None;
     }
 
-    pub fn check(&mut self, new_stats: Statistics) -> Option<TerminationReason> {
-        if let Some(last_check_time) = self.last_check_time {
-            let dt = last_check_time.elapsed();
-            let mut d_user = new_stats.total_user_time - self.stats.total_user_time;
+    pub fn check(&mut self, mut usage: ResourceUsage) -> Option<LimitViolation> {
+        usage.wall_clock_time -= self.wall_clock_time_zero;
+        usage.total_user_time -= self.user_time_zero;
+
+        if let Some(ref prev_check) = self.prev_check {
+            let dt = prev_check.time.elapsed();
+            let mut d_user = usage.total_user_time - prev_check.total_user_time;
             // FIXME: total_user_time contains user times of all processes created, therefore
             // it can be greater than the wall-clock time. Currently it is possible for 2 processes
             // to avoid idle time limit. Consider:
@@ -46,26 +56,29 @@ impl LimitChecker {
             }
             self.total_idle_time += dt - d_user;
         }
-        self.last_check_time = Some(Instant::now());
-        self.stats = new_stats;
+
+        self.prev_check = Some(PrevCheck {
+            time: Instant::now(),
+            total_user_time: usage.total_user_time,
+        });
 
         fn gr<T: PartialOrd>(stat: T, limit: Option<T>) -> bool {
             limit.is_some() && stat > limit.unwrap()
         }
 
         let limits = &self.limits;
-        if gr(self.stats.wall_clock_time, limits.max_wall_clock_time) {
-            Some(TerminationReason::WallClockTimeLimitExceeded)
+        if gr(usage.wall_clock_time, limits.max_wall_clock_time) {
+            Some(LimitViolation::WallClockTimeLimitExceeded)
         } else if gr(self.total_idle_time, limits.max_idle_time) {
-            Some(TerminationReason::IdleTimeLimitExceeded)
-        } else if gr(self.stats.total_user_time, limits.max_user_time) {
-            Some(TerminationReason::UserTimeLimitExceeded)
-        } else if gr(self.stats.total_bytes_written, limits.max_output_size) {
-            Some(TerminationReason::WriteLimitExceeded)
-        } else if gr(self.stats.peak_memory_used, limits.max_memory_usage) {
-            Some(TerminationReason::MemoryLimitExceeded)
-        } else if gr(self.stats.total_processes_created, limits.max_processes) {
-            Some(TerminationReason::ProcessLimitExceeded)
+            Some(LimitViolation::IdleTimeLimitExceeded)
+        } else if gr(usage.total_user_time, limits.max_user_time) {
+            Some(LimitViolation::UserTimeLimitExceeded)
+        } else if gr(usage.total_bytes_written, limits.max_output_size) {
+            Some(LimitViolation::WriteLimitExceeded)
+        } else if gr(usage.peak_memory_used, limits.max_memory_usage) {
+            Some(LimitViolation::MemoryLimitExceeded)
+        } else if gr(usage.total_processes_created, limits.max_processes) {
+            Some(LimitViolation::ProcessLimitExceeded)
         } else {
             None
         }

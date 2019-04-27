@@ -3,7 +3,7 @@ use crate::cmd::{
     StdinRedirectList, StdoutRedirectList,
 };
 
-use spawner::task::EnvKind;
+use spawner::process::Environment;
 
 use spawner_opts::OptionValueParser;
 
@@ -57,12 +57,12 @@ impl OptionValueParser<Option<String>> for DefaultValueParser {
     }
 }
 
-impl OptionValueParser<EnvKind> for DefaultValueParser {
-    fn parse(env: &mut EnvKind, v: &str) -> Result<(), String> {
+impl OptionValueParser<Environment> for DefaultValueParser {
+    fn parse(env: &mut Environment, v: &str) -> Result<(), String> {
         match v {
-            "clear" => *env = EnvKind::Clear,
-            "inherit" => *env = EnvKind::Inherit,
-            "user-default" => *env = EnvKind::UserDefault,
+            "clear" => *env = Environment::Clear,
+            "inherit" => *env = Environment::Inherit,
+            "user-default" => *env = Environment::UserDefault,
             _ => {
                 return Err(format!(
                     "Unknown environment type '{}' expected one of: clear, inherit, user-default",

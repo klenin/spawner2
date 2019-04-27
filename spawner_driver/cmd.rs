@@ -6,6 +6,7 @@ use crate::value_parser::{
 use spawner_opts::{CmdLineOptions, OptionValueParser};
 
 use spawner::pipe::FileLock;
+use spawner::process::Environment;
 use spawner::VERSION;
 
 use std::env::{self, VarError};
@@ -176,7 +177,7 @@ pub struct Command {
         desc = "Set environment variables for an executable (default: inherit)",
         value_desc = "{inherit|user-default|clear}"
     )]
-    pub env: EnvKind,
+    pub env: Environment,
 
     #[opt(
         name = "-D",
@@ -259,7 +260,7 @@ impl Default for Command {
             password: None,
             use_syspath: false,
             output_file: None,
-            env: EnvKind::Inherit,
+            env: Environment::Inherit,
             env_vars: Vec::new(),
             stdin_redirect: RedirectList::default(),
             stdout_redirect: RedirectList::default(),

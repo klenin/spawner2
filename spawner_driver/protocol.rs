@@ -1,7 +1,7 @@
 use spawner::iograph::IoGraph;
 use spawner::iograph::OstreamId;
 use spawner::pipe::WritePipe;
-use spawner::runner::RunnerController;
+use spawner::runner::Runner;
 use spawner::rwhub::{ReadHubController, WriteHub};
 use spawner::task::{OnTerminate, StdioMapping};
 use spawner::{Error, Result};
@@ -21,7 +21,7 @@ pub struct CommandIdx(pub usize);
 pub struct AgentIdx(pub usize);
 
 struct ContextInner {
-    ctls: Vec<RunnerController>,
+    runners: Vec<Runner>,
     mappings: Vec<StdioMapping>,
     iograph: IoGraph,
 }
@@ -84,14 +84,9 @@ impl Context {
         }
     }
 
-    pub fn init(
-        &mut self,
-        ctls: Vec<RunnerController>,
-        iograph: IoGraph,
-        mappings: Vec<StdioMapping>,
-    ) {
+    pub fn init(&mut self, runners: Vec<Runner>, iograph: IoGraph, mappings: Vec<StdioMapping>) {
         *self.inner.lock().unwrap() = Some(ContextInner {
-            ctls: ctls,
+            runners: runners,
             mappings: mappings,
             iograph: iograph,
         });
@@ -107,8 +102,8 @@ impl Context {
         Err(Error::from("Context hasn't been initialized for too long"))
     }
 
-    fn runner_controller(&self, idx: CommandIdx) -> RunnerController {
-        self.inner.lock().unwrap().as_ref().unwrap().ctls[idx.0].clone()
+    fn runner(&self, idx: CommandIdx) -> Runner {
+        self.inner.lock().unwrap().as_ref().unwrap().runners[idx.0].clone()
     }
 }
 
@@ -166,9 +161,7 @@ impl ControllerStdout {
 
     fn handle_msg(&mut self, write_hubs: &mut [WriteHub]) -> Result<()> {
         self.init()?;
-        self.ctx
-            .runner_controller(self.controller_idx)
-            .reset_timers();
+        self.ctx.runner(self.controller_idx).reset_time_usage();
 
         let msg = self.buf.as_msg()?;
         if let Some(agent_idx) = msg.agent_idx {
@@ -179,7 +172,7 @@ impl ControllerStdout {
                 )));
             }
 
-            let agent = self.ctx.runner_controller(self.agent_indices[agent_idx.0]);
+            let agent = self.ctx.runner(self.agent_indices[agent_idx.0]);
             match msg.kind {
                 MessageKind::Terminate => agent.terminate(),
                 MessageKind::Resume => agent.resume(),
@@ -232,10 +225,10 @@ impl AgentStdout {
         }
     }
 
-    fn agent(&mut self) -> Result<RunnerController> {
+    fn agent(&mut self) -> Result<Runner> {
         self.ctx
             .wait_for_init()
-            .map(|_| self.ctx.runner_controller(self.cmd_idx))
+            .map(|_| self.ctx.runner(self.cmd_idx))
     }
 }
 
@@ -245,7 +238,7 @@ impl ReadHubController for AgentStdout {
         while self.buf.is_msg_ready() {
             let agent = self.agent()?;
             agent.suspend();
-            agent.reset_timers();
+            agent.reset_time_usage();
 
             for mut wh in write_hubs.iter_mut() {
                 wh.write_all(self.buf.as_slice());
@@ -301,7 +294,7 @@ impl OnTerminate for ControllerTermination {
     fn on_terminate(&mut self) {
         if self.ctx.wait_for_init().is_ok() {
             for i in self.agent_indices.iter() {
-                self.ctx.runner_controller(*i).resume();
+                self.ctx.runner(*i).resume();
             }
         }
     }

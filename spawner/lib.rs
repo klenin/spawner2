@@ -6,6 +6,7 @@ extern crate winapi;
 
 pub mod iograph;
 pub mod pipe;
+pub mod process;
 pub mod runner;
 pub mod rwhub;
 pub mod task;

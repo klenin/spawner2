@@ -11,9 +11,6 @@ use winapi::um::processthreadsapi::{
     InitializeProcThreadAttributeList, UpdateProcThreadAttribute, PROCESS_INFORMATION,
     PROC_THREAD_ATTRIBUTE_LIST,
 };
-use winapi::um::tlhelp32::{
-    CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
-};
 use winapi::um::userenv::{CreateEnvironmentBlock, DestroyEnvironmentBlock};
 use winapi::um::winbase::{
     LogonUserW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT,
@@ -67,17 +64,6 @@ pub struct ProcessInformation {
 pub struct EnvBlock {
     block: *mut u16,
     len: usize,
-}
-
-pub struct ThreadIterator {
-    process_id: DWORD,
-    end_reached: bool,
-    snapshot: Option<ThreadSnapshot>,
-}
-
-struct ThreadSnapshot {
-    handle: Handle,
-    entry: THREADENTRY32,
 }
 
 struct StartupInfo {
@@ -387,63 +373,6 @@ impl Drop for EnvBlock {
     fn drop(&mut self) {
         unsafe {
             DestroyEnvironmentBlock(mem::transmute(self.block));
-        }
-    }
-}
-
-impl ThreadIterator {
-    pub fn new(process_id: DWORD) -> Self {
-        Self {
-            process_id: process_id,
-            end_reached: false,
-            snapshot: None,
-        }
-    }
-}
-
-impl Iterator for ThreadIterator {
-    type Item = DWORD;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.snapshot.is_none() {
-            self.snapshot = ThreadSnapshot::create();
-        }
-
-        if self.snapshot.is_none() || self.end_reached {
-            return None;
-        }
-
-        let snapshot = self.snapshot.as_mut().unwrap();
-        let mut result: Option<Self::Item> = None;
-        while result.is_none() {
-            if snapshot.entry.th32OwnerProcessID == self.process_id {
-                result = Some(snapshot.entry.th32ThreadID);
-            }
-            if unsafe { Thread32Next(snapshot.handle.0, &mut snapshot.entry) } == FALSE {
-                self.end_reached = true;
-                break;
-            }
-        }
-        result
-    }
-}
-
-impl ThreadSnapshot {
-    fn create() -> Option<Self> {
-        unsafe {
-            let mut entry: THREADENTRY32 = mem::zeroed();
-            entry.dwSize = mem::size_of_val(&entry) as DWORD;
-            let handle = match CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) {
-                INVALID_HANDLE_VALUE => return None,
-                x => Handle(x),
-            };
-            if Thread32First(handle.0, &mut entry) == FALSE {
-                return None;
-            }
-            Some(ThreadSnapshot {
-                entry: entry,
-                handle: handle,
-            })
         }
     }
 }

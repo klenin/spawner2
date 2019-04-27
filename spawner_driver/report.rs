@@ -1,7 +1,8 @@
 use crate::cmd::{Command, RedirectList};
 use crate::misc::{b2mb, dur2sec, mb2b};
 
-use spawner::runner::{ExitStatus, RunnerReport, TerminationReason};
+use spawner::process::{ExitStatus, LimitViolation};
+use spawner::runner::{RunnerReport, TerminationReason};
 use spawner::task::TaskResult;
 use spawner::Error;
 
@@ -48,6 +49,7 @@ pub struct ReportResult {
     pub bytes_written: u64,
     pub kernel_time: f64,
     pub processor_load: f64,
+    pub processes_created: u64,
 }
 
 #[derive(Debug)]
@@ -114,13 +116,13 @@ impl Report {
                         report.exit_code = code;
                         report.exit_status = code.to_string();
                     }
-                    ExitStatus::Terminated(term_reason) => {
-                        report.terminate_reason = TerminateReason::from(term_reason);
-                    }
                     ExitStatus::Crashed(cause) => {
                         report.terminate_reason = TerminateReason::AbnormalExitProcess;
                         report.exit_status = cause.to_string();
                     }
+                }
+                if let Some(tr) = runner_report.termination_reason {
+                    report.terminate_reason = TerminateReason::from(tr);
                 }
             }
             Err(e) => report.spawner_error = e.errors,
@@ -162,6 +164,9 @@ impl Report {
             "SpawnerError" => if self.spawner_error.is_empty() {
                 array!["<none>"]
             } else {
+                for e in self.spawner_error.iter() {
+                    println!("{}", e.call_stack());
+                }
                 self.spawner_error
                     .iter()
                     .map(|e| e.to_string().into())
@@ -246,15 +251,16 @@ impl ReportKind {
 
 impl From<&RunnerReport> for ReportResult {
     fn from(report: &RunnerReport) -> Self {
-        let time = dur2sec(&report.statistics.total_user_time);
-        let wc_time = dur2sec(&report.statistics.wall_clock_time);
+        let time = dur2sec(&report.resource_usage.total_user_time);
+        let wc_time = dur2sec(&report.resource_usage.wall_clock_time);
         Self {
             time: time,
             wall_clock_time: wc_time,
-            memory: report.statistics.peak_memory_used,
-            bytes_written: report.statistics.total_bytes_written,
-            kernel_time: dur2sec(&report.statistics.total_kernel_time),
+            memory: report.resource_usage.peak_memory_used,
+            bytes_written: report.resource_usage.total_bytes_written,
+            kernel_time: dur2sec(&report.resource_usage.total_kernel_time),
             processor_load: if wc_time <= 1e-8 { 0.0 } else { time / wc_time },
+            processes_created: report.resource_usage.total_processes_created as u64,
         }
     }
 }
@@ -322,12 +328,16 @@ impl Display for TerminateReason {
 impl From<TerminationReason> for TerminateReason {
     fn from(reason: TerminationReason) -> Self {
         match reason {
-            TerminationReason::WallClockTimeLimitExceeded => TerminateReason::TimeLimitExceeded,
-            TerminationReason::IdleTimeLimitExceeded => TerminateReason::IdleTimeLimitExceeded,
-            TerminationReason::UserTimeLimitExceeded => TerminateReason::TimeLimitExceeded,
-            TerminationReason::WriteLimitExceeded => TerminateReason::WriteLimitExceeded,
-            TerminationReason::MemoryLimitExceeded => TerminateReason::MemoryLimitExceeded,
-            TerminationReason::ProcessLimitExceeded => TerminateReason::ProcessesCountLimitExceeded,
+            TerminationReason::LimitViolation(lv) => match lv {
+                LimitViolation::WallClockTimeLimitExceeded => TerminateReason::TimeLimitExceeded,
+                LimitViolation::IdleTimeLimitExceeded => TerminateReason::IdleTimeLimitExceeded,
+                LimitViolation::UserTimeLimitExceeded => TerminateReason::TimeLimitExceeded,
+                LimitViolation::WriteLimitExceeded => TerminateReason::WriteLimitExceeded,
+                LimitViolation::MemoryLimitExceeded => TerminateReason::MemoryLimitExceeded,
+                LimitViolation::ProcessLimitExceeded => {
+                    TerminateReason::ProcessesCountLimitExceeded
+                }
+            },
             TerminationReason::ManuallyTerminated => TerminateReason::TerminatedByController,
         }
     }

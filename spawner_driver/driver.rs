@@ -7,7 +7,8 @@ use crate::protocol::{
 
 use spawner::iograph::{IstreamDst, IstreamId, OstreamId, OstreamSrc};
 use spawner::pipe::{self, ReadPipe};
-use spawner::task::{ResourceLimits, Spawner, StdioMapping, Task, Tasks};
+use spawner::process::{ProcessInfo, ResourceLimits};
+use spawner::task::{Spawner, StdioMapping, Task, Tasks};
 use spawner::{Error, Result};
 
 pub struct Driver<'a> {
@@ -52,7 +53,7 @@ impl<'a> Driver<'a> {
         self.ctx.init(
             spawner
                 .controllers()
-                .map(|ctl| ctl.runner_controller().clone())
+                .map(|ctl| ctl.runner().clone())
                 .collect(),
             spawner.io_graph().clone(),
             stdio_mappings,
@@ -153,24 +154,27 @@ fn create_tasks(
         .zip(roles.iter())
         .enumerate()
         .map(|(idx, (cmd, role))| Task {
-            app: cmd.argv[0].clone(),
-            args: cmd.argv[1..].iter().cloned().collect(),
-            env_vars: cmd.env_vars.clone(),
-            env_kind: cmd.env,
-            monitor_interval: cmd.monitor_interval,
-            show_window: cmd.show_window,
-            create_suspended: role.is_agent(),
-            limits: ResourceLimits {
-                max_wall_clock_time: cmd.wall_clock_time_limit,
-                max_idle_time: cmd.idle_time_limit,
-                max_user_time: cmd.time_limit,
-                max_memory_usage: cmd.memory_limit.map(|v| mb2b(v)),
-                max_output_size: cmd.write_limit.map(|v| mb2b(v)),
-                max_processes: cmd.process_count,
+            process_info: ProcessInfo {
+                app: cmd.argv[0].clone(),
+                args: cmd.argv[1..].iter().cloned().collect(),
+                env_vars: cmd.env_vars.clone(),
+                env: cmd.env,
+                show_window: cmd.show_window,
+                working_directory: cmd.working_directory.clone(),
+                username: cmd.username.clone(),
+                password: cmd.password.clone(),
+                resource_limits: ResourceLimits {
+                    max_wall_clock_time: cmd.wall_clock_time_limit,
+                    max_idle_time: cmd.idle_time_limit,
+                    max_user_time: cmd.time_limit,
+                    max_memory_usage: cmd.memory_limit.map(|v| mb2b(v)),
+                    max_output_size: cmd.write_limit.map(|v| mb2b(v)),
+                    max_processes: cmd.process_count,
+                },
             },
-            working_directory: cmd.working_directory.clone(),
-            username: cmd.username.clone(),
-            password: cmd.password.clone(),
+
+            monitor_interval: cmd.monitor_interval,
+            resume_process: !role.is_agent(),
             on_terminate: match role {
                 Role::Default => None,
                 Role::Agent(agent_idx) => {

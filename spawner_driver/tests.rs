@@ -1,7 +1,7 @@
 use crate::cmd::*;
 use crate::value_parser::StdinRedirectParser;
 
-use spawner::task::EnvKind;
+use spawner::process::Environment;
 
 use spawner_opts::{CmdLineOptions, OptionValueParser};
 
@@ -61,19 +61,19 @@ fn parse_env_type() {
     let mut cmd = Command::default();
     let _ = cmd.parse(&["-env=clear"]);
     match cmd.env {
-        EnvKind::Clear => {}
+        Environment::Clear => {}
         _ => unreachable!(),
     }
 
     let _ = cmd.parse(&["-env=inherit"]);
     match cmd.env {
-        EnvKind::Inherit => {}
+        Environment::Inherit => {}
         _ => unreachable!(),
     }
 
     let _ = cmd.parse(&["-env=user-default"]);
     match cmd.env {
-        EnvKind::UserDefault => {}
+        Environment::UserDefault => {}
         _ => unreachable!(),
     }
 }
