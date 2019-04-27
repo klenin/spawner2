@@ -44,6 +44,7 @@ impl ReadPipe {
         )?))
     }
 
+    /// Opens a file that returns `EOF` when read.
     pub fn null() -> Result<Self> {
         Ok(Self(pipe_impl::ReadPipe::null()?))
     }
@@ -70,10 +71,12 @@ impl WritePipe {
         )?))
     }
 
+    /// Opens a file that discards all data written to it.
     pub fn null() -> Result<Self> {
         Ok(Self(pipe_impl::WritePipe::null()?))
     }
 
+    /// Returns `true` if this pipe is a regular file.
     pub fn is_file(&self) -> bool {
         self.0.is_file()
     }
