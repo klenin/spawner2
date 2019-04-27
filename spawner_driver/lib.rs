@@ -38,7 +38,7 @@ where
 }
 
 impl Commands {
-    pub fn from_argv<T, U>(argv: T) -> Result<Self>
+    fn from_argv<T, U>(argv: T) -> Result<Self>
     where
         T: IntoIterator<Item = U>,
         U: AsRef<str>,
@@ -80,7 +80,7 @@ impl Commands {
         Ok(Commands(cmds))
     }
 
-    pub fn run(self) -> Result<Vec<Report>> {
+    fn run(self) -> Result<Vec<Report>> {
         let runner_reports = Driver::from_cmds(&self.0)?.spawn()?.wait();
         let reports: Vec<Report> = runner_reports
             .into_iter()
@@ -118,7 +118,7 @@ impl Commands {
                 write!(&mut file, "{}", file_reports[0])?;
             } else if file_reports.iter().all(|r| r.kind.is_json()) {
                 let json_reports =
-                    JsonValue::Array(file_reports.into_iter().map(|r| r.to_json()).collect());
+                    JsonValue::Array(file_reports.into_iter().map(Report::to_json).collect());
                 json_reports.write_pretty(&mut file, 4)?;
             }
         }
