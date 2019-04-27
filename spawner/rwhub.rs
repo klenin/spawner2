@@ -54,7 +54,7 @@ impl ReadHubThread {
     pub fn spawn(rh: ReadHub) -> Result<Self> {
         thread::Builder::new()
             .spawn(move || ReadHubThread::entry(rh))
-            .map_err(Error::from)
+            .map_err(|_| Error::from("Cannot spawn ReadHubThread"))
             .map(Self)
     }
 
