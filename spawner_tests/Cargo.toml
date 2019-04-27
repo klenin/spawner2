@@ -4,63 +4,18 @@ version = "0.0.0"
 authors = ["ptslog <hsfk@yandex.ru>"]
 publish = false
 
+[dependencies]
+cfg-if = "0.1.6"
+
+[dev-dependencies]
+rand = "0.6.5"
+spawner = { path = "../spawner" }
+spawner_driver = { path = "../spawner_driver" }
+
 [lib]
 path = "lib.rs"
 crate-type = ["lib"]
 
 [[bin]]
-name = "alloc"
-path = "bin/alloc.rs"
-
-[[bin]]
-name = "loop"
-path = "bin/loop.rs"
-
-[[bin]]
-name = "file_writer"
-path = "bin/file_writer.rs"
-
-[[bin]]
-name = "stdout_writer"
-path = "bin/stdout_writer.rs"
-
-[[bin]]
-name = "in2out"
-path = "bin/in2out.rs"
-
-[[bin]]
-name = "two_proc"
-path = "bin/two_proc.rs"
-
-[[bin]]
-name = "sleep"
-path = "bin/sleep.rs"
-
-[[bin]]
-name = "env_printer"
-path = "bin/env_printer.rs"
-
-[[bin]]
-name = "abnormal_exit"
-path = "bin/abnormal_exit.rs"
-
-[[bin]]
-name = "empty"
-path = "bin/empty.rs"
-
-[[bin]]
-name = "arg_printer"
-path = "bin/arg_printer.rs"
-
-[[bin]]
-name = "open_file"
-path = "bin/open_file.rs"
-
-[[bin]]
-name = "proc_spawner"
-path = "bin/proc_spawner.rs"
-
-[dependencies]
-rand = "0.6.5"
-spawner = { path = "../spawner" }
-spawner_driver = { path = "../spawner_driver" }
+name = "app"
+path = "app.rs"

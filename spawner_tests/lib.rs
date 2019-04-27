@@ -1,25 +1,22 @@
-#![allow(dead_code)]
+extern crate cfg_if;
 
-extern crate rand;
-extern crate spawner;
-extern crate spawner_driver;
+use cfg_if::cfg_if;
 
+#[cfg(test)]
 mod common;
 
-#[cfg(test)]
-mod term_reason;
+cfg_if! {
+    if #[cfg(test)] {
+        extern crate rand;
+        extern crate spawner;
+        extern crate spawner_driver;
 
-#[cfg(test)]
-mod redirect;
-
-#[cfg(test)]
-mod env;
-
-#[cfg(test)]
-mod protocol;
-
-#[cfg(test)]
-mod other;
-
-#[cfg(test)]
-mod error;
+        mod term_reason;
+        mod redirect;
+        mod env;
+        mod protocol;
+        mod other;
+        mod error;
+        mod resource_usage;
+    }
+}

@@ -1,5 +1,4 @@
-use crate::common::{read_all, write_all, TmpDir};
-use crate::exe;
+use crate::common::{read_all, write_all, TmpDir, APP};
 
 use spawner_driver::run;
 
@@ -14,7 +13,8 @@ fn stdin_from_file() {
     run(&[
         format!("--in={}", input).as_str(),
         format!("--out={}", output).as_str(),
-        exe!("in2out"),
+        APP,
+        "pipe_loop",
     ])
     .unwrap();
     let output_data = read_all(output);
@@ -35,7 +35,8 @@ fn stdin_from_2_files() {
         format!("--in={}", input_1).as_str(),
         format!("--in={}", input_2).as_str(),
         format!("--out={}", output).as_str(),
-        exe!("in2out"),
+        APP,
+        "pipe_loop",
     ])
     .unwrap();
     assert_eq!(input_data, read_all(output));
@@ -49,10 +50,12 @@ fn stdin_from_stdout() {
         "--separator=@",
         "--in=*1.stdout",
         format!("--out={}", output).as_str(),
-        exe!("in2out"),
+        APP,
+        "pipe_loop",
         "--@",
         "--out=*0.stdin",
-        exe!("stdout_writer"),
+        APP,
+        "print_n",
         "AAA",
         "20",
     ])
@@ -69,15 +72,18 @@ fn stdin_from_2_stdouts() {
         "--separator=@",
         "--in=*1.stdout",
         format!("--out={}", output).as_str(),
-        exe!("in2out"),
+        APP,
+        "pipe_loop",
         "--@",
         "--out=*0.stdin",
-        exe!("stdout_writer"),
+        APP,
+        "print_n",
         "AAA",
         "10",
         "--@",
         "--out=*0.stdin",
-        exe!("stdout_writer"),
+        APP,
+        "print_n",
         "AAA",
         "10",
     ])
@@ -92,7 +98,8 @@ fn stdout_to_file() {
     let output = tmp.file("out.txt");
     run(&[
         format!("--out={}", output).as_str(),
-        exe!("stdout_writer"),
+        APP,
+        "print_n",
         "AAA",
         "20",
     ])
@@ -108,7 +115,8 @@ fn stdout_to_2_files() {
     run(&[
         format!("--out={}", output_1).as_str(),
         format!("--out={}", output_2).as_str(),
-        exe!("stdout_writer"),
+        APP,
+        "print_n",
         "AAA",
         "20",
     ])
@@ -124,23 +132,27 @@ fn multiple_stdouts_to_multiple_stdins() {
     let output_2 = tmp.file("out2.txt");
     run(&[
         "--separator=@",
-        exe!("stdout_writer"),
+        APP,
+        "print_n",
         "A",
         "20",
         "--@",
-        exe!("stdout_writer"),
+        APP,
+        "print_n",
         "A",
         "20",
         "--@",
         "--in=*0.stdout",
         "--in=*1.stdout",
         format!("--out={}", output_1).as_str(),
-        exe!("in2out"),
+        APP,
+        "pipe_loop",
         "--@",
         "--in=*0.stdout",
         "--in=*1.stdout",
         format!("--out={}", output_2).as_str(),
-        exe!("in2out"),
+        APP,
+        "pipe_loop",
     ])
     .unwrap();
     assert_eq!("A".repeat(40), read_all(output_1));
@@ -155,11 +167,13 @@ fn multiple_stdouts_to_file() {
         "--separator=@",
         format!("--out={}", out).as_str(),
         "--@",
-        exe!("stdout_writer"),
+        APP,
+        "print_n",
         "AAA",
         "20",
         "--@",
-        exe!("stdout_writer"),
+        APP,
+        "print_n",
         "AAA",
         "20",
     ])

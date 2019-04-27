@@ -1,5 +1,5 @@
-use crate::common::{read_all, write_all, TmpDir};
-use crate::exe;
+use crate::assert_approx_eq;
+use crate::common::{read_all, write_all, TmpDir, APP, TIME_ERR};
 use crate::term_reason::{
     check_tr, ensure_idle_time_limit_exceeded, ensure_user_time_limit_exceeded,
     ensure_wall_clock_time_limit_exceeded,
@@ -14,11 +14,14 @@ fn spawn_suspended() {
         "-d=1",
         "--@",
         "--controller",
-        exe!("sleep"),
+        APP,
+        "sleep",
         "2",
         "--@",
         "-y=0.5",
-        exe!("loop"),
+        APP,
+        "loop",
+        "2",
     ])
     .unwrap();
     ensure_idle_time_limit_exceeded(&r[1]);
@@ -29,11 +32,13 @@ fn resume_agent_on_controller_termination() {
     let r = run(&[
         "--separator=@",
         "--controller",
-        exe!("empty"),
+        APP,
         "--@",
         "-d=1",
         "-tl=0.5",
-        exe!("loop"),
+        APP,
+        "loop",
+        "2",
     ])
     .unwrap();
     ensure_user_time_limit_exceeded(&r[1]);
@@ -53,10 +58,11 @@ fn resume_and_agent_termination_msgs() {
         "--controller",
         format!("--in={}", stdin).as_str(),
         format!("--err={}", stderr).as_str(),
-        exe!("in2out"),
+        APP,
+        "pipe_loop",
         "--@",
         "--in=*0.stdout",
-        exe!("empty"),
+        APP,
     ])
     .unwrap();
     assert_eq!(b"1W#\n1T#\n", read_all(stderr).as_bytes());
@@ -76,15 +82,18 @@ fn message_to_agent() {
         "--@",
         "--controller",
         format!("--in={}", stdin).as_str(),
-        exe!("in2out"),
+        APP,
+        "pipe_loop",
         "--@",
         format!("--err={}", stderr1).as_str(),
         "--in=*0.stdout",
-        exe!("in2out"),
+        APP,
+        "pipe_loop",
         "--@",
         format!("--err={}", stderr2).as_str(),
         "--in=*0.stdout",
-        exe!("in2out"),
+        APP,
+        "pipe_loop",
     ])
     .unwrap();
     assert_eq!("", read_all(stderr1));
@@ -105,11 +114,12 @@ fn message_from_agent() {
         "--controller",
         format!("--in={}", stdin).as_str(),
         format!("--err={}", stderr).as_str(),
-        exe!("in2out"),
+        APP,
+        "pipe_loop",
         "--@",
         "--in=*0.stdout",
         "--out=*0.stdin",
-        exe!("arg_printer"),
+        APP,
         "message\n",
     ])
     .unwrap();
@@ -125,7 +135,7 @@ fn controller_message_concatenation() {
         "-d=1",
         "--@",
         "--controller",
-        exe!("arg_printer"),
+        APP,
         "1W",
         "#\n",
         "1",
@@ -137,7 +147,8 @@ fn controller_message_concatenation() {
         "--@",
         "--in=*0.stdout",
         format!("--err={}", stderr).as_str(),
-        exe!("in2out"),
+        APP,
+        "pipe_loop",
     ])
     .unwrap();
     assert_eq!("message\n", read_all(stderr));
@@ -157,11 +168,12 @@ fn agent_message_concatenation() {
         "--controller",
         format!("--in={}", stdin).as_str(),
         format!("--err={}", stderr).as_str(),
-        exe!("in2out"),
+        APP,
+        "pipe_loop",
         "--@",
         "--in=*0.stdout",
         "--out=*0.stdin",
-        exe!("arg_printer"),
+        APP,
         "me",
         "ssa",
         "ge",
@@ -182,15 +194,19 @@ fn agent_terminated_by_controller() {
         "-d=1",
         "--@",
         "--controller",
-        exe!("arg_printer"),
+        APP,
         "1S#\n",
         "2S#\n",
         "--@",
         "--in=*0.stdout",
-        exe!("loop"),
+        APP,
+        "loop",
+        "2",
         "--@",
         "--in=*0.stdout",
-        exe!("loop"),
+        APP,
+        "loop",
+        "2",
     ])
     .unwrap();
     ensure_terminated_by_controller(&r[1]);
@@ -205,14 +221,18 @@ fn agent_suspended_after_write() {
         "--json",
         "--@",
         "--controller",
-        exe!("loop"),
+        APP,
         "1W#\n",
+        "loop",
+        "4",
         "--@",
         "-y=1",
         "--in=*0.stdout",
         "--out=*0.stdin",
-        exe!("loop"),
+        APP,
         "message\n",
+        "loop",
+        "4",
     ])
     .unwrap();
     ensure_idle_time_limit_exceeded(&r[1]);
@@ -220,13 +240,13 @@ fn agent_suspended_after_write() {
 
 #[test]
 fn controller_deadline() {
-    let r = run(&["-d=1", "--controller", exe!("loop")]).unwrap();
+    let r = run(&["-d=1", "--controller", APP, "loop", "2"]).unwrap();
     ensure_wall_clock_time_limit_exceeded(&r[0]);
 }
 
 #[test]
 fn controller_idle_time_limit() {
-    let r = run(&["-y=1", "--controller", exe!("sleep"), "2"]).unwrap();
+    let r = run(&["-y=1", "--controller", APP, "sleep", "2"]).unwrap();
     ensure_idle_time_limit_exceeded(&r[0]);
 }
 
@@ -237,12 +257,16 @@ fn agent_user_time_limit() {
         "-d=1",
         "--@",
         "--controller",
-        exe!("loop"),
+        APP,
         "1W#\n",
+        "loop",
+        "2",
         "--@",
         "--in=*0.stdout",
         "-tl=0.5",
-        exe!("loop"),
+        APP,
+        "loop",
+        "2",
     ])
     .unwrap();
     ensure_user_time_limit_exceeded(&r[1]);
@@ -255,14 +279,97 @@ fn agent_idle_time_limit() {
         "-d=1",
         "--@",
         "--controller",
-        exe!("loop"),
+        APP,
         "1W#\n",
+        "loop",
+        "2",
         "--@",
         "--in=*0.stdout",
         "-y=0.5",
-        exe!("sleep"),
+        APP,
+        "sleep",
         "2",
     ])
     .unwrap();
     ensure_idle_time_limit_exceeded(&r[1]);
+}
+
+fn agent_time_usage(sleep_kind: &str) -> Vec<Report> {
+    run(&[
+        "--separator=@",
+        "-d=2.5",
+        "--@",
+        "--controller",
+        "--in=*1.stdout",
+        "--out=*1.stdin",
+        APP,
+        "1W#\n",
+        "wake_loop",
+        "--@",
+        "-d=1.5",
+        APP,
+        sleep_kind,
+        "1",
+        "message\n",
+        sleep_kind,
+        "1",
+    ])
+    .unwrap()
+}
+
+#[test]
+fn reset_agent_user_time_and_wall_clock_time_usage() {
+    let r = agent_time_usage("loop");
+    check_tr(&r[1], TerminateReason::ExitProcess);
+    assert_approx_eq!(r[1].result.time, 2.0, 0.3);
+    assert_approx_eq!(r[1].result.wall_clock_time, 2.0, TIME_ERR);
+}
+
+#[test]
+fn reset_agent_idle_time_and_wall_clock_time_usage() {
+    let r = agent_time_usage("sleep");
+    let idle_time_usage = r[1].result.wall_clock_time - r[1].result.time;
+    check_tr(&r[1], TerminateReason::ExitProcess);
+    assert_approx_eq!(idle_time_usage, 2.0, 0.3);
+    assert_approx_eq!(r[1].result.wall_clock_time, 2.0, TIME_ERR);
+}
+
+fn controller_time_usage(sleep_kind: &str) -> Vec<Report> {
+    run(&[
+        "--separator=@",
+        "-d=2.5",
+        "--@",
+        "--controller",
+        "--in=*1.stdout",
+        "--out=*1.stdin",
+        "-d=1.5",
+        APP,
+        sleep_kind,
+        "1",
+        "1W#\n",
+        sleep_kind,
+        "1",
+        "--@",
+        APP,
+        "sleep",
+        "2",
+    ])
+    .unwrap()
+}
+
+#[test]
+fn reset_controller_user_time_and_wall_clock_time_usage() {
+    let r = controller_time_usage("loop");
+    check_tr(&r[0], TerminateReason::ExitProcess);
+    assert_approx_eq!(r[0].result.time, 2.0, 0.3);
+    assert_approx_eq!(r[0].result.wall_clock_time, 2.0, TIME_ERR);
+}
+
+#[test]
+fn reset_controller_idle_time_and_wall_clock_time_usage() {
+    let r = controller_time_usage("sleep");
+    let idle_time_usage = r[0].result.wall_clock_time - r[0].result.time;
+    check_tr(&r[0], TerminateReason::ExitProcess);
+    assert_approx_eq!(idle_time_usage, 2.0, 0.3);
+    assert_approx_eq!(r[0].result.wall_clock_time, 2.0, TIME_ERR);
 }

@@ -12,6 +12,15 @@ pub struct TmpDir {
     dir: PathBuf,
 }
 
+pub const MEM_ERR: u64 = 2 * 1024 * 1024; // 2MB
+pub const TIME_ERR: f64 = 0.050; // 50 ms
+
+#[cfg(windows)]
+pub const APP: &str = "../target/debug/app.exe";
+
+#[cfg(unix)]
+pub const APP: &str = "../target/debug/app";
+
 impl TmpDir {
     pub fn new() -> Self {
         let mut rng = thread_rng();
@@ -45,13 +54,6 @@ impl Drop for TmpDir {
             }
         }
     }
-}
-
-#[macro_export]
-macro_rules! exe {
-    ($s:expr) => {
-        concat!("../target/debug/", $s, ".exe")
-    };
 }
 
 #[macro_export]

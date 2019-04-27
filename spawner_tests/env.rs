@@ -1,5 +1,4 @@
-use crate::common::{read_all, TmpDir};
-use crate::exe;
+use crate::common::{read_all, TmpDir, APP};
 
 use spawner_driver::run;
 
@@ -17,7 +16,8 @@ impl Env {
         let out = tmp.file("out.txt");
         let mut args = vec![format!("--out={}", out)];
         args.extend(argv.into_iter().map(|s| s.as_ref().to_string()));
-        args.push(String::from(exe!("env_printer")));
+        args.push(APP.to_string());
+        args.push("print_env".to_string());
         run(args).unwrap();
         Env {
             data: read_all(out),

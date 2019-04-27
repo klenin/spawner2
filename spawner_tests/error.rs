@@ -1,4 +1,4 @@
-use crate::exe;
+use crate::common::APP;
 
 use spawner_driver::{run, Report};
 
@@ -17,10 +17,10 @@ fn multiple_controllers() {
     let err = run(&[
         "--separator=@",
         "--controller",
-        exe!("empty"),
+        APP,
         "--@",
         "--controller",
-        exe!("empty"),
+        APP,
     ])
     .unwrap_err();
     assert_eq!(err.to_string(), "There can be at most one controller");
@@ -28,13 +28,13 @@ fn multiple_controllers() {
 
 #[test]
 fn invalid_stdin_index() {
-    let err = run(&["--out=*10.stdin", exe!("empty")]).unwrap_err();
+    let err = run(&["--out=*10.stdin", APP]).unwrap_err();
     assert_eq!(err.to_string(), "Stdin index '10' is out of range");
 }
 
 #[test]
 fn invalid_stdout_index() {
-    let err = run(&["--in=*10.stdout", exe!("empty")]).unwrap_err();
+    let err = run(&["--in=*10.stdout", APP]).unwrap_err();
     assert_eq!(err.to_string(), "Stdout index '10' is out of range");
 }
 
@@ -44,11 +44,13 @@ fn run_single_controller_cmd(cmd: &str) -> Vec<Report> {
         "-d=1",
         "--@",
         "--controller",
-        exe!("arg_printer"),
+        APP,
         cmd,
         "--@",
         "--in=*0.stdout",
-        exe!("loop"),
+        APP,
+        "loop",
+        "2",
     ])
     .unwrap()
 }
