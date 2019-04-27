@@ -5,8 +5,7 @@ use crate::value_parser::{
 
 use spawner_opts::{CmdLineOptions, OptionValueParser};
 
-use spawner::pipe::ShareMode;
-use spawner::task::EnvKind;
+use spawner::pipe::FileLock;
 use spawner::VERSION;
 
 use std::env::{self, VarError};
@@ -412,11 +411,11 @@ impl Default for RedirectList {
 }
 
 impl RedirectFlags {
-    pub fn share_mode(&self) -> ShareMode {
+    pub fn file_lock(&self) -> FileLock {
         if self.exclusive {
-            ShareMode::Exclusive
+            FileLock::Exclusive
         } else {
-            ShareMode::Shared
+            FileLock::Shared
         }
     }
 }

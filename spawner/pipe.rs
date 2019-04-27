@@ -19,12 +19,10 @@ pub struct ReadPipe(pipe_impl::ReadPipe);
 /// [`WritePipe::open`]: struct.WritePipe.html#method.open
 pub struct WritePipe(pipe_impl::WritePipe);
 
-/// Describes the sharing mode of a file.
+/// Places a lock on the open file. The lock is not guaranteed to be mandatory.
 #[derive(PartialEq)]
-pub enum ShareMode {
-    /// File can be opened by other processes.
+pub enum FileLock {
     Shared,
-    /// File cannot be opened by other processes.
     Exclusive,
 }
 
@@ -39,10 +37,10 @@ pub fn create() -> Result<(ReadPipe, WritePipe)> {
 
 impl ReadPipe {
     /// Opens a file in read-only mode.
-    pub fn open<P: AsRef<Path>>(path: P, share_mode: ShareMode) -> Result<Self> {
+    pub fn open<P: AsRef<Path>>(path: P, lock: FileLock) -> Result<Self> {
         Ok(Self(pipe_impl::ReadPipe::open(
             path,
-            share_mode == ShareMode::Exclusive,
+            lock == FileLock::Exclusive,
         )?))
     }
 
@@ -65,10 +63,10 @@ impl Read for ReadPipe {
 
 impl WritePipe {
     /// Opens a file in write-only mode.
-    pub fn open<P: AsRef<Path>>(path: P, share_mode: ShareMode) -> Result<Self> {
+    pub fn open<P: AsRef<Path>>(path: P, lock: FileLock) -> Result<Self> {
         Ok(Self(pipe_impl::WritePipe::open(
             path,
-            share_mode == ShareMode::Exclusive,
+            lock == FileLock::Exclusive,
         )?))
     }
 

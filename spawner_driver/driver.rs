@@ -82,7 +82,7 @@ impl<'a> Driver<'a> {
         for redirect in redirect_list.items.iter() {
             let dst = match &redirect.kind {
                 RedirectKind::File(f) => {
-                    Some(IstreamDst::File(f.into(), redirect.flags.share_mode()))
+                    Some(IstreamDst::File(f.into(), redirect.flags.file_lock()))
                 }
                 RedirectKind::Stdin(i) => {
                     self.check_stdio_idx("Stdin", *i)?;
@@ -105,7 +105,7 @@ impl<'a> Driver<'a> {
         for redirect in redirect_list.items.iter() {
             let src = match &redirect.kind {
                 RedirectKind::File(f) => {
-                    Some(OstreamSrc::File(f.into(), redirect.flags.share_mode()))
+                    Some(OstreamSrc::File(f.into(), redirect.flags.file_lock()))
                 }
                 RedirectKind::Stdout(i) => {
                     self.check_stdio_idx("Stdout", *i)?;

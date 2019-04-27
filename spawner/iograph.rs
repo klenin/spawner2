@@ -1,4 +1,4 @@
-use crate::pipe::{self, ReadPipe, ShareMode, WritePipe};
+use crate::pipe::{self, FileLock, ReadPipe, WritePipe};
 use crate::rwhub::{ReadHub, ReadHubController, WriteHub};
 use crate::Result;
 
@@ -34,13 +34,13 @@ pub struct IoGraph {
 
 pub enum IstreamDst {
     Pipe(WritePipe),
-    File(PathBuf, ShareMode),
+    File(PathBuf, FileLock),
     Ostream(OstreamId),
 }
 
 pub enum OstreamSrc {
     Pipe(ReadPipe),
-    File(PathBuf, ShareMode),
+    File(PathBuf, FileLock),
     Istream(IstreamId),
 }
 
