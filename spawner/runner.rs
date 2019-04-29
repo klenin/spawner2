@@ -1,5 +1,5 @@
-use crate::process::{self, ExitStatus, Process, ResourceUsage};
-use crate::task::OnTerminate;
+use crate::process::{self, ExitStatus, Group, Process, ProcessStdio, ResourceUsage};
+use crate::task::Task;
 use crate::{Error, Result};
 
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -70,22 +70,16 @@ impl Runner {
 
 impl RunnerThread {
     /// Spawns runner thread.
-    pub fn spawn(
-        process: Process,
-        resume_process: bool,
-        monitor_interval: Duration,
-        mut on_terminate: Option<Box<OnTerminate>>,
-    ) -> Result<Self> {
+    pub fn spawn<T, U>(task: T, stdio: U) -> Result<Self>
+    where
+        T: Into<Task>,
+        U: Into<ProcessStdio>,
+    {
+        let task = task.into();
+        let stdio = stdio.into();
         let (sender, receiver) = channel();
         thread::Builder::new()
-            .spawn(move || {
-                let result =
-                    RunnerThread::entry(process, resume_process, monitor_interval, receiver);
-                if let Some(handler) = on_terminate.as_mut() {
-                    handler.on_terminate();
-                }
-                result
-            })
+            .spawn(move || RunnerThread::entry(task, stdio, receiver))
             .map_err(|_| Error::from("Cannot spawn RunnerThread"))
             .map(|handle| RunnerThread {
                 handle: handle,
@@ -105,40 +99,66 @@ impl RunnerThread {
             .unwrap_or(Err(Error::from("Runner thread panicked")))
     }
 
-    fn entry(
-        mut process: Process,
-        resume_process: bool,
+    fn entry(task: Task, stdio: ProcessStdio, receiver: Receiver<Message>) -> Result<RunnerReport> {
+        let mut group = Group::new()?;
+        group.set_limits(task.resource_limits)?;
+        let mut process = group.spawn(task.process_info, stdio)?;
+        let result = RunnerThread::monitor_process(
+            &mut process,
+            &mut group,
+            task.monitor_interval,
+            receiver,
+        );
+        let _ = group.terminate();
+        if let Some(mut handler) = task.on_terminate {
+            handler.on_terminate();
+        }
+        result
+    }
+
+    fn monitor_process(
+        process: &mut Process,
+        group: &mut Group,
         monitor_interval: Duration,
         receiver: Receiver<Message>,
     ) -> Result<RunnerReport> {
-        if resume_process {
-            process.resume()?;
-        }
-
         let mut term_reason = None;
+        let mut exited = false;
         loop {
             if let Some(exit_status) = process.exit_status()? {
-                return Ok(RunnerReport {
-                    resource_usage: process.resource_usage()?,
-                    exit_status: exit_status,
-                    termination_reason: term_reason,
-                });
+                exited = true;
+                let res_usage = group.resource_usage()?;
+                if res_usage.active_processes == 0 {
+                    return Ok(RunnerReport {
+                        resource_usage: res_usage,
+                        exit_status: exit_status,
+                        termination_reason: term_reason,
+                    });
+                }
             }
 
-            if let Some(lv) = process.check_limits()? {
-                process.terminate()?;
+            if let Some(lv) = group.check_limits()? {
+                group.terminate()?;
                 term_reason = Some(TerminationReason::LimitViolation(lv));
             }
 
             if let Ok(msg) = receiver.try_recv() {
                 match msg {
                     Message::Terminate => {
-                        process.terminate()?;
+                        group.terminate()?;
                         term_reason = Some(TerminationReason::ManuallyTerminated);
                     }
-                    Message::Suspend => process.suspend()?,
-                    Message::Resume => process.resume()?,
-                    Message::ResetTimeUsage => process.reset_time_usage()?,
+                    Message::Suspend => {
+                        if !exited {
+                            process.suspend()?;
+                        }
+                    }
+                    Message::Resume => {
+                        if !exited {
+                            process.resume()?;
+                        }
+                    }
+                    Message::ResetTimeUsage => group.reset_time_usage()?,
                 }
             }
 

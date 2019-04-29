@@ -1,8 +1,12 @@
-use crate::process::{Environment, ExitStatus, LimitViolation, ProcessInfo, ResourceUsage};
+use crate::process::{
+    Environment, ExitStatus, LimitViolation, ProcessInfo, ResourceLimits, ResourceUsage,
+};
 use crate::sys::limit_checker::LimitChecker;
 use crate::sys::windows::common::{cvt, Handle};
 use crate::sys::windows::pipe::{ReadPipe, WritePipe};
-use crate::sys::windows::utils::{CreateProcessOptions, EnvBlock, ProcessInformation, Stdio, User};
+use crate::sys::windows::utils::{
+    CreateProcessOptions, EnvBlock, ProcessInformation, Stdio, User, UserContext,
+};
 use crate::sys::IntoInner;
 use crate::{Error, Result};
 
@@ -10,12 +14,12 @@ use winapi::shared::minwindef::DWORD;
 use winapi::um::jobapi2::{
     AssignProcessToJobObject, CreateJobObjectW, QueryInformationJobObject, TerminateJobObject,
 };
+use winapi::um::minwinbase::STILL_ACTIVE;
 use winapi::um::processthreadsapi::{
     GetExitCodeProcess, ResumeThread, SuspendThread, TerminateProcess,
 };
-use winapi::um::securitybaseapi::{ImpersonateLoggedOnUser, RevertToSelf};
 use winapi::um::winnt::{
-    JobObjectBasicAndIoAccountingInformation, JobObjectExtendedLimitInformation, HANDLE,
+    JobObjectBasicAndIoAccountingInformation, JobObjectExtendedLimitInformation,
     JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
     STATUS_ACCESS_VIOLATION, STATUS_ARRAY_BOUNDS_EXCEEDED, STATUS_BREAKPOINT,
     STATUS_CONTROL_C_EXIT, STATUS_DATATYPE_MISALIGNMENT, STATUS_FLOAT_DENORMAL_OPERAND,
@@ -41,69 +45,30 @@ pub struct ProcessStdio {
 pub struct Process {
     handle: Handle,
     main_thread: Handle,
-    job: Handle,
     user: Option<User>,
-    creation_time: Instant,
-    limit_checker: LimitChecker,
 }
 
 unsafe impl Send for Process {}
 
-struct UserContext<'a>(&'a Option<User>);
+pub struct Group {
+    handle: Handle,
+    limit_checker: LimitChecker,
+    creation_time: Instant,
+}
 
 impl Process {
-    pub fn suspended<T, U>(info: T, stdio: U) -> Result<Self>
-    where
-        T: AsRef<ProcessInfo>,
-        U: Into<ProcessStdio>,
-    {
-        let stdio = stdio.into();
-        let info = info.as_ref();
-
-        let ps = create_suspended_process(
-            info,
-            Stdio {
-                stdin: stdio.stdin.into_inner(),
-                stdout: stdio.stdout.into_inner(),
-                stderr: stdio.stderr.into_inner(),
-            },
-        )?;
-
-        let job = match assign_process_to_new_job(ps.base.hProcess) {
-            Ok(x) => x,
-            Err(e) => {
-                unsafe {
-                    TerminateProcess(ps.base.hProcess, 0);
-                }
-                return Err(e);
-            }
-        };
-
-        Ok(Process {
-            handle: Handle(ps.base.hProcess),
-            main_thread: Handle(ps.base.hThread),
-            job: job,
-            user: ps.user,
-            creation_time: Instant::now(),
-            limit_checker: LimitChecker::new(info.resource_limits),
-        })
-    }
-
     pub fn exit_status(&self) -> Result<Option<ExitStatus>> {
-        let basic_and_io_info = self.basic_and_io_info()?;
-        if basic_and_io_info.BasicInfo.ActiveProcesses == 0 {
-            let mut exit_code: DWORD = 0;
-            unsafe {
-                cvt(GetExitCodeProcess(self.handle.0, &mut exit_code))?;
-            }
-            if let Some(cause) = crash_cause(exit_code) {
-                Ok(Some(ExitStatus::Crashed(cause.to_string())))
-            } else {
-                Ok(Some(ExitStatus::Finished(exit_code)))
-            }
-        } else {
-            Ok(None)
+        let mut exit_code: DWORD = 0;
+        unsafe {
+            cvt(GetExitCodeProcess(self.handle.0, &mut exit_code))?;
         }
+        Ok(match exit_code {
+            STILL_ACTIVE => None,
+            _ => Some(match crash_cause(exit_code) {
+                Some(cause) => ExitStatus::Crashed(cause.to_string()),
+                None => ExitStatus::Finished(exit_code),
+            }),
+        })
     }
 
     pub fn suspend(&self) -> Result<()> {
@@ -126,16 +91,66 @@ impl Process {
         }
     }
 
-    pub fn reset_time_usage(&mut self) -> Result<()> {
-        let zero = self.resource_usage()?;
-        self.limit_checker
-            .reset_timers(zero.wall_clock_time, zero.total_user_time);
+    pub fn terminate(&self) -> Result<()> {
+        unsafe {
+            cvt(TerminateProcess(self.handle.0, 0))?;
+        }
         Ok(())
     }
 
-    pub fn check_limits(&mut self) -> Result<Option<LimitViolation>> {
-        self.resource_usage()
-            .map(|usage| self.limit_checker.check(usage))
+    fn suspended<T, U>(info: T, stdio: U) -> Result<Self>
+    where
+        T: AsRef<ProcessInfo>,
+        U: Into<ProcessStdio>,
+    {
+        let stdio = stdio.into();
+        let info = info.as_ref();
+
+        create_suspended_process(
+            info,
+            Stdio {
+                stdin: stdio.stdin.into_inner(),
+                stdout: stdio.stdout.into_inner(),
+                stderr: stdio.stderr.into_inner(),
+            },
+        )
+        .map(|ps| Self {
+            handle: Handle(ps.base.hProcess),
+            main_thread: Handle(ps.base.hThread),
+            user: ps.user,
+        })
+    }
+}
+
+impl Group {
+    pub fn new() -> Result<Self> {
+        let handle = Handle(unsafe { cvt(CreateJobObjectW(ptr::null_mut(), ptr::null()))? });
+        Ok(Self {
+            handle: handle,
+            limit_checker: LimitChecker::new(),
+            creation_time: Instant::now(),
+        })
+    }
+
+    pub fn set_limits<T: Into<ResourceLimits>>(&mut self, limits: T) -> Result<()> {
+        self.limit_checker.set_limits(limits.into());
+        Ok(())
+    }
+
+    pub fn spawn<T, U>(&mut self, info: T, stdio: U) -> Result<Process>
+    where
+        T: AsRef<ProcessInfo>,
+        U: Into<ProcessStdio>,
+    {
+        let info = info.as_ref();
+        let ps = Process::suspended(info, stdio)?;
+        cvt(unsafe { AssignProcessToJobObject(self.handle.0, ps.handle.0) })
+            .and_then(|_| if info.suspended { Ok(()) } else { ps.resume() })
+            .map_err(|e| {
+                let _ = ps.terminate();
+                e
+            })
+            .map(|_| ps)
     }
 
     pub fn resource_usage(&self) -> Result<ResourceUsage> {
@@ -156,12 +171,25 @@ impl Process {
             total_kernel_time: Duration::from_nanos(total_kernel_time * 100),
             peak_memory_used: ext_limit_info.PeakJobMemoryUsed as u64,
             total_processes_created: basic_and_io_info.BasicInfo.TotalProcesses as usize,
+            active_processes: basic_and_io_info.BasicInfo.ActiveProcesses as usize,
             total_bytes_written: basic_and_io_info.IoInfo.WriteTransferCount,
         })
     }
 
+    pub fn check_limits(&mut self) -> Result<Option<LimitViolation>> {
+        self.resource_usage()
+            .map(|usage| self.limit_checker.check(usage))
+    }
+
+    pub fn reset_time_usage(&mut self) -> Result<()> {
+        let zero = self.resource_usage()?;
+        self.limit_checker
+            .reset_timers(zero.wall_clock_time, zero.total_user_time);
+        Ok(())
+    }
+
     pub fn terminate(&self) -> Result<()> {
-        cvt(unsafe { TerminateJobObject(self.job.0, 0) })?;
+        cvt(unsafe { TerminateJobObject(self.handle.0, 0) })?;
         Ok(())
     }
 
@@ -171,7 +199,7 @@ impl Process {
                 mem::zeroed();
 
             cvt(QueryInformationJobObject(
-                /*hJob=*/ self.job.0,
+                /*hJob=*/ self.handle.0,
                 /*JobObjectInfoClass=*/ JobObjectBasicAndIoAccountingInformation,
                 /*lpJobObjectInfo=*/ mem::transmute(&mut basic_and_io_info),
                 /*cbJobObjectInfoLength=*/ mem::size_of_val(&basic_and_io_info) as DWORD,
@@ -185,34 +213,13 @@ impl Process {
         unsafe {
             let mut ext_info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = mem::zeroed();
             cvt(QueryInformationJobObject(
-                /*hJob=*/ self.job.0,
+                /*hJob=*/ self.handle.0,
                 /*JobObjectInfoClass=*/ JobObjectExtendedLimitInformation,
                 /*lpJobObjectInfo=*/ mem::transmute(&mut ext_info),
                 /*cbJobObjectInfoLength=*/ mem::size_of_val(&ext_info) as DWORD,
                 /*lpReturnLength=*/ ptr::null_mut(),
             ))
             .map(|_| ext_info)
-        }
-    }
-}
-
-impl<'a> UserContext<'a> {
-    fn enter(user: &'a Option<User>) -> Result<Self> {
-        if let Some(u) = user {
-            unsafe {
-                cvt(ImpersonateLoggedOnUser(u.token.0))?;
-            }
-        }
-        Ok(Self(user))
-    }
-}
-
-impl<'a> Drop for UserContext<'a> {
-    fn drop(&mut self) {
-        if self.0.is_some() {
-            unsafe {
-                RevertToSelf();
-            }
         }
     }
 }
@@ -259,13 +266,6 @@ fn create_suspended_process(info: &ProcessInfo, stdio: Stdio) -> Result<ProcessI
     }
 
     opts.create()
-}
-
-fn assign_process_to_new_job(process: HANDLE) -> Result<Handle> {
-    unsafe {
-        let job = Handle(cvt(CreateJobObjectW(ptr::null_mut(), ptr::null()))?);
-        cvt(AssignProcessToJobObject(job.0, process)).map(|_| job)
-    }
 }
 
 fn crash_cause(exit_code: DWORD) -> Option<&'static str> {

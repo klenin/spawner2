@@ -8,41 +8,41 @@ use std::time::Duration;
 /// Describes the limit that has been hit.
 #[derive(Clone, Debug, PartialEq)]
 pub enum LimitViolation {
-    /// Process exceeded wall clock time limit.
+    /// Process group exceeded wall clock time limit.
     WallClockTimeLimitExceeded,
-    /// Process exceeded idle time limit.
+    /// Process group exceeded idle time limit.
     IdleTimeLimitExceeded,
-    /// Process exceeded user time limit.
+    /// Process group exceeded user time limit.
     UserTimeLimitExceeded,
-    /// Process exceeded write limit.
+    /// Process group exceeded write limit.
     WriteLimitExceeded,
-    /// Process exceeded memory limit.
+    /// Process group exceeded memory limit.
     MemoryLimitExceeded,
-    /// Process created too many child processes.
+    /// Process group created too many child processes.
     ProcessLimitExceeded,
 }
 
-/// The limits that are imposed on a process.
+/// The limits that are imposed on a process group.
 #[derive(Copy, Clone, Debug)]
 pub struct ResourceLimits {
-    /// The maximum allowed amount of time for a task.
+    /// The maximum allowed amount of time for a process group.
     pub max_wall_clock_time: Option<Duration>,
     /// Idle time is wall clock time - user time.
     pub max_idle_time: Option<Duration>,
-    /// The maximum allowed amount of user-mode execution time for a task.
+    /// The maximum allowed amount of user-mode execution time for a process group.
     pub max_user_time: Option<Duration>,
     /// The maximum allowed memory usage, in bytes.
     pub max_memory_usage: Option<u64>,
-    /// The maximum allowed amount of bytes written by a task.
+    /// The maximum allowed amount of bytes written by a process group.
     pub max_output_size: Option<u64>,
     /// The maximum allowed number of processes created.
     pub max_processes: Option<usize>,
 }
 
-/// Describes the resource usage of a process.
+/// Describes the resource usage of a process group.
 #[derive(Copy, Clone, Debug)]
 pub struct ResourceUsage {
-    /// The amount of time elapsed since process creation.
+    /// The amount of time elapsed since process group creation.
     pub wall_clock_time: Duration,
     /// The total amount of user-mode execution time for all active processes,
     /// as well as all terminated processes.
@@ -54,6 +54,8 @@ pub struct ResourceUsage {
     pub peak_memory_used: u64,
     /// The total number of processes created.
     pub total_processes_created: usize,
+    /// The number of active processes.
+    pub active_processes: usize,
     /// Total bytes written by all active and all terminated processes.
     pub total_bytes_written: u64,
 }
@@ -91,7 +93,7 @@ pub struct ProcessInfo {
     pub args: Vec<String>,
     pub working_directory: Option<String>,
     pub show_window: bool,
-    pub resource_limits: ResourceLimits,
+    pub suspended: bool,
     pub env: Environment,
     pub env_vars: Vec<(String, String)>,
     pub username: Option<String>,
@@ -100,6 +102,9 @@ pub struct ProcessInfo {
 
 /// Handle to a process.
 pub struct Process(ps_impl::Process);
+
+/// Describes a group of processes.
+pub struct Group(ps_impl::Group);
 
 impl Default for ResourceLimits {
     fn default() -> Self {
@@ -122,55 +127,62 @@ impl Default for ResourceUsage {
             total_kernel_time: Duration::from_millis(0),
             peak_memory_used: 0,
             total_processes_created: 0,
+            active_processes: 0,
             total_bytes_written: 0,
         }
     }
 }
 
 impl Process {
-    /// Spawns process in suspended state.
-    pub fn suspended<T, U>(info: T, stdio: U) -> Result<Self>
+    /// Returns `Ok(Some(status))` if process has terminated.
+    pub fn exit_status(&mut self) -> Result<Option<ExitStatus>> {
+        self.0.exit_status()
+    }
+
+    /// Suspends the main thread of a process.
+    pub fn suspend(&self) -> Result<()> {
+        self.0.suspend()
+    }
+
+    /// Resumes the main thread of a process.
+    pub fn resume(&self) -> Result<()> {
+        self.0.resume()
+    }
+
+    /// Terminates process.
+    pub fn terminate(&self) -> Result<()> {
+        self.0.terminate()
+    }
+}
+
+impl Group {
+    /// Creates new process group.
+    pub fn new() -> Result<Self> {
+        ps_impl::Group::new().map(Self)
+    }
+
+    /// Sets limits for this process group.
+    pub fn set_limits<T: Into<ResourceLimits>>(&mut self, limits: T) -> Result<()> {
+        self.0.set_limits(limits)
+    }
+
+    /// Spawns process and assigns it to this group.
+    pub fn spawn<T, U>(&mut self, info: T, stdio: U) -> Result<Process>
     where
         T: AsRef<ProcessInfo>,
         U: Into<ProcessStdio>,
     {
         let stdio = stdio.into();
-        ps_impl::Process::suspended(
-            info,
-            ps_impl::ProcessStdio {
-                stdin: stdio.stdin.into_inner(),
-                stdout: stdio.stdout.into_inner(),
-                stderr: stdio.stderr.into_inner(),
-            },
-        )
-        .map(Self)
-    }
-
-    /// Returns exit status of the root process if the process tree has terminated.
-    /// Returns `Ok(None)` if at least one child process is alive.
-    pub fn exit_status(&self) -> Result<Option<ExitStatus>> {
-        self.0.exit_status()
-    }
-
-    /// Suspends the main thread of the root process.
-    pub fn suspend(&self) -> Result<()> {
-        self.0.suspend()
-    }
-
-    /// Resumes the main thread of the root process.
-    pub fn resume(&self) -> Result<()> {
-        self.0.resume()
-    }
-
-    /// Resets wall clock time, user time and idle time usage.
-    /// Does not change values in the current resource usage of a process.
-    pub fn reset_time_usage(&mut self) -> Result<()> {
-        self.0.reset_time_usage()
-    }
-
-    // Checks process for limit violation.
-    pub fn check_limits(&mut self) -> Result<Option<LimitViolation>> {
-        self.0.check_limits()
+        self.0
+            .spawn(
+                info,
+                ps_impl::ProcessStdio {
+                    stdin: stdio.stdin.into_inner(),
+                    stdout: stdio.stdout.into_inner(),
+                    stderr: stdio.stderr.into_inner(),
+                },
+            )
+            .map(Process)
     }
 
     /// Returns current resource usage.
@@ -178,16 +190,21 @@ impl Process {
         self.0.resource_usage()
     }
 
-    /// Terminates process along with all its children.
-    /// If process tree has already been terminated, an `Ok` is returned.
+    // Checks process group for limit violation.
+    pub fn check_limits(&mut self) -> Result<Option<LimitViolation>> {
+        self.0.check_limits()
+    }
+
+    /// Resets wall clock time, user time and idle time usage.
+    /// Does not change values in the current resource usage.
+    pub fn reset_time_usage(&mut self) -> Result<()> {
+        self.0.reset_time_usage()
+    }
+
+    /// Terminates all processes in this group.
+    /// If process group has already been terminated, an `Ok` is returned.
     pub fn terminate(&self) -> Result<()> {
         self.0.terminate()
-    }
-}
-
-impl Drop for Process {
-    fn drop(&mut self) {
-        let _ = self.terminate();
     }
 }
 

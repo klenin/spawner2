@@ -160,21 +160,21 @@ fn create_tasks(
                 env_vars: cmd.env_vars.clone(),
                 env: cmd.env,
                 show_window: cmd.show_window,
+                suspended: role.is_agent(),
                 working_directory: cmd.working_directory.clone(),
                 username: cmd.username.clone(),
                 password: cmd.password.clone(),
-                resource_limits: ResourceLimits {
-                    max_wall_clock_time: cmd.wall_clock_time_limit,
-                    max_idle_time: cmd.idle_time_limit,
-                    max_user_time: cmd.time_limit,
-                    max_memory_usage: cmd.memory_limit.map(|v| mb2b(v)),
-                    max_output_size: cmd.write_limit.map(|v| mb2b(v)),
-                    max_processes: cmd.process_count,
-                },
             },
 
             monitor_interval: cmd.monitor_interval,
-            resume_process: !role.is_agent(),
+            resource_limits: ResourceLimits {
+                max_wall_clock_time: cmd.wall_clock_time_limit,
+                max_idle_time: cmd.idle_time_limit,
+                max_user_time: cmd.time_limit,
+                max_memory_usage: cmd.memory_limit.map(|v| mb2b(v)),
+                max_output_size: cmd.write_limit.map(|v| mb2b(v)),
+                max_processes: cmd.process_count,
+            },
             on_terminate: match role {
                 Role::Default => None,
                 Role::Agent(agent_idx) => {

@@ -16,14 +16,18 @@ pub struct LimitChecker {
 }
 
 impl LimitChecker {
-    pub fn new(limits: ResourceLimits) -> Self {
+    pub fn new() -> Self {
         Self {
-            limits: limits,
+            limits: ResourceLimits::default(),
             prev_check: None,
             wall_clock_time_zero: Duration::from_millis(0),
             user_time_zero: Duration::from_millis(0),
             total_idle_time: Duration::from_millis(0),
         }
+    }
+
+    pub fn set_limits(&mut self, limits: ResourceLimits) {
+        self.limits = limits;
     }
 
     pub fn reset_timers(&mut self, wall_clock_time_zero: Duration, user_time_zero: Duration) {

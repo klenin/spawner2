@@ -11,6 +11,7 @@ use winapi::um::processthreadsapi::{
     InitializeProcThreadAttributeList, UpdateProcThreadAttribute, PROCESS_INFORMATION,
     PROC_THREAD_ATTRIBUTE_LIST,
 };
+use winapi::um::securitybaseapi::{ImpersonateLoggedOnUser, RevertToSelf};
 use winapi::um::userenv::{CreateEnvironmentBlock, DestroyEnvironmentBlock};
 use winapi::um::winbase::{
     LogonUserW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT,
@@ -44,6 +45,8 @@ pub struct User {
     desktop: HDESK,
     desktop_name: Vec<u16>,
 }
+
+pub struct UserContext<'a>(&'a Option<User>);
 
 pub struct CreateProcessOptions {
     cmd: Vec<u16>,
@@ -165,6 +168,27 @@ impl Drop for User {
         unsafe {
             CloseDesktop(self.desktop);
             CloseWindowStation(self.winsta);
+        }
+    }
+}
+
+impl<'a> UserContext<'a> {
+    pub fn enter(user: &'a Option<User>) -> Result<Self> {
+        if let Some(u) = user {
+            unsafe {
+                cvt(ImpersonateLoggedOnUser(u.token.0))?;
+            }
+        }
+        Ok(Self(user))
+    }
+}
+
+impl<'a> Drop for UserContext<'a> {
+    fn drop(&mut self) {
+        if self.0.is_some() {
+            unsafe {
+                RevertToSelf();
+            }
         }
     }
 }

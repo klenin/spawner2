@@ -1,6 +1,6 @@
 use crate::iograph::{IoBuilder, IoGraph, IoStreams, Istream, IstreamId, Ostream, OstreamId};
 use crate::pipe::{ReadPipe, WritePipe};
-use crate::process::{Process, ProcessInfo, ProcessStdio};
+use crate::process::{ProcessInfo, ProcessStdio, ResourceLimits};
 use crate::runner::{Runner, RunnerReport, RunnerThread};
 use crate::rwhub::{ReadHubController, ReadHubThread, WriteHub};
 use crate::{Error, Result};
@@ -15,7 +15,7 @@ pub trait OnTerminate: Send {
 
 pub struct Task {
     pub process_info: ProcessInfo,
-    pub resume_process: bool,
+    pub resource_limits: ResourceLimits,
     pub monitor_interval: Duration,
     pub on_terminate: Option<Box<OnTerminate>>,
     pub stdout_controller: Option<Box<ReadHubController>>,
@@ -138,16 +138,7 @@ impl Spawner {
         let ps_and_stdio_threads = tasks
             .tasks
             .iter()
-            .map(|(task, mapping)| {
-                build_stdio(&mapping, &mut iostreams, &iograph).and_then(
-                    |(ps_stdio, stdio_threads)| {
-                        Ok((
-                            Process::suspended(&task.process_info, ps_stdio)?,
-                            stdio_threads,
-                        ))
-                    },
-                )
-            })
+            .map(|(_, mapping)| build_stdio(&mapping, &mut iostreams, &iograph))
             .collect::<Result<Vec<_>>>()?;
 
         let output_files = iostreams.ostreams.into_iter().map(|(_, o)| o.src).collect();
@@ -161,14 +152,8 @@ impl Spawner {
             .tasks
             .into_iter()
             .zip(ps_and_stdio_threads.into_iter())
-            .map(|((task, _), (ps, stdio_threads))| {
-                RunnerThread::spawn(
-                    ps,
-                    task.resume_process,
-                    task.monitor_interval,
-                    task.on_terminate,
-                )
-                .map(|rt| TaskThreads {
+            .map(|((task, _), (ps_stdio, stdio_threads))| {
+                RunnerThread::spawn(task, ps_stdio).map(|rt| TaskThreads {
                     runner_thread: rt,
                     stdio_threads: stdio_threads,
                 })
