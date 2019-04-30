@@ -2,21 +2,19 @@ use crate::sys::windows::common::{cvt, to_utf16, Handle};
 use crate::{Error, Result};
 
 use winapi::shared::basetsd::{DWORD_PTR, SIZE_T};
-use winapi::shared::minwindef::{DWORD, FALSE, HWINSTA, TRUE, WORD};
+use winapi::shared::minwindef::{DWORD, FALSE, HWINSTA, WORD};
 use winapi::shared::windef::HDESK;
-use winapi::um::errhandlingapi::SetErrorMode;
+
 use winapi::um::handleapi::INVALID_HANDLE_VALUE;
 use winapi::um::processthreadsapi::{
-    CreateProcessAsUserW, CreateProcessW, DeleteProcThreadAttributeList,
-    InitializeProcThreadAttributeList, UpdateProcThreadAttribute, PROCESS_INFORMATION,
+    DeleteProcThreadAttributeList, InitializeProcThreadAttributeList, UpdateProcThreadAttribute,
     PROC_THREAD_ATTRIBUTE_LIST,
 };
 use winapi::um::securitybaseapi::{ImpersonateLoggedOnUser, RevertToSelf};
 use winapi::um::userenv::{CreateEnvironmentBlock, DestroyEnvironmentBlock};
 use winapi::um::winbase::{
-    LogonUserW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT,
-    LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, SEM_FAILCRITICALERRORS,
-    SEM_NOGPFAULTERRORBOX, STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    LogonUserW, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, STARTF_USESHOWWINDOW,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
 use winapi::um::winnt::{DELETE, HANDLE, PVOID, READ_CONTROL, WCHAR, WRITE_DAC, WRITE_OWNER};
 use winapi::um::winuser::{
@@ -28,12 +26,10 @@ use winapi::um::winuser::{
 };
 
 use std::alloc::{alloc_zeroed, dealloc, Layout};
-use std::collections::HashMap;
-use std::fmt::{self, Write};
 use std::mem;
 use std::ptr;
 
-pub struct Stdio {
+pub struct RawStdio {
     pub stdin: Handle,
     pub stdout: Handle,
     pub stderr: Handle,
@@ -41,36 +37,20 @@ pub struct Stdio {
 
 pub struct User {
     pub token: Handle,
-    winsta: HWINSTA,
-    desktop: HDESK,
-    desktop_name: Vec<u16>,
+    pub winsta: HWINSTA,
+    pub desktop: HDESK,
+    pub desktop_name: Vec<u16>,
 }
 
 pub struct UserContext<'a>(&'a Option<User>);
-
-pub struct CreateProcessOptions {
-    cmd: Vec<u16>,
-    stdio: Stdio,
-    show_window: bool,
-    create_suspended: bool,
-    hide_errors: bool,
-    working_directory: Option<Vec<u16>>,
-    user: Option<User>,
-    env: HashMap<String, String>,
-}
-
-pub struct ProcessInformation {
-    pub base: PROCESS_INFORMATION,
-    pub user: Option<User>,
-}
 
 pub struct EnvBlock {
     block: *mut u16,
     len: usize,
 }
 
-struct StartupInfo {
-    base: STARTUPINFOEXW,
+pub struct StartupInfo {
+    pub base: STARTUPINFOEXW,
     _att_list: AttList,
 }
 
@@ -193,170 +173,6 @@ impl<'a> Drop for UserContext<'a> {
     }
 }
 
-impl CreateProcessOptions {
-    pub fn new<T, U>(argv: T, stdio: Stdio) -> Self
-    where
-        T: IntoIterator<Item = U>,
-        U: AsRef<str>,
-    {
-        Self {
-            cmd: argv_to_cmd(argv),
-            stdio: stdio,
-            show_window: false,
-            create_suspended: false,
-            hide_errors: false,
-            working_directory: None,
-            user: None,
-            env: HashMap::new(),
-        }
-    }
-
-    pub fn hide_errors(&mut self, hide: bool) -> &mut Self {
-        self.hide_errors = hide;
-        self
-    }
-
-    pub fn show_window(&mut self, show: bool) -> &mut Self {
-        self.show_window = show;
-        self
-    }
-
-    pub fn create_suspended(&mut self, suspended: bool) -> &mut Self {
-        self.create_suspended = suspended;
-        self
-    }
-
-    pub fn user(&mut self, u: User) -> &mut Self {
-        self.user = Some(u);
-        self
-    }
-
-    pub fn env_clear(&mut self) -> &mut Self {
-        self.env.clear();
-        self
-    }
-
-    pub fn env<K, V>(&mut self, k: K, v: V) -> &mut Self
-    where
-        K: AsRef<str>,
-        V: AsRef<str>,
-    {
-        self.env
-            .insert(k.as_ref().to_string(), v.as_ref().to_string());
-        self
-    }
-
-    pub fn envs<I, K, V>(&mut self, vars: I) -> &mut Self
-    where
-        I: IntoIterator<Item = (K, V)>,
-        K: AsRef<str>,
-        V: AsRef<str>,
-    {
-        for (k, v) in vars.into_iter() {
-            self.env(k, v);
-        }
-        self
-    }
-
-    pub fn working_directory<S: AsRef<str>>(&mut self, dir: S) -> &mut Self {
-        self.working_directory = Some(to_utf16(dir.as_ref()));
-        self
-    }
-
-    pub fn create(mut self) -> Result<ProcessInformation> {
-        let cmd = self.cmd.as_mut_ptr();
-        let creation_flags = self.creation_flags();
-        let mut env = self.create_env();
-        let working_dir = self
-            .working_directory
-            .map_or(ptr::null(), |dir| dir.as_ptr());
-
-        let mut inherited_handles = [self.stdio.stdin.0, self.stdio.stdout.0, self.stdio.stderr.0];
-        let mut startup_info = StartupInfo::create(
-            &self.stdio,
-            &mut inherited_handles,
-            self.user.as_mut().map(|u| &mut u.desktop_name),
-            self.show_window,
-        )?;
-
-        let mut process_info: PROCESS_INFORMATION = unsafe { mem::zeroed() };
-
-        unsafe {
-            if self.hide_errors {
-                SetErrorMode(SEM_NOGPFAULTERRORBOX | SEM_FAILCRITICALERRORS);
-            }
-
-            let result = if let Some(ref user) = self.user {
-                CreateProcessAsUserW(
-                    /*hToken=*/ user.token.0,
-                    /*lpApplicationName=*/ ptr::null(),
-                    /*lpCommandLine=*/ cmd,
-                    /*lpProcessAttributes=*/ ptr::null_mut(),
-                    /*lpThreadAttributes=*/ ptr::null_mut(),
-                    /*bInheritHandles=*/ TRUE,
-                    /*dwCreationFlags=*/ creation_flags,
-                    /*lpEnvironment=*/ mem::transmute(env.as_mut_ptr()),
-                    /*lpCurrentDirectory=*/ working_dir,
-                    /*lpStartupInfo=*/ mem::transmute(&mut startup_info.base),
-                    /*lpProcessInformation=*/ &mut process_info,
-                )
-            } else {
-                CreateProcessW(
-                    /*lpApplicationName=*/ ptr::null(),
-                    /*lpCommandLine=*/ cmd,
-                    /*lpProcessAttributes=*/ ptr::null_mut(),
-                    /*lpThreadAttributes=*/ ptr::null_mut(),
-                    /*bInheritHandles=*/ TRUE,
-                    /*dwCreationFlags=*/ creation_flags,
-                    /*lpEnvironment=*/ mem::transmute(env.as_mut_ptr()),
-                    /*lpCurrentDirectory=*/ working_dir,
-                    /*lpStartupInfo=*/ mem::transmute(&mut startup_info.base),
-                    /*lpProcessInformation=*/ &mut process_info,
-                )
-            };
-
-            // Restore default error mode.
-            SetErrorMode(0);
-            cvt(result)?;
-        }
-
-        Ok(ProcessInformation {
-            base: process_info,
-            user: self.user,
-        })
-    }
-
-    fn creation_flags(&self) -> DWORD {
-        let mut flags = CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
-        if self.create_suspended {
-            flags |= CREATE_SUSPENDED;
-        }
-        flags
-    }
-
-    fn create_env(&self) -> Vec<u16> {
-        // https://docs.microsoft.com/en-us/windows/desktop/api/processthreadsapi/nf-processthreadsapi-createprocessa
-        //
-        // An environment block consists of a null-terminated block of null-terminated strings.
-        // Each string is in the following form:
-        //     name=value\0
-        //
-        // A Unicode environment block is terminated by four zero bytes: two for the last string,
-        // two more to terminate the block.
-        let mut result: Vec<u16> = self
-            .env
-            .iter()
-            .map(|(name, val)| to_utf16(format!("{}={}", name, val)))
-            .flatten()
-            .chain(std::iter::once(0))
-            .collect();
-        if result.len() == 1 {
-            result.push(0);
-        }
-        result
-    }
-}
-
 impl EnvBlock {
     pub fn create(user: &Option<User>) -> Result<Self> {
         let mut block: *mut u16 = ptr::null_mut();
@@ -402,8 +218,8 @@ impl Drop for EnvBlock {
 }
 
 impl StartupInfo {
-    fn create(
-        stdio: &Stdio,
+    pub fn create(
+        stdio: &RawStdio,
         inherited_handles: &mut [HANDLE],
         desktop_name: Option<&mut Vec<u16>>,
         show_window: bool,
@@ -490,33 +306,4 @@ impl Drop for AttList {
             );
         }
     }
-}
-
-fn argv_to_cmd<T, U>(argv: T) -> Vec<u16>
-where
-    T: IntoIterator<Item = U>,
-    U: AsRef<str>,
-{
-    let mut cmd = String::new();
-    for (idx, arg) in argv.into_iter().enumerate() {
-        if idx != 0 {
-            cmd.write_char(' ').unwrap();
-        }
-        write_quoted(&mut cmd, arg.as_ref());
-    }
-    to_utf16(cmd)
-}
-
-fn write_quoted<W, S>(w: &mut W, s: S)
-where
-    W: fmt::Write,
-    S: AsRef<str>,
-{
-    let escaped = s.as_ref().replace("\"", "\\\"");
-    if escaped.find(' ').is_some() {
-        write!(w, "\"{}\"", escaped)
-    } else {
-        w.write_str(escaped.as_str())
-    }
-    .unwrap();
 }

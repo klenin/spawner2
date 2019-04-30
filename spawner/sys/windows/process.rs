@@ -2,21 +2,25 @@ use crate::process::{
     Environment, ExitStatus, LimitViolation, ProcessInfo, ResourceLimits, ResourceUsage,
 };
 use crate::sys::limit_checker::LimitChecker;
-use crate::sys::windows::common::{cvt, Handle};
+use crate::sys::windows::common::{cvt, to_utf16, Handle};
 use crate::sys::windows::pipe::{ReadPipe, WritePipe};
-use crate::sys::windows::utils::{
-    CreateProcessOptions, EnvBlock, ProcessInformation, Stdio, User, UserContext,
-};
+use crate::sys::windows::utils::{EnvBlock, RawStdio, StartupInfo, User, UserContext};
 use crate::sys::IntoInner;
 use crate::{Error, Result};
 
-use winapi::shared::minwindef::DWORD;
+use winapi::shared::minwindef::{DWORD, TRUE};
+use winapi::um::errhandlingapi::SetErrorMode;
 use winapi::um::jobapi2::{
     AssignProcessToJobObject, CreateJobObjectW, QueryInformationJobObject, TerminateJobObject,
 };
 use winapi::um::minwinbase::STILL_ACTIVE;
 use winapi::um::processthreadsapi::{
-    GetExitCodeProcess, ResumeThread, SuspendThread, TerminateProcess,
+    CreateProcessAsUserW, CreateProcessW, GetExitCodeProcess, ResumeThread, SuspendThread,
+    TerminateProcess, PROCESS_INFORMATION,
+};
+use winapi::um::winbase::{
+    CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT,
+    SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX,
 };
 use winapi::um::winnt::{
     JobObjectBasicAndIoAccountingInformation, JobObjectExtendedLimitInformation,
@@ -31,6 +35,8 @@ use winapi::um::winnt::{
     STATUS_REG_NAT_CONSUMPTION, STATUS_SINGLE_STEP, STATUS_STACK_OVERFLOW,
 };
 
+use std::collections::HashMap;
+use std::fmt::{self, Write};
 use std::mem;
 use std::ptr;
 use std::time::{Duration, Instant};
@@ -106,18 +112,45 @@ impl Process {
         let stdio = stdio.into();
         let info = info.as_ref();
 
+        let mut user = info
+            .username
+            .as_ref()
+            .map(|uname| User::create(uname, info.password.as_ref()))
+            .transpose()?;
+
+        let mut env = match info.env {
+            Environment::Inherit => std::env::vars().collect(),
+            Environment::Clear => HashMap::new(),
+            Environment::UserDefault => {
+                let block = EnvBlock::create(&user)?;
+                let x = block
+                    .iter()
+                    .map(|var| {
+                        let idx = var.find('=').unwrap();
+                        (var[0..idx].to_string(), var[idx + 1..].to_string())
+                    })
+                    .collect();
+                x
+            }
+        };
+        env.extend(info.env_vars.iter().cloned());
+
         create_suspended_process(
-            info,
-            Stdio {
+            std::iter::once(&info.app).chain(info.args.iter()),
+            env,
+            RawStdio {
                 stdin: stdio.stdin.into_inner(),
                 stdout: stdio.stdout.into_inner(),
                 stderr: stdio.stderr.into_inner(),
             },
+            info.working_directory.as_ref(),
+            user.as_mut(),
+            info.show_window,
         )
-        .map(|ps| Self {
-            handle: Handle(ps.base.hProcess),
-            main_thread: Handle(ps.base.hThread),
-            user: ps.user,
+        .map(|info| Self {
+            handle: Handle(info.hProcess),
+            main_thread: Handle(info.hThread),
+            user: user,
         })
     }
 }
@@ -224,48 +257,128 @@ impl Group {
     }
 }
 
-fn create_suspended_process(info: &ProcessInfo, stdio: Stdio) -> Result<ProcessInformation> {
-    let mut opts = CreateProcessOptions::new(
-        std::iter::once(info.app.as_str()).chain(info.args.iter().map(|a| a.as_str())),
-        stdio,
-    );
-    opts.show_window(info.show_window)
-        .create_suspended(true)
-        .hide_errors(true);
-    if let Some(ref dir) = info.working_directory {
-        opts.working_directory(dir);
+fn create_suspended_process<S, T, U>(
+    argv: T,
+    env: HashMap<String, String>,
+    stdio: RawStdio,
+    working_dir: Option<U>,
+    user: Option<&mut User>,
+    show_window: bool,
+) -> Result<PROCESS_INFORMATION>
+where
+    S: AsRef<str>,
+    T: IntoIterator<Item = S>,
+    U: AsRef<str>,
+{
+    let mut cmd = argv_to_cmd(argv);
+    let mut env = create_env(env);
+    let creation_flags =
+        CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED;
+    let working_dir = working_dir.map_or(ptr::null(), |dir| to_utf16(dir.as_ref()).as_ptr());
+    let user_token = user.as_ref().map(|u| u.token.0);
+
+    let mut inherited_handles = [stdio.stdin.0, stdio.stdout.0, stdio.stderr.0];
+    let mut startup_info = StartupInfo::create(
+        &stdio,
+        &mut inherited_handles,
+        user.map(|u| &mut u.desktop_name),
+        show_window,
+    )?;
+
+    let mut process_info: PROCESS_INFORMATION = unsafe { mem::zeroed() };
+
+    unsafe {
+        SetErrorMode(SEM_NOGPFAULTERRORBOX | SEM_FAILCRITICALERRORS);
+        let result = if let Some(user_token) = user_token {
+            CreateProcessAsUserW(
+                /*hToken=*/ user_token,
+                /*lpApplicationName=*/ ptr::null(),
+                /*lpCommandLine=*/ cmd.as_mut_ptr(),
+                /*lpProcessAttributes=*/ ptr::null_mut(),
+                /*lpThreadAttributes=*/ ptr::null_mut(),
+                /*bInheritHandles=*/ TRUE,
+                /*dwCreationFlags=*/ creation_flags,
+                /*lpEnvironment=*/ mem::transmute(env.as_mut_ptr()),
+                /*lpCurrentDirectory=*/ working_dir,
+                /*lpStartupInfo=*/ mem::transmute(&mut startup_info.base),
+                /*lpProcessInformation=*/ &mut process_info,
+            )
+        } else {
+            CreateProcessW(
+                /*lpApplicationName=*/ ptr::null(),
+                /*lpCommandLine=*/ cmd.as_mut_ptr(),
+                /*lpProcessAttributes=*/ ptr::null_mut(),
+                /*lpThreadAttributes=*/ ptr::null_mut(),
+                /*bInheritHandles=*/ TRUE,
+                /*dwCreationFlags=*/ creation_flags,
+                /*lpEnvironment=*/ mem::transmute(env.as_mut_ptr()),
+                /*lpCurrentDirectory=*/ working_dir,
+                /*lpStartupInfo=*/ mem::transmute(&mut startup_info.base),
+                /*lpProcessInformation=*/ &mut process_info,
+            )
+        };
+
+        // Restore default error mode.
+        SetErrorMode(0);
+        cvt(result)?;
     }
 
-    let user = info
-        .username
-        .as_ref()
-        .map(|uname| User::create(uname, info.password.as_ref()))
-        .transpose()?;
+    Ok(process_info)
+}
 
-    match info.env {
-        Environment::Inherit => {
-            opts.envs(std::env::vars());
+fn argv_to_cmd<T, U>(argv: T) -> Vec<u16>
+where
+    T: IntoIterator<Item = U>,
+    U: AsRef<str>,
+{
+    let mut cmd = String::new();
+    for (idx, arg) in argv.into_iter().enumerate() {
+        if idx != 0 {
+            cmd.write_char(' ').unwrap();
         }
-        Environment::Clear => {
-            opts.env_clear();
-        }
-        Environment::UserDefault => {
-            let block = EnvBlock::create(&user)?;
-            for var in block.iter() {
-                if let Some(idx) = var.find('=') {
-                    opts.env(var[0..idx].to_string(), var[idx + 1..].to_string());
-                }
-            }
-        }
+        write_quoted(&mut cmd, arg.as_ref());
     }
+    to_utf16(cmd)
+}
 
-    opts.envs(info.env_vars.iter().map(|(k, v)| (k.as_str(), v.as_str())));
-
-    if let Some(u) = user {
-        opts.user(u);
+fn write_quoted<W, S>(w: &mut W, s: S)
+where
+    W: fmt::Write,
+    S: AsRef<str>,
+{
+    let escaped = s.as_ref().replace("\"", "\\\"");
+    if escaped.find(' ').is_some() {
+        write!(w, "\"{}\"", escaped)
+    } else {
+        w.write_str(escaped.as_str())
     }
+    .unwrap();
+}
 
-    opts.create()
+fn create_env<I, K, V>(vars: I) -> Vec<u16>
+where
+    K: AsRef<str>,
+    V: AsRef<str>,
+    I: IntoIterator<Item = (K, V)>,
+{
+    // https://docs.microsoft.com/en-us/windows/desktop/api/processthreadsapi/nf-processthreadsapi-createprocessa
+    //
+    // An environment block consists of a null-terminated block of null-terminated strings.
+    // Each string is in the following form:
+    //     name=value\0
+    //
+    // A Unicode environment block is terminated by four zero bytes: two for the last string,
+    // two more to terminate the block.
+    let mut result = vars
+        .into_iter()
+        .map(|(k, v)| to_utf16(format!("{}={}", k.as_ref(), v.as_ref())))
+        .flatten()
+        .chain(std::iter::once(0))
+        .collect::<Vec<u16>>();
+    if result.len() == 1 {
+        result.push(0);
+    }
+    result
 }
 
 fn crash_cause(exit_code: DWORD) -> Option<&'static str> {
