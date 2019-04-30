@@ -4,9 +4,11 @@ mod limit_checker;
 
 cfg_if! {
     if #[cfg(windows)] {
-        extern crate winapi;
         mod windows;
         pub use self::windows::*;
+    } else if #[cfg(unix)] {
+        mod unix;
+        pub use self::unix::*;
     } else {
         compile_error!("spawner doesn't compile for this platform yet");
     }

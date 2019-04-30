@@ -1,8 +1,17 @@
 extern crate backtrace;
 extern crate cfg_if;
 
-#[cfg(windows)]
-extern crate winapi;
+use cfg_if::cfg_if;
+
+cfg_if! {
+    if #[cfg(windows)] {
+        extern crate winapi;
+    } else if #[cfg(unix)] {
+        extern crate nix;
+        extern crate rand;
+        extern crate cgroups_fs;
+    }
+}
 
 pub mod iograph;
 pub mod pipe;

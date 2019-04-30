@@ -1,5 +1,5 @@
 use crate::assert_approx_eq;
-use crate::common::{APP, MEM_ERR, TIME_ERR};
+use crate::common::{TmpDir, APP, MEM_ERR, TIME_ERR};
 
 use spawner_driver::run;
 
@@ -47,30 +47,31 @@ fn total_processes_created() {
     let r = run(&[
         APP,
         "sleep",
-        "0",
+        "0.1",
         "exec_rest",
         APP,
         "sleep",
-        "0.5",
+        "0.1",
         "exec_rest",
         APP,
         "sleep",
-        "0",
+        "0.1",
         "exec_rest",
         APP,
         "sleep",
-        "0.5",
+        "0.1",
         "exec_rest",
         APP,
         "sleep",
-        "0",
+        "0.1",
     ])
     .unwrap();
     assert_eq!(r[0].result.processes_created, 5);
 }
 
+#[cfg(windows)]
 #[test]
-fn total_bytes_written() {
+fn total_bytes_written_1() {
     let r = run(&[
         APP,
         "A",
@@ -89,6 +90,28 @@ fn total_bytes_written() {
     ])
     .unwrap();
     assert_eq!(r[0].result.bytes_written, 5);
+}
+
+#[test]
+fn total_bytes_written_2() {
+    let tmp = TmpDir::new();
+    let _10mb = (10 * 1024).to_string();
+    let f1 = tmp.file("1.txt");
+    let f2 = tmp.file("2.txt");
+    let r = run(&[
+        APP,
+        "fwrite",
+        &f1,
+        &_10mb,
+        "exec_rest",
+        APP,
+        "fwrite",
+        &f2,
+        &_10mb,
+    ])
+    .unwrap();
+
+    assert_approx_eq!(r[0].result.bytes_written, 20 * 1024 * 1024, MEM_ERR);
 }
 
 #[test]

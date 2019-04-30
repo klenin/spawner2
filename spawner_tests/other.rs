@@ -1,7 +1,8 @@
 use crate::term_reason::ensure_wall_clock_time_limit_exceeded;
 
+use crate::common::APP;
 #[cfg(windows)]
-use crate::common::{read_all, write_all, TmpDir, APP};
+use crate::common::{read_all, write_all, TmpDir};
 
 use spawner_driver::run;
 
