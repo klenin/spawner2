@@ -187,7 +187,7 @@ impl EnvBlock {
                 FALSE,
             ))?;
 
-            while *block.offset(len) != 0 && *block.offset(len + 1) != 0 {
+            while !(*block.offset(len) == 0 && *block.offset(len + 1) == 0) {
                 len += 1;
             }
         }
