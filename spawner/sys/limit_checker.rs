@@ -16,18 +16,14 @@ pub struct LimitChecker {
 }
 
 impl LimitChecker {
-    pub fn new() -> Self {
+    pub fn new(limits: ResourceLimits) -> Self {
         Self {
-            limits: ResourceLimits::default(),
+            limits: limits,
             prev_check: None,
             wall_clock_time_zero: Duration::from_millis(0),
             user_time_zero: Duration::from_millis(0),
             total_idle_time: Duration::from_millis(0),
         }
-    }
-
-    pub fn set_limits(&mut self, limits: ResourceLimits) {
-        self.limits = limits;
     }
 
     pub fn reset_timers(&mut self, wall_clock_time_zero: Duration, user_time_zero: Duration) {
@@ -71,17 +67,20 @@ impl LimitChecker {
         }
 
         let limits = &self.limits;
-        if gr(usage.wall_clock_time, limits.max_wall_clock_time) {
+        if gr(usage.wall_clock_time, limits.wall_clock_time) {
             Some(LimitViolation::WallClockTimeLimitExceeded)
-        } else if gr(self.total_idle_time, limits.max_idle_time) {
+        } else if gr(self.total_idle_time, limits.total_idle_time) {
             Some(LimitViolation::IdleTimeLimitExceeded)
-        } else if gr(usage.total_user_time, limits.max_user_time) {
+        } else if gr(usage.total_user_time, limits.total_user_time) {
             Some(LimitViolation::UserTimeLimitExceeded)
-        } else if gr(usage.total_bytes_written, limits.max_output_size) {
+        } else if gr(usage.total_bytes_written, limits.total_bytes_written) {
             Some(LimitViolation::WriteLimitExceeded)
-        } else if gr(usage.peak_memory_used, limits.max_memory_usage) {
+        } else if gr(usage.peak_memory_used, limits.peak_memory_used) {
             Some(LimitViolation::MemoryLimitExceeded)
-        } else if gr(usage.total_processes_created, limits.max_processes) {
+        } else if gr(
+            usage.total_processes_created,
+            limits.total_processes_created,
+        ) {
             Some(LimitViolation::ProcessLimitExceeded)
         } else {
             None

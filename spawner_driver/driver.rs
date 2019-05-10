@@ -168,12 +168,12 @@ fn create_tasks(
 
             monitor_interval: cmd.monitor_interval,
             resource_limits: ResourceLimits {
-                max_wall_clock_time: cmd.wall_clock_time_limit,
-                max_idle_time: cmd.idle_time_limit,
-                max_user_time: cmd.time_limit,
-                max_memory_usage: cmd.memory_limit.map(|v| mb2b(v)),
-                max_output_size: cmd.write_limit.map(|v| mb2b(v)),
-                max_processes: cmd.process_count,
+                wall_clock_time: cmd.wall_clock_time_limit,
+                total_idle_time: cmd.idle_time_limit,
+                total_user_time: cmd.time_limit,
+                peak_memory_used: cmd.memory_limit.map(mb2b),
+                total_bytes_written: cmd.write_limit.map(mb2b),
+                total_processes_created: cmd.process_count,
             },
             on_terminate: match role {
                 Role::Default => None,

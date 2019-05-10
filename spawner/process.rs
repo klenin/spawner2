@@ -26,17 +26,17 @@ pub enum LimitViolation {
 #[derive(Copy, Clone, Debug)]
 pub struct ResourceLimits {
     /// The maximum allowed amount of time for a process group.
-    pub max_wall_clock_time: Option<Duration>,
+    pub wall_clock_time: Option<Duration>,
     /// Idle time is wall clock time - user time.
-    pub max_idle_time: Option<Duration>,
+    pub total_idle_time: Option<Duration>,
     /// The maximum allowed amount of user-mode execution time for a process group.
-    pub max_user_time: Option<Duration>,
+    pub total_user_time: Option<Duration>,
     /// The maximum allowed memory usage, in bytes.
-    pub max_memory_usage: Option<u64>,
+    pub peak_memory_used: Option<u64>,
     /// The maximum allowed amount of bytes written by a process group.
-    pub max_output_size: Option<u64>,
+    pub total_bytes_written: Option<u64>,
     /// The maximum allowed number of processes created.
-    pub max_processes: Option<usize>,
+    pub total_processes_created: Option<usize>,
 }
 
 /// Describes the resource usage of a process group.
@@ -109,12 +109,12 @@ pub struct Group(ps_impl::Group);
 impl Default for ResourceLimits {
     fn default() -> Self {
         Self {
-            max_wall_clock_time: None,
-            max_idle_time: None,
-            max_user_time: None,
-            max_memory_usage: None,
-            max_output_size: None,
-            max_processes: None,
+            wall_clock_time: None,
+            total_idle_time: None,
+            total_user_time: None,
+            peak_memory_used: None,
+            total_bytes_written: None,
+            total_processes_created: None,
         }
     }
 }
@@ -157,13 +157,11 @@ impl Process {
 
 impl Group {
     /// Creates new process group.
-    pub fn new() -> Result<Self> {
-        ps_impl::Group::new().map(Self)
-    }
-
-    /// Sets limits for this process group.
-    pub fn set_limits<T: Into<ResourceLimits>>(&mut self, limits: T) -> Result<()> {
-        self.0.set_limits(limits)
+    pub fn new<T>(limits: T) -> Result<Self>
+    where
+        T: Into<ResourceLimits>,
+    {
+        ps_impl::Group::new(limits).map(Self)
     }
 
     /// Spawns process and assigns it to this group.
