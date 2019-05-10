@@ -25,7 +25,8 @@ winapi = { version = "0.3.6", features = [
     "fileapi",
     "userenv",
     "errhandlingapi",
-    "securitybaseapi",] }
+    "securitybaseapi",
+    "ioapiset", ] }
 
 [target.'cfg(unix)'.dependencies]
 cgroups-fs = "1.0.1"

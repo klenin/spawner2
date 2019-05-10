@@ -146,23 +146,27 @@ impl Process {
 }
 
 impl Group {
-    pub fn new() -> Result<Self> {
+    pub fn new<T>(limits: T) -> Result<Self>
+    where
+        T: Into<ResourceLimits>,
+    {
+        let limits = limits.into();
+        let memory = create_cgroup("memory/sp")?;
+        if let Some(mem_limit) = limits.peak_memory_used {
+            memory.set_value("memory.limit_in_bytes", mem_limit)?;
+        }
+
         Ok(Self {
-            memory: create_cgroup("memory/sp")?,
+            memory: memory,
             cpuacct: create_cgroup("cpuacct/sp")?,
             pids: create_cgroup("pids/sp")?,
             freezer: create_cgroup("freezer/sp")?,
-            limit_checker: LimitChecker::new(),
+            limit_checker: LimitChecker::new(limits),
             creation_time: Instant::now(),
             active_tasks: HashMap::new(),
             dead_tasks_wchar: 0,
             num_dead_tasks: 0,
         })
-    }
-
-    pub fn set_limits<T: Into<ResourceLimits>>(&mut self, limits: T) -> Result<()> {
-        self.limit_checker.set_limits(limits.into());
-        Ok(())
     }
 
     pub fn spawn<T, U>(&mut self, info: T, stdio: U) -> Result<Process>
@@ -210,6 +214,10 @@ impl Group {
     }
 
     pub fn check_limits(&mut self) -> Result<Option<LimitViolation>> {
+        if self.memory.get_value::<usize>("memory.failcnt")? > 0 {
+            return Ok(Some(LimitViolation::MemoryLimitExceeded));
+        }
+
         self.resource_usage()
             .map(|usage| self.limit_checker.check(usage))
     }

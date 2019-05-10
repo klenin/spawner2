@@ -10,8 +10,11 @@ use crate::{Error, Result};
 
 use winapi::shared::minwindef::{DWORD, TRUE};
 use winapi::um::errhandlingapi::SetErrorMode;
+use winapi::um::handleapi::INVALID_HANDLE_VALUE;
+use winapi::um::ioapiset::{CreateIoCompletionPort, GetQueuedCompletionStatus};
 use winapi::um::jobapi2::{
-    AssignProcessToJobObject, CreateJobObjectW, QueryInformationJobObject, TerminateJobObject,
+    AssignProcessToJobObject, CreateJobObjectW, QueryInformationJobObject, SetInformationJobObject,
+    TerminateJobObject,
 };
 use winapi::um::minwinbase::STILL_ACTIVE;
 use winapi::um::processthreadsapi::{
@@ -23,16 +26,18 @@ use winapi::um::winbase::{
     SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX,
 };
 use winapi::um::winnt::{
-    JobObjectBasicAndIoAccountingInformation, JobObjectExtendedLimitInformation,
+    JobObjectAssociateCompletionPortInformation, JobObjectBasicAndIoAccountingInformation,
+    JobObjectExtendedLimitInformation, JOBOBJECT_ASSOCIATE_COMPLETION_PORT,
     JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    STATUS_ACCESS_VIOLATION, STATUS_ARRAY_BOUNDS_EXCEEDED, STATUS_BREAKPOINT,
-    STATUS_CONTROL_C_EXIT, STATUS_DATATYPE_MISALIGNMENT, STATUS_FLOAT_DENORMAL_OPERAND,
-    STATUS_FLOAT_INEXACT_RESULT, STATUS_FLOAT_INVALID_OPERATION, STATUS_FLOAT_MULTIPLE_FAULTS,
-    STATUS_FLOAT_MULTIPLE_TRAPS, STATUS_FLOAT_OVERFLOW, STATUS_FLOAT_STACK_CHECK,
-    STATUS_FLOAT_UNDERFLOW, STATUS_GUARD_PAGE_VIOLATION, STATUS_ILLEGAL_INSTRUCTION,
-    STATUS_INTEGER_DIVIDE_BY_ZERO, STATUS_INTEGER_OVERFLOW, STATUS_INVALID_DISPOSITION,
-    STATUS_IN_PAGE_ERROR, STATUS_NONCONTINUABLE_EXCEPTION, STATUS_PRIVILEGED_INSTRUCTION,
-    STATUS_REG_NAT_CONSUMPTION, STATUS_SINGLE_STEP, STATUS_STACK_OVERFLOW,
+    JOB_OBJECT_LIMIT_JOB_MEMORY, JOB_OBJECT_MSG_JOB_MEMORY_LIMIT, STATUS_ACCESS_VIOLATION,
+    STATUS_ARRAY_BOUNDS_EXCEEDED, STATUS_BREAKPOINT, STATUS_CONTROL_C_EXIT,
+    STATUS_DATATYPE_MISALIGNMENT, STATUS_FLOAT_DENORMAL_OPERAND, STATUS_FLOAT_INEXACT_RESULT,
+    STATUS_FLOAT_INVALID_OPERATION, STATUS_FLOAT_MULTIPLE_FAULTS, STATUS_FLOAT_MULTIPLE_TRAPS,
+    STATUS_FLOAT_OVERFLOW, STATUS_FLOAT_STACK_CHECK, STATUS_FLOAT_UNDERFLOW,
+    STATUS_GUARD_PAGE_VIOLATION, STATUS_ILLEGAL_INSTRUCTION, STATUS_INTEGER_DIVIDE_BY_ZERO,
+    STATUS_INTEGER_OVERFLOW, STATUS_INVALID_DISPOSITION, STATUS_IN_PAGE_ERROR,
+    STATUS_NONCONTINUABLE_EXCEPTION, STATUS_PRIVILEGED_INSTRUCTION, STATUS_REG_NAT_CONSUMPTION,
+    STATUS_SINGLE_STEP, STATUS_STACK_OVERFLOW,
 };
 
 use std::collections::HashMap;
@@ -57,7 +62,8 @@ pub struct Process {
 unsafe impl Send for Process {}
 
 pub struct Group {
-    handle: Handle,
+    job: Handle,
+    completion_port: Handle,
     limit_checker: LimitChecker,
     creation_time: Instant,
 }
@@ -156,18 +162,19 @@ impl Process {
 }
 
 impl Group {
-    pub fn new() -> Result<Self> {
-        let handle = Handle(unsafe { cvt(CreateJobObjectW(ptr::null_mut(), ptr::null()))? });
-        Ok(Self {
-            handle: handle,
-            limit_checker: LimitChecker::new(),
-            creation_time: Instant::now(),
+    pub fn new<T>(limits: T) -> Result<Self>
+    where
+        T: Into<ResourceLimits>,
+    {
+        let limits = limits.into();
+        create_job(limits).and_then(|job| {
+            create_job_completion_port(&job).map(|port| Self {
+                job: job,
+                completion_port: port,
+                limit_checker: LimitChecker::new(limits),
+                creation_time: Instant::now(),
+            })
         })
-    }
-
-    pub fn set_limits<T: Into<ResourceLimits>>(&mut self, limits: T) -> Result<()> {
-        self.limit_checker.set_limits(limits.into());
-        Ok(())
     }
 
     pub fn spawn<T, U>(&mut self, info: T, stdio: U) -> Result<Process>
@@ -177,7 +184,7 @@ impl Group {
     {
         let info = info.as_ref();
         let ps = Process::suspended(info, stdio)?;
-        cvt(unsafe { AssignProcessToJobObject(self.handle.0, ps.handle.0) })
+        cvt(unsafe { AssignProcessToJobObject(self.job.0, ps.handle.0) })
             .and_then(|_| if info.suspended { Ok(()) } else { ps.resume() })
             .map_err(|e| {
                 let _ = ps.terminate();
@@ -210,6 +217,24 @@ impl Group {
     }
 
     pub fn check_limits(&mut self) -> Result<Option<LimitViolation>> {
+        let mut num_bytes = 0;
+        let mut _key = 0;
+        let mut _overlapped = ptr::null_mut();
+        if unsafe {
+            GetQueuedCompletionStatus(
+                /*CompletionPort=*/ self.completion_port.0,
+                /*lpNumberOfBytes=*/ &mut num_bytes,
+                /*lpCompletionKey=*/ &mut _key,
+                /*lpOverlapped=*/ &mut _overlapped,
+                /*dwMilliseconds=*/ 0,
+            )
+        } == TRUE
+        {
+            if num_bytes == JOB_OBJECT_MSG_JOB_MEMORY_LIMIT {
+                return Ok(Some(LimitViolation::MemoryLimitExceeded));
+            }
+        }
+
         self.resource_usage()
             .map(|usage| self.limit_checker.check(usage))
     }
@@ -222,7 +247,7 @@ impl Group {
     }
 
     pub fn terminate(&self) -> Result<()> {
-        cvt(unsafe { TerminateJobObject(self.handle.0, 0) })?;
+        cvt(unsafe { TerminateJobObject(self.job.0, 0) })?;
         Ok(())
     }
 
@@ -232,7 +257,7 @@ impl Group {
                 mem::zeroed();
 
             cvt(QueryInformationJobObject(
-                /*hJob=*/ self.handle.0,
+                /*hJob=*/ self.job.0,
                 /*JobObjectInfoClass=*/ JobObjectBasicAndIoAccountingInformation,
                 /*lpJobObjectInfo=*/ mem::transmute(&mut basic_and_io_info),
                 /*cbJobObjectInfoLength=*/ mem::size_of_val(&basic_and_io_info) as DWORD,
@@ -246,7 +271,7 @@ impl Group {
         unsafe {
             let mut ext_info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = mem::zeroed();
             cvt(QueryInformationJobObject(
-                /*hJob=*/ self.handle.0,
+                /*hJob=*/ self.job.0,
                 /*JobObjectInfoClass=*/ JobObjectExtendedLimitInformation,
                 /*lpJobObjectInfo=*/ mem::transmute(&mut ext_info),
                 /*cbJobObjectInfoLength=*/ mem::size_of_val(&ext_info) as DWORD,
@@ -353,6 +378,51 @@ where
         w.write_str(escaped.as_str())
     }
     .unwrap();
+}
+
+fn create_job(limits: ResourceLimits) -> Result<Handle> {
+    unsafe {
+        let job = Handle(cvt(CreateJobObjectW(ptr::null_mut(), ptr::null()))?);
+
+        let mut ext_limit_info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = mem::zeroed();
+        if let Some(mem_limit) = limits.peak_memory_used {
+            ext_limit_info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
+            ext_limit_info.JobMemoryLimit = mem_limit as usize;
+        }
+        cvt(SetInformationJobObject(
+            /*hJob=*/ job.0,
+            /*JobObjectInformationClass=*/ JobObjectExtendedLimitInformation,
+            /*lpJobObjectInformation=*/ mem::transmute(&mut ext_limit_info),
+            /*cbJobObjectInformationLength=*/ mem::size_of_val(&ext_limit_info) as DWORD,
+        ))?;
+
+        Ok(job)
+    }
+}
+
+fn create_job_completion_port(job: &Handle) -> Result<Handle> {
+    unsafe {
+        let port = Handle(cvt(CreateIoCompletionPort(
+            /*FileHandle=*/ INVALID_HANDLE_VALUE,
+            /*ExistingCompletionPort=*/ ptr::null_mut(),
+            /*CompletionKey=*/ 0,
+            /*NumberOfConcurrentThreads=*/ 1,
+        ))?);
+
+        let mut port_info = JOBOBJECT_ASSOCIATE_COMPLETION_PORT {
+            CompletionKey: ptr::null_mut(),
+            CompletionPort: port.0,
+        };
+
+        cvt(SetInformationJobObject(
+            /*hJob=*/ job.0,
+            /*JobObjectInformationClass=*/ JobObjectAssociateCompletionPortInformation,
+            /*lpJobObjectInformation=*/ mem::transmute(&mut port_info),
+            /*cbJobObjectInformationLength=*/ mem::size_of_val(&port_info) as DWORD,
+        ))?;
+
+        Ok(port)
+    }
 }
 
 fn create_env<I, K, V>(vars: I) -> Vec<u16>

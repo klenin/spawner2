@@ -110,8 +110,7 @@ impl RunnerThread {
     }
 
     fn entry(task: Task, stdio: ProcessStdio, receiver: Receiver<Message>) -> Result<RunnerReport> {
-        let mut group = Group::new()?;
-        group.set_limits(task.resource_limits)?;
+        let mut group = Group::new(task.resource_limits)?;
         let mut process = group.spawn(task.process_info, stdio)?;
         let result = RunnerThread::monitor_process(
             &mut process,
@@ -142,7 +141,12 @@ impl RunnerThread {
                     return Ok(RunnerReport {
                         resource_usage: res_usage,
                         exit_status: exit_status,
-                        termination_reason: term_reason,
+                        termination_reason: term_reason.or_else(|| {
+                            group
+                                .check_limits()
+                                .unwrap_or(None)
+                                .map(TerminationReason::LimitViolation)
+                        }),
                     });
                 }
             }
