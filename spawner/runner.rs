@@ -9,7 +9,11 @@ use std::time::Duration;
 /// Describes the termination reason for a process.
 #[derive(Clone, Debug, PartialEq)]
 pub enum TerminationReason {
+    /// Process was terminated due to limit violation.
     LimitViolation(process::LimitViolation),
+    /// Process was terminated by ['Runner'].
+    ///
+    /// [`Runner`]: struct.Runner.html
     ManuallyTerminated,
 }
 
@@ -29,6 +33,8 @@ enum Message {
 }
 
 /// Used to control a process in a [`RunnerThread`].
+/// Note that multiple runners can exist at the same time, allowing simultaneous control
+/// over given process.
 ///
 /// [`RunnerThread`]: struct.RunnerThread.html
 #[derive(Clone)]
@@ -47,29 +53,34 @@ impl Runner {
         let _ = self.0.send(m);
     }
 
-    /// Terminates process.
+    /// Sends message to a runner thread that will terminate process group.
+    /// This method will do nothing if a runner thread has exited.
     pub fn terminate(&self) {
         self.send(Message::Terminate)
     }
 
-    /// Suspends process.
+    /// Sends message to a runner thread that will suspend the main thread of a running process.
+    /// This method will do nothing if a runner thread has exited.
     pub fn suspend(&self) {
         self.send(Message::Suspend)
     }
 
-    /// Resumes process.
+    /// Sends message to a runner thread that will resume the main thread of a running process.
+    /// This method will do nothing if a runner thread has exited.
     pub fn resume(&self) {
         self.send(Message::Resume)
     }
 
-    /// Resets wall clock time, user time and idle time.
+    /// Sends message to a runner thread that will reset wall clock,
+    /// user and idle time usage of a process group.
+    /// This method will do nothing if a runner thread has exited.
     pub fn reset_time_usage(&self) {
         self.send(Message::ResetTimeUsage)
     }
 }
 
 impl RunnerThread {
-    /// Spawns runner thread.
+    /// Spawns runner thread, returning a handle to it.
     pub fn spawn<T, U>(task: T, stdio: U) -> Result<Self>
     where
         T: Into<Task>,
@@ -87,12 +98,11 @@ impl RunnerThread {
             })
     }
 
-    /// Returns runner.
     pub fn runner(&self) -> Runner {
         self.runner.clone()
     }
 
-    /// Joins runner thread.
+    /// Waits for the runner thread to finish.
     pub fn join(self) -> Result<RunnerReport> {
         self.handle
             .join()

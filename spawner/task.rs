@@ -13,6 +13,7 @@ pub trait OnTerminate: Send {
     fn on_terminate(&mut self);
 }
 
+/// Represents a program to be spawned.
 pub struct Task {
     pub process_info: ProcessInfo,
     pub resource_limits: ResourceLimits,
@@ -31,7 +32,7 @@ pub struct StdioMapping {
     pub stderr: IstreamId,
 }
 
-/// A task list builder that is used to create [`Spawner`].
+/// Describes a collection of tasks along with their standard streams.
 ///
 /// [`Spawner`]: struct.Spawner.html
 pub struct Tasks {
@@ -56,7 +57,6 @@ struct StdioThreads {
     stderr: Option<ReadHubThread>,
 }
 
-/// Contains task's controllers.
 #[derive(Clone)]
 pub struct TaskController {
     runner: Runner,
@@ -131,7 +131,6 @@ impl TaskController {
 }
 
 impl Spawner {
-    /// Spawns the task list.
     pub fn spawn(tasks: Tasks) -> Result<Self> {
         let (mut iostreams, iograph) = tasks.io.build();
 
@@ -209,7 +208,6 @@ impl Spawner {
         })
     }
 
-    /// Returns a reference to the io graph.
     pub fn io_graph(&self) -> &IoGraph {
         &self.iograph
     }

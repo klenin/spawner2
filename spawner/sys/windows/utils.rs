@@ -95,6 +95,8 @@ impl User {
                 /*phToken=*/ &mut token,
             ))?;
 
+            // Create separate desktop and window station for this user account, so it can get access to them.
+            // Otherwise, window applications may crash since they don't have access to current desktop\winstation.
             let new_winsta = cvt(CreateWindowStationW(
                 /*lpwinsta=*/ ptr::null(),
                 /*dwFlags=*/ 0,
@@ -175,6 +177,14 @@ impl<'a> Drop for UserContext<'a> {
 
 impl EnvBlock {
     pub fn create(user: &Option<User>) -> Result<Self> {
+        // https://docs.microsoft.com/en-us/windows/desktop/api/processthreadsapi/nf-processthreadsapi-createprocessa
+        //
+        // An environment block consists of a null-terminated block of null-terminated strings.
+        // Each string is in the following form:
+        //     name=value\0
+        //
+        // A Unicode environment block is terminated by four zero bytes: two for the last string,
+        // two more to terminate the block.
         let mut block: *mut u16 = ptr::null_mut();
         let mut len = 0;
         unsafe {

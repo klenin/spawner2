@@ -361,20 +361,13 @@ where
     V: AsRef<str>,
     I: IntoIterator<Item = (K, V)>,
 {
-    // https://docs.microsoft.com/en-us/windows/desktop/api/processthreadsapi/nf-processthreadsapi-createprocessa
-    //
-    // An environment block consists of a null-terminated block of null-terminated strings.
-    // Each string is in the following form:
-    //     name=value\0
-    //
-    // A Unicode environment block is terminated by four zero bytes: two for the last string,
-    // two more to terminate the block.
     let mut result = vars
         .into_iter()
         .map(|(k, v)| to_utf16(format!("{}={}", k.as_ref(), v.as_ref())))
         .flatten()
         .chain(std::iter::once(0))
         .collect::<Vec<u16>>();
+    // Environment block is terminated by 2 zeros.
     if result.len() == 1 {
         result.push(0);
     }

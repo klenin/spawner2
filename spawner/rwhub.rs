@@ -5,7 +5,9 @@ use std::io::{self, BufWriter, Read, Write};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 
-/// Splits the `ReadPipe` allowing multiple readers to receive data from it.
+/// Splits the [`ReadPipe`] allowing multiple readers to receive data from it.
+///
+/// [`ReadPipe`]: struct.ReadPipe.html
 pub struct ReadHub {
     pipe: ReadPipe,
     controller: Option<Box<(ReadHubController)>>,
@@ -13,10 +15,22 @@ pub struct ReadHub {
     buffer_size: usize,
 }
 
+/// Allows dynamic control over data flow in [`ReadHub`].
+///
+/// [`ReadHub`]: struct.ReadHub.html
 pub trait ReadHubController: Send {
     fn handle_data(&mut self, data: &[u8], write_hubs: &mut [WriteHub]) -> Result<()>;
 }
 
+/// Continiously reads data from [`ReadHub`] sending it to corresponding receivers.
+/// Exits if one of the following conditions is met:
+/// * Error reading from [`ReadHub`].
+/// * EOF encountered.
+/// * [`ReadHubController::handle_data`] returned error.
+/// * All receivers are dead.
+///
+/// [`ReadHub`]: struct.ReadHub.html
+/// [`ReadHubController::handle_data`]: trait.ReadHubController.html#method.handle_data
 pub struct ReadHubThread(JoinHandle<Result<ReadPipe>>);
 
 enum WriteHubDst {
@@ -24,7 +38,9 @@ enum WriteHubDst {
     File(BufWriter<WritePipe>),
 }
 
-/// Allows multiple writers to send data to the `WritePipe`.
+/// Allows multiple writers to send data to the [`WritePipe`].
+///
+/// [`WritePipe`]: struct.WritePipe.html
 #[derive(Clone)]
 pub struct WriteHub {
     dst: Arc<Mutex<WriteHubDst>>,

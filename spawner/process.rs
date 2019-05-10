@@ -149,7 +149,7 @@ impl Process {
         self.0.resume()
     }
 
-    /// Terminates process.
+    /// Terminates this process, does not affect child processes.
     pub fn terminate(&self) -> Result<()> {
         self.0.terminate()
     }

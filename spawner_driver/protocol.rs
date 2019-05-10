@@ -395,8 +395,7 @@ impl<'a> Message<'a> {
             None => return Err(Error::from("Missing '#' in controller message")),
         };
 
-        let (agent_idx, kind) = Message::parse_header(header, msg)?;
-        Ok(Self {
+        Message::parse_header(header, msg).map(|(agent_idx, kind)| Self {
             agent_idx: match agent_idx {
                 0 => None,
                 x => Some(AgentIdx(x - 1)),

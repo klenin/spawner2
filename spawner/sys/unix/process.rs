@@ -47,8 +47,11 @@ pub struct Group {
     freezer: Cgroup,
     limit_checker: LimitChecker,
     creation_time: Instant,
+
+    // Since we have information only about active tasks we need to memorize amount
+    // of dead tasks and amount of bytes written by them.
     active_tasks: HashMap<Pid, u64>,
-    dead_tasks_io: u64,
+    dead_tasks_wchar: u64,
     num_dead_tasks: usize,
 }
 
@@ -152,7 +155,7 @@ impl Group {
             limit_checker: LimitChecker::new(),
             creation_time: Instant::now(),
             active_tasks: HashMap::new(),
-            dead_tasks_io: 0,
+            dead_tasks_wchar: 0,
             num_dead_tasks: 0,
         })
     }
@@ -200,7 +203,7 @@ impl Group {
             total_kernel_time: Duration::from_nanos(total_sys_time),
             peak_memory_used: max_mem_usage + max_kmem_usage,
             total_bytes_written: self.active_tasks.values().cloned().sum::<u64>()
-                + self.dead_tasks_io,
+                + self.dead_tasks_wchar,
             total_processes_created: self.num_dead_tasks + self.active_tasks.len(),
             active_processes: self.active_tasks.len(),
         })
@@ -252,7 +255,7 @@ impl Group {
 
         self.num_dead_tasks += dead_tasks.len();
         for pid in dead_tasks {
-            self.dead_tasks_io += old_active_tasks.remove(&pid).unwrap();
+            self.dead_tasks_wchar += old_active_tasks.remove(&pid).unwrap();
         }
 
         Ok(())
