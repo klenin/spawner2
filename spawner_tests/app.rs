@@ -41,6 +41,9 @@ fn loop_(dur: Duration) {
 fn alloc_(bytes: usize) {
     unsafe {
         let ptr: *mut u8 = alloc(Layout::from_size_align_unchecked(bytes, 1));
+        if ptr.is_null() {
+            return;
+        }
         for i in 0..bytes {
             *ptr.offset(i as isize) = 101;
         }
