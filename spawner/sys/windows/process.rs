@@ -2,9 +2,10 @@ use crate::process::{
     Environment, ExitStatus, LimitViolation, ProcessInfo, ResourceLimits, ResourceUsage,
 };
 use crate::sys::limit_checker::LimitChecker;
-use crate::sys::windows::common::{cvt, to_utf16, Handle};
+use crate::sys::windows::helpers::{
+    cvt, to_utf16, EnvBlock, Handle, RawStdio, StartupInfo, User, UserContext,
+};
 use crate::sys::windows::pipe::{ReadPipe, WritePipe};
-use crate::sys::windows::utils::{EnvBlock, RawStdio, StartupInfo, User, UserContext};
 use crate::sys::IntoInner;
 use crate::{Error, Result};
 

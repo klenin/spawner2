@@ -1,4 +1,4 @@
-use crate::sys::windows::common::{cvt, to_utf16, Handle};
+use crate::sys::windows::helpers::{cvt, to_utf16, Handle};
 use crate::sys::IntoInner;
 use crate::{Error, Result};
 

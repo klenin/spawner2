@@ -1,11 +1,9 @@
-use crate::sys::windows::common::{cvt, to_utf16, Handle};
 use crate::{Error, Result};
 
 use winapi::shared::basetsd::{DWORD_PTR, SIZE_T};
 use winapi::shared::minwindef::{DWORD, FALSE, HWINSTA, WORD};
 use winapi::shared::windef::HDESK;
-
-use winapi::um::handleapi::INVALID_HANDLE_VALUE;
+use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
 use winapi::um::processthreadsapi::{
     DeleteProcThreadAttributeList, InitializeProcThreadAttributeList, UpdateProcThreadAttribute,
     PROC_THREAD_ATTRIBUTE_LIST,
@@ -26,8 +24,15 @@ use winapi::um::winuser::{
 };
 
 use std::alloc::{alloc_zeroed, dealloc, Layout};
+use std::ffi::OsStr;
 use std::mem;
+use std::os::windows::ffi::OsStrExt;
 use std::ptr;
+use std::u32;
+
+pub struct Handle(pub HANDLE);
+
+unsafe impl Send for Handle {}
 
 pub struct RawStdio {
     pub stdin: Handle,
@@ -72,6 +77,55 @@ const DESKTOP_ALL: DWORD = DESKTOP_CREATEMENU
     | READ_CONTROL
     | WRITE_DAC
     | WRITE_OWNER;
+
+pub trait IsZero {
+    fn is_zero(&self) -> bool;
+}
+
+macro_rules! impl_is_zero {
+    ($($type:ident)*) => ($(
+        impl IsZero for $type {
+            fn is_zero(&self) -> bool {
+                *self == 0
+            }
+        }
+    )*)
+}
+
+impl_is_zero!(i8 i16 i32 i64 isize u8 u16 u32 u64 usize);
+
+impl<T> IsZero for *const T {
+    fn is_zero(&self) -> bool {
+        self.is_null()
+    }
+}
+
+impl<T> IsZero for *mut T {
+    fn is_zero(&self) -> bool {
+        self.is_null()
+    }
+}
+
+/// Returns last os error if the value is zero.
+pub fn cvt<T: IsZero>(v: T) -> Result<T> {
+    if v.is_zero() {
+        Err(Error::last_os_error())
+    } else {
+        Ok(v)
+    }
+}
+
+pub fn to_utf16<S: AsRef<OsStr>>(s: S) -> Vec<u16> {
+    s.as_ref().encode_wide().chain(std::iter::once(0)).collect()
+}
+
+impl Drop for Handle {
+    fn drop(&mut self) {
+        unsafe {
+            CloseHandle(self.0);
+        }
+    }
+}
 
 impl User {
     pub fn create<T, U>(user: T, password: Option<U>) -> Result<Self>
