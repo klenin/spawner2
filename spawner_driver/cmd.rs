@@ -106,6 +106,13 @@ pub struct Command {
     pub process_count: Option<usize>,
 
     #[opt(
+        name = "-active-process-count",
+        desc = "The maximum allowed number of active processes",
+        value_desc = "<number>[unit]"
+    )]
+    pub active_process_count: Option<usize>,
+
+    #[opt(
         names("-mi", "--monitorInterval"),
         desc = "The sleep interval for a monitoring thread (default: 0.001s)",
         value_desc = "<number>[unit]"
@@ -248,6 +255,7 @@ impl Default for Command {
             write_limit: None,
             load_ratio: 5.0,
             process_count: None,
+            active_process_count: None,
             monitor_interval: Duration::from_millis(1),
             secure: false,
             show_window: false,

@@ -82,6 +82,8 @@ impl LimitChecker {
             limits.total_processes_created,
         ) {
             Some(LimitViolation::ProcessLimitExceeded)
+        } else if gr(usage.active_processes, limits.active_processes) {
+            Some(LimitViolation::ActiveProcessLimitExceeded)
         } else {
             None
         }

@@ -20,6 +20,8 @@ pub enum LimitViolation {
     MemoryLimitExceeded,
     /// Process group created too many child processes.
     ProcessLimitExceeded,
+    /// Process group has too many active processes.
+    ActiveProcessLimitExceeded,
 }
 
 /// The limits that are imposed on a process group.
@@ -37,6 +39,8 @@ pub struct ResourceLimits {
     pub total_bytes_written: Option<u64>,
     /// The maximum allowed number of processes created.
     pub total_processes_created: Option<usize>,
+    /// The maximum allowed number of active processes.
+    pub active_processes: Option<usize>,
 }
 
 /// Describes the resource usage of a process group.
@@ -115,6 +119,7 @@ impl Default for ResourceLimits {
             peak_memory_used: None,
             total_bytes_written: None,
             total_processes_created: None,
+            active_processes: None,
         }
     }
 }

@@ -152,14 +152,19 @@ impl Group {
     {
         let limits = limits.into();
         let memory = create_cgroup("memory/sp")?;
+        let pids = create_cgroup("pids/sp")?;
+
         if let Some(mem_limit) = limits.peak_memory_used {
             memory.set_value("memory.limit_in_bytes", mem_limit)?;
+        }
+        if let Some(proc_count) = limits.active_processes {
+            pids.set_value("pids.max", proc_count)?;
         }
 
         Ok(Self {
             memory: memory,
             cpuacct: create_cgroup("cpuacct/sp")?,
-            pids: create_cgroup("pids/sp")?,
+            pids: pids,
             freezer: create_cgroup("freezer/sp")?,
             limit_checker: LimitChecker::new(limits),
             creation_time: Instant::now(),
@@ -216,6 +221,9 @@ impl Group {
     pub fn check_limits(&mut self) -> Result<Option<LimitViolation>> {
         if self.memory.get_value::<usize>("memory.failcnt")? > 0 {
             return Ok(Some(LimitViolation::MemoryLimitExceeded));
+        }
+        if self.pids.get_raw_value("pids.events")? != "max 0\n" {
+            return Ok(Some(LimitViolation::ActiveProcessLimitExceeded));
         }
 
         self.resource_usage()

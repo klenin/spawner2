@@ -30,7 +30,8 @@ use winapi::um::winnt::{
     JobObjectAssociateCompletionPortInformation, JobObjectBasicAndIoAccountingInformation,
     JobObjectExtendedLimitInformation, JOBOBJECT_ASSOCIATE_COMPLETION_PORT,
     JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JOB_OBJECT_LIMIT_JOB_MEMORY, JOB_OBJECT_MSG_JOB_MEMORY_LIMIT, STATUS_ACCESS_VIOLATION,
+    JOB_OBJECT_LIMIT_ACTIVE_PROCESS, JOB_OBJECT_LIMIT_JOB_MEMORY,
+    JOB_OBJECT_MSG_ACTIVE_PROCESS_LIMIT, JOB_OBJECT_MSG_JOB_MEMORY_LIMIT, STATUS_ACCESS_VIOLATION,
     STATUS_ARRAY_BOUNDS_EXCEEDED, STATUS_BREAKPOINT, STATUS_CONTROL_C_EXIT,
     STATUS_DATATYPE_MISALIGNMENT, STATUS_FLOAT_DENORMAL_OPERAND, STATUS_FLOAT_INEXACT_RESULT,
     STATUS_FLOAT_INVALID_OPERATION, STATUS_FLOAT_MULTIPLE_FAULTS, STATUS_FLOAT_MULTIPLE_TRAPS,
@@ -231,8 +232,14 @@ impl Group {
             )
         } == TRUE
         {
-            if num_bytes == JOB_OBJECT_MSG_JOB_MEMORY_LIMIT {
-                return Ok(Some(LimitViolation::MemoryLimitExceeded));
+            match num_bytes {
+                JOB_OBJECT_MSG_JOB_MEMORY_LIMIT => {
+                    return Ok(Some(LimitViolation::MemoryLimitExceeded));
+                }
+                JOB_OBJECT_MSG_ACTIVE_PROCESS_LIMIT => {
+                    return Ok(Some(LimitViolation::ActiveProcessLimitExceeded));
+                }
+                _ => {}
             }
         }
 
@@ -390,6 +397,11 @@ fn create_job(limits: ResourceLimits) -> Result<Handle> {
             ext_limit_info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
             ext_limit_info.JobMemoryLimit = mem_limit as usize;
         }
+        if let Some(proc_count) = limits.active_processes {
+            ext_limit_info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+            ext_limit_info.BasicLimitInformation.ActiveProcessLimit = proc_count as DWORD;
+        }
+
         cvt(SetInformationJobObject(
             /*hJob=*/ job.0,
             /*JobObjectInformationClass=*/ JobObjectExtendedLimitInformation,

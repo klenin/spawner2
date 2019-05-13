@@ -51,6 +51,11 @@ fn parse_basic_opts() {
     check_opt!(&["-sr=file"], output_file, Some(String::from("file")));
     check_opt!(&["--separator=sep"], separator, Some(String::from("sep")));
     check_opt!(&["-process-count=10"], process_count, Some(10));
+    check_opt!(
+        &["-active-process-count=10"],
+        active_process_count,
+        Some(10)
+    );
     check_opt!(&["--controller"], controller, true);
     check_opt!(&["-j"], use_json, true);
     check_opt!(&["--json"], use_json, true);

@@ -174,6 +174,7 @@ fn create_tasks(
                 peak_memory_used: cmd.memory_limit.map(mb2b),
                 total_bytes_written: cmd.write_limit.map(mb2b),
                 total_processes_created: cmd.process_count,
+                active_processes: cmd.active_process_count,
             },
             on_terminate: match role {
                 Role::Default => None,

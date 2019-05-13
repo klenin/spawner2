@@ -27,6 +27,10 @@ pub fn ensure_process_limit_exceeded(report: &Report) {
     check_tr(report, TerminateReason::ProcessesCountLimitExceeded);
 }
 
+pub fn ensure_active_process_limit_exceeded(report: &Report) {
+    check_tr(report, TerminateReason::ActiveProcessesCountLimitExceeded);
+}
+
 pub fn ensure_idle_time_limit_exceeded(report: &Report) {
     check_tr(report, TerminateReason::IdleTimeLimitExceeded);
 }
@@ -96,6 +100,26 @@ fn process_limit() {
     ])
     .unwrap();
     ensure_process_limit_exceeded(&r[0]);
+}
+
+#[test]
+fn active_process_limit() {
+    let r = run(&[
+        "-active-process-count=1",
+        APP,
+        "exec_rest_and_sleep",
+        APP,
+        "sleep",
+        "1",
+    ])
+    .unwrap();
+    ensure_active_process_limit_exceeded(&r[0]);
+}
+
+#[test]
+fn single_active_process() {
+    let r = run(&["-active-process-count=1", APP, "sleep", "1"]).unwrap();
+    check_tr(&r[0], TerminateReason::ExitProcess);
 }
 
 #[test]
