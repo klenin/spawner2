@@ -1,9 +1,19 @@
+use crate::sys::windows::error::SysError;
+use crate::sys::windows::missing_decls::{
+    GetExtendedTcpTable, GetExtendedUdpTable, MIB_TCP6ROW_OWNER_PID, MIB_TCP6TABLE_OWNER_PID,
+    MIB_TCPROW_OWNER_PID, MIB_TCPTABLE_OWNER_PID, MIB_UDP6ROW_OWNER_PID, MIB_UDP6TABLE_OWNER_PID,
+    MIB_UDPROW_OWNER_PID, MIB_UDPTABLE_OWNER_PID, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+    TCP_TABLE_OWNER_PID_ALL, UDP_TABLE_OWNER_PID,
+};
 use crate::{Error, Result};
 
-use winapi::shared::basetsd::{DWORD_PTR, SIZE_T};
-use winapi::shared::minwindef::{DWORD, FALSE, HWINSTA, WORD};
+use winapi::shared::basetsd::{DWORD_PTR, SIZE_T, ULONG_PTR};
+use winapi::shared::minwindef::{DWORD, FALSE, HWINSTA, ULONG, WORD};
 use winapi::shared::windef::HDESK;
+use winapi::shared::winerror::{ERROR_INSUFFICIENT_BUFFER, ERROR_MORE_DATA, NO_ERROR};
+use winapi::shared::ws2def::{AF_INET, AF_INET6};
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
+use winapi::um::jobapi2::QueryInformationJobObject;
 use winapi::um::processthreadsapi::{
     DeleteProcThreadAttributeList, InitializeProcThreadAttributeList, UpdateProcThreadAttribute,
     PROC_THREAD_ATTRIBUTE_LIST,
@@ -14,7 +24,10 @@ use winapi::um::winbase::{
     LogonUserW, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, STARTF_USESHOWWINDOW,
     STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
-use winapi::um::winnt::{DELETE, HANDLE, PVOID, READ_CONTROL, WCHAR, WRITE_DAC, WRITE_OWNER};
+use winapi::um::winnt::{
+    JobObjectBasicProcessIdList, DELETE, HANDLE, JOBOBJECT_BASIC_PROCESS_ID_LIST, PVOID,
+    READ_CONTROL, WCHAR, WRITE_DAC, WRITE_OWNER,
+};
 use winapi::um::winuser::{
     CloseDesktop, CloseWindowStation, CreateDesktopW, CreateWindowStationW,
     GetProcessWindowStation, GetUserObjectInformationW, SetProcessWindowStation,
@@ -28,6 +41,7 @@ use std::ffi::OsStr;
 use std::mem;
 use std::os::windows::ffi::OsStrExt;
 use std::ptr;
+use std::slice;
 use std::u32;
 
 pub struct Handle(pub HANDLE);
@@ -63,6 +77,10 @@ struct AttList {
     ptr: *mut PROC_THREAD_ATTRIBUTE_LIST,
     len: usize,
 }
+
+pub struct PidList(Vec<u8>);
+
+pub struct Endpoints(Vec<u8>);
 
 const DESKTOP_ALL: DWORD = DESKTOP_CREATEMENU
     | DESKTOP_CREATEWINDOW
@@ -107,9 +125,9 @@ impl<T> IsZero for *mut T {
 }
 
 /// Returns last os error if the value is zero.
-pub fn cvt<T: IsZero>(v: T) -> Result<T> {
+pub fn cvt<T: IsZero>(v: T) -> std::result::Result<T, SysError> {
     if v.is_zero() {
-        Err(Error::last_os_error())
+        Err(SysError::last())
     } else {
         Ok(v)
     }
@@ -263,7 +281,7 @@ impl EnvBlock {
     }
 
     pub fn as_slice(&self) -> &[u16] {
-        unsafe { std::slice::from_raw_parts(self.block, self.len) }
+        unsafe { slice::from_raw_parts(self.block, self.len) }
     }
 
     pub fn iter<'a>(&'a self) -> impl Iterator<Item = String> + 'a {
@@ -288,9 +306,6 @@ impl StartupInfo {
         desktop_name: Option<&mut Vec<u16>>,
         show_window: bool,
     ) -> Result<Self> {
-        // Unfortunately, winapi-rs does not define this.
-        const PROC_THREAD_ATTRIBUTE_HANDLE_LIST: DWORD_PTR = 131074;
-
         let mut att_list = AttList::allocate(1)?;
         unsafe {
             att_list.update(
@@ -368,6 +383,142 @@ impl Drop for AttList {
                 mem::transmute(self.ptr),
                 Layout::from_size_align_unchecked(self.len, 4),
             );
+        }
+    }
+}
+
+impl PidList {
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    pub fn update(&mut self, job: &Handle) -> Result<&[ULONG_PTR]> {
+        if self.0.is_empty() {
+            self.0.resize(32, 0);
+        }
+
+        loop {
+            let result = unsafe {
+                cvt(QueryInformationJobObject(
+                    /*hJob=*/ job.0,
+                    /*JobObjectInfoClass=*/ JobObjectBasicProcessIdList,
+                    /*lpJobObjectInfo=*/ mem::transmute(self.0.as_mut_ptr()),
+                    /*cbJobObjectInfoLength=*/ self.0.len() as DWORD,
+                    /*lpReturnLength=*/ ptr::null_mut(),
+                ))
+            };
+
+            match result {
+                Ok(_) => {
+                    let num_pids_in_list = self.as_ref().NumberOfProcessIdsInList;
+                    if num_pids_in_list == self.as_ref().NumberOfAssignedProcesses {
+                        return Ok(unsafe {
+                            slice::from_raw_parts(
+                                self.as_ref().ProcessIdList.as_ptr(),
+                                num_pids_in_list as usize,
+                            )
+                        });
+                    }
+                }
+                Err(sys_err) => {
+                    if sys_err.0 != ERROR_MORE_DATA {
+                        return Err(Error::from(sys_err));
+                    }
+                }
+            }
+
+            let new_len = self.0.len() * 2;
+            self.0.resize(new_len, 0);
+        }
+    }
+
+    fn as_ref(&self) -> &JOBOBJECT_BASIC_PROCESS_ID_LIST {
+        unsafe { mem::transmute(self.0.as_ptr()) }
+    }
+}
+
+impl Endpoints {
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    pub fn load_tcpv4(&mut self) -> Result<&[MIB_TCPROW_OWNER_PID]> {
+        self.load_tcp::<MIB_TCPTABLE_OWNER_PID>(AF_INET as ULONG)
+            .map(|tcp_table| unsafe {
+                slice::from_raw_parts(tcp_table.table.as_ptr(), tcp_table.dwNumEntries as usize)
+            })
+    }
+
+    pub fn load_tcpv6(&mut self) -> Result<&[MIB_TCP6ROW_OWNER_PID]> {
+        self.load_tcp::<MIB_TCP6TABLE_OWNER_PID>(AF_INET6 as ULONG)
+            .map(|tcp_table| unsafe {
+                slice::from_raw_parts(tcp_table.table.as_ptr(), tcp_table.dwNumEntries as usize)
+            })
+    }
+
+    pub fn load_udpv4(&mut self) -> Result<&[MIB_UDPROW_OWNER_PID]> {
+        self.load_udp::<MIB_UDPTABLE_OWNER_PID>(AF_INET as ULONG)
+            .map(|udp_table| unsafe {
+                slice::from_raw_parts(udp_table.table.as_ptr(), udp_table.dwNumEntries as usize)
+            })
+    }
+
+    pub fn load_udpv6(&mut self) -> Result<&[MIB_UDP6ROW_OWNER_PID]> {
+        self.load_udp::<MIB_UDP6TABLE_OWNER_PID>(AF_INET6 as ULONG)
+            .map(|udp_table| unsafe {
+                slice::from_raw_parts(udp_table.table.as_ptr(), udp_table.dwNumEntries as usize)
+            })
+    }
+
+    fn load_udp<T>(&mut self, af: ULONG) -> Result<&T> {
+        self.load(|buf| unsafe {
+            let mut size = buf.len() as DWORD;
+            GetExtendedUdpTable(
+                /*pUdpTable=*/ mem::transmute(buf.as_mut_ptr()),
+                /*pdwSize=*/ &mut size,
+                /*bOrder=*/ FALSE,
+                /*ulAf=*/ af,
+                /*TableClass=*/ UDP_TABLE_OWNER_PID,
+                /*Reserved=*/ 0,
+            )
+        })
+    }
+
+    fn load_tcp<T>(&mut self, af: ULONG) -> Result<&T> {
+        self.load(|buf| unsafe {
+            let mut size = buf.len() as DWORD;
+            GetExtendedTcpTable(
+                /*pTcpTable=*/ mem::transmute(buf.as_mut_ptr()),
+                /*pdwSize=*/ &mut size,
+                /*bOrder=*/ FALSE,
+                /*ulAf=*/ af,
+                /*TableClass=*/ TCP_TABLE_OWNER_PID_ALL,
+                /*Reserved=*/ 0,
+            )
+        })
+    }
+
+    fn load<F, T>(&mut self, get_connections: F) -> Result<&T>
+    where
+        F: Fn(&mut Vec<u8>) -> DWORD,
+    {
+        if self.0.is_empty() {
+            self.0.resize(1024, 0);
+        }
+
+        loop {
+            match get_connections(&mut self.0) {
+                ERROR_INSUFFICIENT_BUFFER => {
+                    let new_len = self.0.len() * 2;
+                    self.0.resize(new_len, 0);
+                }
+                NO_ERROR => {
+                    return Ok(unsafe { mem::transmute(self.0.as_ptr()) });
+                }
+                _ => {
+                    return Err(Error::from("Unable to retrieve TCP/UDP endpoints"));
+                }
+            }
         }
     }
 }

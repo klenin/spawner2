@@ -22,6 +22,8 @@ pub enum LimitViolation {
     ProcessLimitExceeded,
     /// Process group has too many active processes.
     ActiveProcessLimitExceeded,
+    /// Process group has too many active network connections.
+    ActiveNetworkConnectionLimitExceeded,
 }
 
 /// The limits that are imposed on a process group.
@@ -41,6 +43,8 @@ pub struct ResourceLimits {
     pub total_processes_created: Option<usize>,
     /// The maximum allowed number of active processes.
     pub active_processes: Option<usize>,
+    /// The maximum allowed number of active network connections.
+    pub active_network_connections: Option<usize>,
 }
 
 /// Describes the resource usage of a process group.
@@ -62,6 +66,8 @@ pub struct ResourceUsage {
     pub active_processes: usize,
     /// Total bytes written by all active and all terminated processes.
     pub total_bytes_written: u64,
+    /// The number of active network connections (both incoming and outgoing).
+    pub active_network_connections: usize,
 }
 
 /// Describes the result of a process after it has terminated.
@@ -120,6 +126,7 @@ impl Default for ResourceLimits {
             total_bytes_written: None,
             total_processes_created: None,
             active_processes: None,
+            active_network_connections: None,
         }
     }
 }
@@ -134,6 +141,7 @@ impl Default for ResourceUsage {
             total_processes_created: 0,
             active_processes: 0,
             total_bytes_written: 0,
+            active_network_connections: 0,
         }
     }
 }

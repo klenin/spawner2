@@ -10,7 +10,7 @@ use std::fmt::{self, Write};
 use std::ptr;
 
 #[derive(Debug)]
-pub struct SysError(DWORD);
+pub struct SysError(pub DWORD);
 
 impl SysError {
     pub fn last() -> Self {

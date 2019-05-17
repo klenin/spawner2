@@ -6,23 +6,24 @@ use crate::sys::unix::pipe::{PipeFd, ReadPipe, WritePipe};
 use crate::sys::IntoInner;
 use crate::{Error, Result};
 
+use nix::errno::errno;
 use nix::libc::{getpwnam, STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
 use nix::sys::signal::{kill, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{
-    chdir, close, dup2, execve, fork, getpid, getuid, setgroups, setresgid, setresuid, ForkResult,
+    chdir, close, dup2, execvpe, fork, getpid, getuid, setgroups, setresgid, setresuid, ForkResult,
     Gid, Pid, Uid,
 };
 
 use cgroups_fs::{Cgroup, CgroupName};
+
+use procfs::{self, FDTarget};
 
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 
 use std::collections::HashMap;
 use std::ffi::CString;
-use std::fs;
-use std::io::Read;
 use std::path::Path;
 use std::process;
 use std::thread;
@@ -47,12 +48,20 @@ pub struct Group {
     freezer: Cgroup,
     limit_checker: LimitChecker,
     creation_time: Instant,
-
+    active_tasks: ActiveTasks,
     // Since we have information only about active tasks we need to memorize amount
     // of dead tasks and amount of bytes written by them.
-    active_tasks: HashMap<Pid, u64>,
-    dead_tasks_wchar: u64,
+    dead_tasks_info: DeadTasksInfo,
+}
+
+struct DeadTasksInfo {
     num_dead_tasks: usize,
+    total_bytes_written: u64,
+}
+
+struct ActiveTasks {
+    wchar_by_pid: HashMap<Pid, u64>,
+    pid_by_inode: HashMap<u32, Pid>,
 }
 
 struct RawStdio {
@@ -124,8 +133,8 @@ impl Process {
         };
         env.extend(info.env_vars.iter().cloned());
 
-        let exit_code = if let Err(_) = init_child_process(
-            info.app.clone(),
+        if let Err(_) = init_child_process(
+            info.app.as_str(),
             info.args.iter().map(String::clone),
             env.iter().map(|(k, v)| format!("{}={}", k, v)),
             RawStdio {
@@ -137,11 +146,8 @@ impl Process {
             usr,
         ) {
             // todo: Send error to parent process.
-            111
-        } else {
-            0
-        };
-        process::exit(exit_code);
+        }
+        process::exit(errno());
     }
 }
 
@@ -168,9 +174,8 @@ impl Group {
             freezer: create_cgroup("freezer/sp")?,
             limit_checker: LimitChecker::new(limits),
             creation_time: Instant::now(),
-            active_tasks: HashMap::new(),
-            dead_tasks_wchar: 0,
-            num_dead_tasks: 0,
+            active_tasks: ActiveTasks::new(),
+            dead_tasks_info: DeadTasksInfo::new(),
         })
     }
 
@@ -204,17 +209,24 @@ impl Group {
             .memory
             .get_value::<u64>("memory.kmem.max_usage_in_bytes")?;
 
-        self.update_active_tasks()?;
+        let dead_tasks_info = self.active_tasks.update(self.freezer.get_tasks()?);
+        self.dead_tasks_info.num_dead_tasks += dead_tasks_info.num_dead_tasks;
+        self.dead_tasks_info.total_bytes_written += dead_tasks_info.total_bytes_written;
 
         Ok(ResourceUsage {
             wall_clock_time: self.creation_time.elapsed(),
             total_user_time: Duration::from_nanos(total_user_time),
             total_kernel_time: Duration::from_nanos(total_sys_time),
             peak_memory_used: max_mem_usage + max_kmem_usage,
-            total_bytes_written: self.active_tasks.values().cloned().sum::<u64>()
-                + self.dead_tasks_wchar,
-            total_processes_created: self.num_dead_tasks + self.active_tasks.len(),
-            active_processes: self.active_tasks.len(),
+            total_bytes_written: self.active_tasks.total_bytes_written()
+                + self.dead_tasks_info.total_bytes_written,
+            total_processes_created: self.dead_tasks_info.num_dead_tasks
+                + self.active_tasks.count(),
+            active_processes: self.active_tasks.count(),
+            active_network_connections: self
+                .active_tasks
+                .count_network_connections()
+                .map_err(|e| Error::from(e.to_string()))?,
         })
     }
 
@@ -246,45 +258,6 @@ impl Group {
         self.freezer.set_raw_value("freezer.state", "THAWED")?;
         Ok(())
     }
-
-    fn update_active_tasks(&mut self) -> Result<()> {
-        let new_active_tasks = self.collect_active_tasks()?;
-        let old_active_tasks = &mut self.active_tasks;
-        let mut dead_tasks = Vec::new();
-
-        for (pid, bytes_written) in old_active_tasks.iter_mut() {
-            match new_active_tasks.get(pid) {
-                None => dead_tasks.push(pid.clone()),
-                Some(new_bytes_written) => {
-                    if let Some(bytes) = new_bytes_written {
-                        *bytes_written = *bytes;
-                    }
-                }
-            }
-        }
-
-        for (pid, bytes_written) in new_active_tasks.into_iter() {
-            if old_active_tasks.get(&pid).is_none() {
-                old_active_tasks.insert(pid, bytes_written.unwrap_or(0));
-            }
-        }
-
-        self.num_dead_tasks += dead_tasks.len();
-        for pid in dead_tasks {
-            self.dead_tasks_wchar += old_active_tasks.remove(&pid).unwrap();
-        }
-
-        Ok(())
-    }
-
-    fn collect_active_tasks(&self) -> Result<HashMap<Pid, Option<u64>>> {
-        self.freezer.get_tasks().map_err(Error::from).map(|tasks| {
-            tasks
-                .into_iter()
-                .map(|pid| (pid, task_wchar(pid)))
-                .collect()
-        })
-    }
 }
 
 impl Drop for Group {
@@ -293,6 +266,100 @@ impl Drop for Group {
         self.memory.remove().ok();
         self.cpuacct.remove().ok();
         self.pids.remove().ok();
+    }
+}
+
+impl DeadTasksInfo {
+    fn new() -> Self {
+        Self {
+            num_dead_tasks: 0,
+            total_bytes_written: 0,
+        }
+    }
+}
+
+impl ActiveTasks {
+    fn new() -> Self {
+        Self {
+            wchar_by_pid: HashMap::new(),
+            pid_by_inode: HashMap::new(),
+        }
+    }
+
+    fn count(&self) -> usize {
+        self.wchar_by_pid.len()
+    }
+
+    fn total_bytes_written(&self) -> u64 {
+        self.wchar_by_pid.values().sum()
+    }
+
+    fn count_network_connections(&self) -> procfs::ProcResult<usize> {
+        let tcp_inodes = procfs::tcp()?
+            .into_iter()
+            .chain(procfs::tcp6()?)
+            .map(|tcp_entry| tcp_entry.inode);
+
+        let udp_inodes = procfs::udp()?
+            .into_iter()
+            .chain(procfs::udp6()?)
+            .map(|udp_entry| udp_entry.inode);
+
+        Ok(tcp_inodes
+            .chain(udp_inodes)
+            .filter(|inode| self.pid_by_inode.get(inode).is_some())
+            .count())
+    }
+
+    fn update<T>(&mut self, pids: T) -> DeadTasksInfo
+    where
+        T: IntoIterator<Item = Pid>,
+    {
+        self.pid_by_inode.clear();
+
+        let new_wchar_by_pid = pids
+            .into_iter()
+            .filter_map(|pid| procfs::Process::new(pid.as_raw()).ok())
+            .map(|ps| {
+                let pid = Pid::from_raw(ps.pid());
+
+                if let Some(fds) = ps.fd().ok() {
+                    self.pid_by_inode
+                        .extend(fds.into_iter().filter_map(|fd| match fd.target {
+                            FDTarget::Socket(inode) => Some((inode, pid)),
+                            _ => None,
+                        }));
+                }
+
+                (pid, ps.io().ok().map(|io| io.wchar))
+            })
+            .collect::<HashMap<Pid, Option<u64>>>();
+
+        let old_wchar_by_pid = &mut self.wchar_by_pid;
+        let dead_tasks = old_wchar_by_pid
+            .iter_mut()
+            .filter_map(|(pid, wchar)| match new_wchar_by_pid.get(pid) {
+                Some(new_wchar) => {
+                    *wchar += new_wchar.unwrap_or(0);
+                    None
+                }
+                None => Some(pid.clone()),
+            })
+            .collect::<Vec<Pid>>();
+
+        for (pid, wchar) in new_wchar_by_pid.iter() {
+            if old_wchar_by_pid.get(pid).is_none() {
+                old_wchar_by_pid.insert(pid.clone(), wchar.unwrap_or(0));
+            }
+        }
+
+        DeadTasksInfo {
+            num_dead_tasks: dead_tasks.len(),
+            total_bytes_written: dead_tasks
+                .into_iter()
+                .map(|pid| old_wchar_by_pid.remove(&pid).unwrap())
+                .sum(),
+        }
     }
 }
 
@@ -349,19 +416,21 @@ fn close_stdio() -> Result<()> {
     Ok(())
 }
 
-fn init_child_process<S, P, A, E>(
-    path: S,
-    args: A,
-    env: E,
+fn init_child_process<C, D, T, TI, U, UI>(
+    cmd: C,
+    args: T,
+    env: U,
     stdio: RawStdio,
-    working_dir: Option<P>,
+    working_dir: Option<D>,
     usr: Option<User>,
 ) -> Result<()>
 where
-    S: Into<Vec<u8>>,
-    P: AsRef<Path>,
-    A: IntoIterator<Item = S>,
-    E: IntoIterator<Item = S>,
+    C: Into<Vec<u8>>,
+    D: AsRef<Path>,
+    TI: Into<Vec<u8>>,
+    UI: Into<Vec<u8>>,
+    T: IntoIterator<Item = TI>,
+    U: IntoIterator<Item = UI>,
 {
     if let Some(usr) = usr {
         usr.impersonate()?;
@@ -373,11 +442,11 @@ where
     dup2(stdio.stderr.0, STDERR_FILENO)?;
 
     if let Some(dir) = working_dir {
-        chdir(dir.as_ref())?
+        chdir(dir.as_ref())?;
     }
 
-    let c_path = to_cstr(path)?;
-    let mut c_args = vec![c_path.clone()];
+    let c_cmd = to_cstr(cmd)?;
+    let mut c_args = vec![c_cmd.clone()];
     let mut c_env = Vec::new();
 
     for arg in args.into_iter() {
@@ -389,24 +458,6 @@ where
     }
 
     kill(getpid(), Signal::SIGSTOP)?;
-    execve(&c_path, &c_args, &c_env)?;
+    execvpe(&c_cmd, &c_args, &c_env)?;
     Ok(())
-}
-
-fn task_wchar(pid: Pid) -> Option<u64> {
-    let mut io = String::new();
-
-    if fs::File::open(format!("/proc/{}/io", pid))
-        .and_then(|mut f| f.read_to_string(&mut io))
-        .is_err()
-    {
-        // If the process is in zombie state we'll get permission denied error.
-        return None;
-    }
-
-    io.split_whitespace()
-        .skip_while(|&s| s != "wchar:")
-        .skip(1)
-        .next()
-        .map(|num| num.parse::<u64>().unwrap_or(0))
 }

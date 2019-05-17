@@ -113,6 +113,13 @@ pub struct Command {
     pub active_process_count: Option<usize>,
 
     #[opt(
+        name = "-active-connection-count",
+        desc = "The maximum allowed number of internet connections",
+        value_desc = "<number>[unit]"
+    )]
+    pub active_connection_count: Option<usize>,
+
+    #[opt(
         names("-mi", "--monitorInterval"),
         desc = "The sleep interval for a monitoring thread (default: 0.001s)",
         value_desc = "<number>[unit]"
@@ -256,6 +263,7 @@ impl Default for Command {
             load_ratio: 5.0,
             process_count: None,
             active_process_count: None,
+            active_connection_count: None,
             monitor_interval: Duration::from_millis(1),
             secure: false,
             show_window: false,

@@ -73,6 +73,7 @@ pub enum TerminateReason {
     MemoryLimitExceeded,
     ProcessesCountLimitExceeded,
     ActiveProcessesCountLimitExceeded,
+    ActiveConnectionCountLimitExceeded,
     TerminatedByController,
 }
 
@@ -324,6 +325,9 @@ impl Display for TerminateReason {
             TerminateReason::ActiveProcessesCountLimitExceeded => {
                 "ActiveProcessesCountLimitExceeded"
             }
+            TerminateReason::ActiveConnectionCountLimitExceeded => {
+                "ActiveConnectionCountLimitExceeded"
+            }
             TerminateReason::TerminatedByController => "TerminatedByController",
         })
     }
@@ -343,6 +347,9 @@ impl From<TerminationReason> for TerminateReason {
                 }
                 LimitViolation::ActiveProcessLimitExceeded => {
                     TerminateReason::ActiveProcessesCountLimitExceeded
+                }
+                LimitViolation::ActiveNetworkConnectionLimitExceeded => {
+                    TerminateReason::ActiveConnectionCountLimitExceeded
                 }
             },
             TerminationReason::ManuallyTerminated => TerminateReason::TerminatedByController,

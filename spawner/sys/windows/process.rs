@@ -3,7 +3,7 @@ use crate::process::{
 };
 use crate::sys::limit_checker::LimitChecker;
 use crate::sys::windows::helpers::{
-    cvt, to_utf16, EnvBlock, Handle, RawStdio, StartupInfo, User, UserContext,
+    cvt, to_utf16, Endpoints, EnvBlock, Handle, PidList, RawStdio, StartupInfo, User, UserContext,
 };
 use crate::sys::windows::pipe::{ReadPipe, WritePipe};
 use crate::sys::IntoInner;
@@ -68,6 +68,8 @@ pub struct Group {
     completion_port: Handle,
     limit_checker: LimitChecker,
     creation_time: Instant,
+    pid_list: PidList,
+    endpoints: Endpoints,
 }
 
 impl Process {
@@ -163,6 +165,20 @@ impl Process {
     }
 }
 
+macro_rules! count_endpoints {
+    ($pids:expr, $endpoints:expr) => {
+        $endpoints
+            .iter()
+            .filter(|row| {
+                $pids
+                    .iter()
+                    .find(|&&pid| pid as DWORD == row.dwOwningPid)
+                    .is_some()
+            })
+            .count()
+    };
+}
+
 impl Group {
     pub fn new<T>(limits: T) -> Result<Self>
     where
@@ -175,6 +191,8 @@ impl Group {
                 completion_port: port,
                 limit_checker: LimitChecker::new(limits),
                 creation_time: Instant::now(),
+                pid_list: PidList::new(),
+                endpoints: Endpoints::new(),
             })
         })
     }
@@ -187,6 +205,7 @@ impl Group {
         let info = info.as_ref();
         let ps = Process::suspended(info, stdio)?;
         cvt(unsafe { AssignProcessToJobObject(self.job.0, ps.handle.0) })
+            .map_err(Error::from)
             .and_then(|_| if info.suspended { Ok(()) } else { ps.resume() })
             .map_err(|e| {
                 let _ = ps.terminate();
@@ -195,7 +214,7 @@ impl Group {
             .map(|_| ps)
     }
 
-    pub fn resource_usage(&self) -> Result<ResourceUsage> {
+    pub fn resource_usage(&mut self) -> Result<ResourceUsage> {
         let basic_and_io_info = self.basic_and_io_info()?;
         let ext_limit_info = self.ext_limit_info()?;
 
@@ -215,6 +234,7 @@ impl Group {
             total_processes_created: basic_and_io_info.BasicInfo.TotalProcesses as usize,
             active_processes: basic_and_io_info.BasicInfo.ActiveProcesses as usize,
             total_bytes_written: basic_and_io_info.IoInfo.WriteTransferCount,
+            active_network_connections: self.active_network_connections()?,
         })
     }
 
@@ -271,6 +291,7 @@ impl Group {
                 /*cbJobObjectInfoLength=*/ mem::size_of_val(&basic_and_io_info) as DWORD,
                 /*lpReturnLength=*/ ptr::null_mut(),
             ))
+            .map_err(Error::from)
             .map(|_| basic_and_io_info)
         }
     }
@@ -285,8 +306,17 @@ impl Group {
                 /*cbJobObjectInfoLength=*/ mem::size_of_val(&ext_info) as DWORD,
                 /*lpReturnLength=*/ ptr::null_mut(),
             ))
+            .map_err(Error::from)
             .map(|_| ext_info)
         }
+    }
+
+    fn active_network_connections(&mut self) -> Result<usize> {
+        let pids = self.pid_list.update(&self.job)?;
+        Ok(count_endpoints!(pids, self.endpoints.load_tcpv4()?)
+            + count_endpoints!(pids, self.endpoints.load_tcpv6()?)
+            + count_endpoints!(pids, self.endpoints.load_udpv4()?)
+            + count_endpoints!(pids, self.endpoints.load_udpv6()?))
     }
 }
 

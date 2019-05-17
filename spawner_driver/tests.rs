@@ -56,6 +56,11 @@ fn parse_basic_opts() {
         active_process_count,
         Some(10)
     );
+    check_opt!(
+        &["-active-connection-count=10"],
+        active_connection_count,
+        Some(10)
+    );
     check_opt!(&["--controller"], controller, true);
     check_opt!(&["-j"], use_json, true);
     check_opt!(&["--json"], use_json, true);

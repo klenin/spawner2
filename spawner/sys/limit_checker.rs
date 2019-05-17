@@ -84,6 +84,11 @@ impl LimitChecker {
             Some(LimitViolation::ProcessLimitExceeded)
         } else if gr(usage.active_processes, limits.active_processes) {
             Some(LimitViolation::ActiveProcessLimitExceeded)
+        } else if gr(
+            usage.active_network_connections,
+            limits.active_network_connections,
+        ) {
+            Some(LimitViolation::ActiveNetworkConnectionLimitExceeded)
         } else {
             None
         }

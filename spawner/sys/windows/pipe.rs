@@ -169,6 +169,7 @@ fn open<P: AsRef<Path>>(
             HANDLE_FLAG_INHERIT,
             HANDLE_FLAG_INHERIT,
         ))
+        .map_err(Error::from)
         .map(|_| handle)
     }
 }

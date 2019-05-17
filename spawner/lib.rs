@@ -10,6 +10,7 @@ cfg_if! {
         extern crate nix;
         extern crate rand;
         extern crate cgroups_fs;
+        extern crate procfs;
     }
 }
 

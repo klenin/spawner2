@@ -175,6 +175,7 @@ fn create_tasks(
                 total_bytes_written: cmd.write_limit.map(mb2b),
                 total_processes_created: cmd.process_count,
                 active_processes: cmd.active_process_count,
+                active_network_connections: cmd.active_connection_count,
             },
             on_terminate: match role {
                 Role::Default => None,
