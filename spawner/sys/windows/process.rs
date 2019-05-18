@@ -78,11 +78,9 @@ impl Process {
         unsafe {
             cvt(GetExitCodeProcess(self.handle.0, &mut exit_code))?;
         }
-
-        // In this example it is possible to hit a deadline limit. What actually happens is
-        // that we get an exit code from GetExitCodeProcess but job object shows that there is
-        // one active process left. To make sure that process is properly terminated
-        // there is an extra `terminate` call.
+        // In this example agent can be suspended during process shutdown. This can give
+        // us an exit code but it does not indicate process termination. To make sure that
+        // process is properly terminated there is an extra `terminate` call.
         //
         // spawner_driver::run(&[
         //     "--separator=@",
