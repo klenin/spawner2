@@ -72,16 +72,21 @@ fn pipe_loop() {
     }
 }
 
-fn wake_loop() {
+fn wake_controller() {
     let mut line = String::new();
     let stdin = stdin();
     while let Ok(bytes) = stdin.lock().read_line(&mut line) {
         if bytes == 0 {
             break;
         }
-        let hash_pos = line.find(|c| c == '#').unwrap();
-        let agent = line[..hash_pos].parse::<u64>().unwrap();
+
+        eprint!("{}", line);
+        let num_digits = line.chars().take_while(|c| c.is_digit(10)).count();
+        let agent = line[..num_digits].parse::<u64>().unwrap();
         print!("{}W#\n", agent);
+        line.clear();
+    }
+}
     }
 }
 
@@ -103,7 +108,7 @@ fn main() {
                 let s = p.next();
                 (0..p.parse::<usize>()).for_each(|_| print!("{}", s));
             }
-            "wake_loop" => wake_loop(),
+            "wake_controller" => wake_controller(),
             "try_open" => match fs::File::open(p.next()) {
                 Ok(_) => print!("ok"),
                 Err(_) => print!("err"),

@@ -1,7 +1,7 @@
 use crate::assert_approx_eq;
-use crate::common::{read_all, write_all, TmpDir, APP, TIME_ERR};
+use crate::common::{read_all, TmpDir, APP, TIME_ERR};
 use crate::term_reason::{
-    check_tr, ensure_idle_time_limit_exceeded, ensure_user_time_limit_exceeded,
+    check_tr, ensure_idle_time_limit_exceeded, ensure_ok, ensure_user_time_limit_exceeded,
     ensure_wall_clock_time_limit_exceeded,
 };
 
@@ -45,45 +45,40 @@ fn resume_agent_on_controller_termination() {
 }
 
 #[test]
-fn resume_and_agent_termination_msgs() {
+fn agent_termination_message() {
     let tmp = TmpDir::new();
-    let stdin = tmp.file("stdin.txt");
     let stderr = tmp.file("stderr.txt");
 
-    write_all(&stdin, "1W#\n");
     run(&[
         "--separator=@",
         "-d=1",
         "--@",
         "--controller",
-        format!("--in={}", stdin).as_str(),
         format!("--err={}", stderr).as_str(),
         APP,
-        "pipe_loop",
+        "1W#\n",
+        "wake_controller",
         "--@",
         "--in=*0.stdout",
         APP,
     ])
     .unwrap();
-    assert_eq!(b"1W#\n1T#\n", read_all(stderr).as_bytes());
+    assert_eq!(b"1T#\n", read_all(stderr).as_bytes());
 }
 
 #[test]
 fn message_to_agent() {
     let tmp = TmpDir::new();
-    let stdin = tmp.file("stdin.txt");
     let stderr1 = tmp.file("stderr1.txt");
     let stderr2 = tmp.file("stderr2.txt");
 
-    write_all(&stdin, "1W#\n2W#\n2#message\n");
     run(&[
         "--separator=@",
         "-d=1",
         "--@",
         "--controller",
-        format!("--in={}", stdin).as_str(),
         APP,
-        "pipe_loop",
+        "1W#\n2W#\n2#message\n",
         "--@",
         format!("--err={}", stderr1).as_str(),
         "--in=*0.stdout",
@@ -103,19 +98,17 @@ fn message_to_agent() {
 #[test]
 fn message_from_agent() {
     let tmp = TmpDir::new();
-    let stdin = tmp.file("stdin.txt");
     let stderr = tmp.file("stderr.txt");
 
-    write_all(&stdin, "1W#\n");
     run(&[
         "--separator=@",
         "-d=1",
         "--@",
         "--controller",
-        format!("--in={}", stdin).as_str(),
         format!("--err={}", stderr).as_str(),
         APP,
-        "pipe_loop",
+        "1W#\n",
+        "wake_controller",
         "--@",
         "--in=*0.stdout",
         "--out=*0.stdin",
@@ -123,7 +116,7 @@ fn message_from_agent() {
         "message\n",
     ])
     .unwrap();
-    assert_eq!("1W#\n1#message\n1T#\n", read_all(stderr));
+    assert_eq!("1#message\n1T#\n", read_all(stderr));
 }
 
 #[test]
@@ -157,19 +150,17 @@ fn controller_message_concatenation() {
 #[test]
 fn agent_message_concatenation() {
     let tmp = TmpDir::new();
-    let stdin = tmp.file("stdin.txt");
     let stderr = tmp.file("stderr.txt");
 
-    write_all(&stdin, "1W#\n");
     run(&[
         "--separator=@",
         "-d=1",
         "--@",
         "--controller",
-        format!("--in={}", stdin).as_str(),
         format!("--err={}", stderr).as_str(),
         APP,
-        "pipe_loop",
+        "1W#\n",
+        "wake_controller",
         "--@",
         "--in=*0.stdout",
         "--out=*0.stdin",
@@ -180,7 +171,7 @@ fn agent_message_concatenation() {
         "\n",
     ])
     .unwrap();
-    assert_eq!("1W#\n1#message\n1T#\n", read_all(stderr));
+    assert_eq!("1#message\n1T#\n", read_all(stderr));
 }
 
 pub fn ensure_terminated_by_controller(report: &Report) {
@@ -304,7 +295,7 @@ fn agent_time_usage(sleep_kind: &str) -> Vec<Report> {
         "--out=*1.stdin",
         APP,
         "1W#\n",
-        "wake_loop",
+        "wake_controller",
         "--@",
         "-d=1.5",
         APP,
@@ -320,7 +311,7 @@ fn agent_time_usage(sleep_kind: &str) -> Vec<Report> {
 #[test]
 fn reset_agent_user_time_and_wall_clock_time_usage() {
     let r = agent_time_usage("loop");
-    check_tr(&r[1], TerminateReason::ExitProcess);
+    ensure_ok(&r[1]);
     assert_approx_eq!(r[1].result.time, 2.0, 0.3);
     assert_approx_eq!(r[1].result.wall_clock_time, 2.0, TIME_ERR);
 }
@@ -329,7 +320,7 @@ fn reset_agent_user_time_and_wall_clock_time_usage() {
 fn reset_agent_idle_time_and_wall_clock_time_usage() {
     let r = agent_time_usage("sleep");
     let idle_time_usage = r[1].result.wall_clock_time - r[1].result.time;
-    check_tr(&r[1], TerminateReason::ExitProcess);
+    ensure_ok(&r[1]);
     assert_approx_eq!(idle_time_usage, 2.0, 0.3);
     assert_approx_eq!(r[1].result.wall_clock_time, 2.0, TIME_ERR);
 }
@@ -360,7 +351,7 @@ fn controller_time_usage(sleep_kind: &str) -> Vec<Report> {
 #[test]
 fn reset_controller_user_time_and_wall_clock_time_usage() {
     let r = controller_time_usage("loop");
-    check_tr(&r[0], TerminateReason::ExitProcess);
+    ensure_ok(&r[0]);
     assert_approx_eq!(r[0].result.time, 2.0, 0.3);
     assert_approx_eq!(r[0].result.wall_clock_time, 2.0, TIME_ERR);
 }
@@ -369,7 +360,7 @@ fn reset_controller_user_time_and_wall_clock_time_usage() {
 fn reset_controller_idle_time_and_wall_clock_time_usage() {
     let r = controller_time_usage("sleep");
     let idle_time_usage = r[0].result.wall_clock_time - r[0].result.time;
-    check_tr(&r[0], TerminateReason::ExitProcess);
+    ensure_ok(&r[0]);
     assert_approx_eq!(idle_time_usage, 2.0, 0.3);
     assert_approx_eq!(r[0].result.wall_clock_time, 2.0, TIME_ERR);
 }
