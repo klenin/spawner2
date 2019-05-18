@@ -8,6 +8,10 @@ pub fn check_tr(report: &Report, tr: TerminateReason) {
     assert_eq!(report.terminate_reason, tr);
 }
 
+pub fn ensure_ok(report: &Report) {
+    check_tr(report, TerminateReason::ExitProcess);
+}
+
 pub fn ensure_mem_limit_exceeded(report: &Report) {
     check_tr(report, TerminateReason::MemoryLimitExceeded);
     assert_approx_eq!(report.limit.memory.unwrap(), report.result.memory, MEM_ERR);
@@ -27,7 +31,7 @@ pub fn ensure_process_limit_exceeded(report: &Report) {
     check_tr(report, TerminateReason::ProcessesCountLimitExceeded);
 }
 
-pub fn ensure_active_process_limit_exceeded(report: &Report) {
+pub fn ensure_active_process_count_limit_exceeded(report: &Report) {
     check_tr(report, TerminateReason::ActiveProcessesCountLimitExceeded);
 }
 
@@ -46,6 +50,10 @@ pub fn ensure_wall_clock_time_limit_exceeded(report: &Report) {
 
 pub fn ensure_abnormal_exit(report: &Report) {
     check_tr(report, TerminateReason::AbnormalExitProcess);
+}
+
+pub fn ensure_active_connection_count_limit_exceeded(report: &Report) {
+    check_tr(report, TerminateReason::ActiveConnectionCountLimitExceeded);
 }
 
 #[test]
@@ -113,13 +121,13 @@ fn active_process_limit() {
         "1",
     ])
     .unwrap();
-    ensure_active_process_limit_exceeded(&r[0]);
+    ensure_active_process_count_limit_exceeded(&r[0]);
 }
 
 #[test]
 fn single_active_process() {
     let r = run(&["-active-process-count=1", APP, "sleep", "1"]).unwrap();
-    check_tr(&r[0], TerminateReason::ExitProcess);
+    ensure_ok(&r[0]);
 }
 
 #[test]
@@ -164,7 +172,7 @@ fn close_stdout_on_exit() {
     ])
     .unwrap();
     for r in reports.iter() {
-        check_tr(r, TerminateReason::ExitProcess);
+        ensure_ok(r);
         assert_eq!(r.exit_code, 0);
     }
 }
@@ -192,7 +200,33 @@ fn close_stdout_on_exit_2() {
     ])
     .unwrap();
     for r in reports.iter() {
-        check_tr(r, TerminateReason::ExitProcess);
+        ensure_ok(r);
         assert_eq!(r.exit_code, 0);
     }
+}
+
+fn exceed_connection_limit(create_sockets: &'static str) {
+    let r = run(&["-active-connection-count=1", APP, create_sockets, "2"]).unwrap();
+    ensure_active_connection_count_limit_exceeded(&r[0]);
+}
+
+#[test]
+fn active_connections_limit_exceeded() {
+    exceed_connection_limit("create_tcpv4_sockets");
+    exceed_connection_limit("create_tcpv6_sockets");
+    exceed_connection_limit("create_udpv4_sockets");
+    exceed_connection_limit("create_udpv6_sockets");
+}
+
+fn connection_limit_ok(create_sockets: &'static str) {
+    let r = run(&["-active-connection-count=2", APP, create_sockets, "1"]).unwrap();
+    ensure_ok(&r[0]);
+}
+
+#[test]
+fn active_connections_limit_ok() {
+    connection_limit_ok("create_tcpv4_sockets");
+    connection_limit_ok("create_tcpv6_sockets");
+    connection_limit_ok("create_udpv4_sockets");
+    connection_limit_ok("create_udpv6_sockets");
 }

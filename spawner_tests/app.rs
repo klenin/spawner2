@@ -2,6 +2,7 @@ use std::alloc::{alloc, Layout};
 use std::env;
 use std::fs;
 use std::io::*;
+use std::net::{TcpListener, UdpSocket};
 use std::process;
 use std::ptr;
 use std::str;
@@ -87,7 +88,21 @@ fn wake_controller() {
         line.clear();
     }
 }
-    }
+
+fn create_tcp_sockets(n: usize, ip: &'static str) {
+    let init_port = 60123;
+    let _tcp_sockets = (0..n)
+        .map(|x| TcpListener::bind(format!("{}:{}", ip, init_port + x)))
+        .collect::<Vec<_>>();
+    thread::sleep(Duration::from_secs(1));
+}
+
+fn create_udp_sockets(n: usize, ip: &'static str) {
+    let init_port = 60123;
+    let _udp_sockets = (0..n)
+        .map(|x| UdpSocket::bind(format!("{}:{}", ip, init_port + x)))
+        .collect::<Vec<_>>();
+    thread::sleep(Duration::from_secs(1));
 }
 
 fn main() {
@@ -122,6 +137,10 @@ fn main() {
                 thread::sleep(Duration::from_secs(1));
                 return;
             }
+            "create_tcpv4_sockets" => create_tcp_sockets(p.parse(), "127.0.0.1"),
+            "create_tcpv6_sockets" => create_tcp_sockets(p.parse(), "[::1]"),
+            "create_udpv4_sockets" => create_udp_sockets(p.parse(), "127.0.0.1"),
+            "create_udpv6_sockets" => create_udp_sockets(p.parse(), "[::1]"),
             _ => print!("{}", arg),
         }
     }
