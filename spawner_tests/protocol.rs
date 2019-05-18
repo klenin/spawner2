@@ -7,6 +7,8 @@ use crate::term_reason::{
 
 use spawner_driver::{run, Report, TerminateReason};
 
+use std::time::Instant;
+
 #[test]
 fn spawn_suspended() {
     let r = run(&[
@@ -363,4 +365,35 @@ fn reset_controller_idle_time_and_wall_clock_time_usage() {
     ensure_ok(&r[0]);
     assert_approx_eq!(idle_time_usage, 2.0, 0.3);
     assert_approx_eq!(r[0].result.wall_clock_time, 2.0, TIME_ERR);
+}
+
+#[ignore]
+#[test]
+fn proper_agent_termination() {
+    for _ in 0..200 {
+        let start = Instant::now();
+        run(&[
+            "--separator=@",
+            "-d=1",
+            "--@",
+            "--controller",
+            APP,
+            "1W#\n",
+            "wake_controller",
+            "--@",
+            "--in=*0.stdout",
+            "--out=*0.stdin",
+            APP,
+            "me",
+            "ssa",
+            "ge",
+            "\n",
+        ])
+        .unwrap();
+
+        let dt = Instant::now() - start;
+        if dt.as_millis() > 750 {
+            panic!("Agent is not terminated");
+        }
+    }
 }

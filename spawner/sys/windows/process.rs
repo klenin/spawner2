@@ -78,12 +78,38 @@ impl Process {
         unsafe {
             cvt(GetExitCodeProcess(self.handle.0, &mut exit_code))?;
         }
+
+        // In this example it is possible to hit a deadline limit. What actually happens is
+        // that we get an exit code from GetExitCodeProcess but job object shows that there is
+        // one active process left. To make sure that process is properly terminated
+        // there is an extra `terminate` call.
+        //
+        // spawner_driver::run(&[
+        //     "--separator=@",
+        //     "-d=1",
+        //     "--@",
+        //     "--controller",
+        //     "app.exe",
+        //     "1W#\n",
+        //     "wake_controller",
+        //     "--@",
+        //     "--in=*0.stdout",
+        //     "--out=*0.stdin",
+        //     "app.exe",
+        //     "me",
+        //     "ssa",
+        //     "ge",
+        //     "\n",
+        // ]);
         Ok(match exit_code {
             STILL_ACTIVE => None,
-            _ => Some(match crash_cause(exit_code) {
-                Some(cause) => ExitStatus::Crashed(cause.to_string()),
-                None => ExitStatus::Finished(exit_code),
-            }),
+            _ => {
+                let _ = self.terminate();
+                Some(match crash_cause(exit_code) {
+                    Some(cause) => ExitStatus::Crashed(cause.to_string()),
+                    None => ExitStatus::Finished(exit_code),
+                })
+            }
         })
     }
 
