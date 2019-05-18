@@ -219,7 +219,7 @@ fn active_connections_limit_exceeded() {
 }
 
 fn connection_limit_ok(create_sockets: &'static str) {
-    let r = run(&["-active-connection-count=2", APP, create_sockets, "1"]).unwrap();
+    let r = run(&["-active-connection-count=1", APP, create_sockets, "1"]).unwrap();
     ensure_ok(&r[0]);
 }
 
