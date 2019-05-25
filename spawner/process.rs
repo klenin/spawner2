@@ -1,6 +1,6 @@
 use crate::pipe::{ReadPipe, WritePipe};
-use crate::sys::process as ps_impl;
-use crate::sys::IntoInner;
+use crate::sys::process as imp;
+use crate::sys::{AsInnerMut, IntoInner};
 use crate::Result;
 
 use std::time::Duration;
@@ -86,35 +86,16 @@ pub struct ProcessStdio {
     pub stderr: WritePipe,
 }
 
-/// Defines the default environment for a process.
-#[derive(Copy, Clone, Debug)]
-pub enum Environment {
-    /// Clears the default environment.
-    Clear,
-    /// Inherits current process's environment.
-    Inherit,
-    /// Inherits default environment from a user.
-    UserDefault,
-}
-
 /// Represents the set of parameters to use to spawn a process.
-pub struct ProcessInfo {
-    pub app: String,
-    pub args: Vec<String>,
-    pub working_directory: Option<String>,
-    pub show_window: bool,
-    pub suspended: bool,
-    pub env: Environment,
-    pub env_vars: Vec<(String, String)>,
-    pub username: Option<String>,
-    pub password: Option<String>,
-}
+pub struct ProcessInfo(imp::ProcessInfo);
 
 /// Handle to a process.
-pub struct Process(ps_impl::Process);
+pub struct Process(imp::Process);
+
+pub struct GroupRestrictions(imp::GroupRestrictions);
 
 /// Describes a group of processes.
-pub struct Group(ps_impl::Group);
+pub struct Group(imp::Group);
 
 impl Default for ResourceLimits {
     fn default() -> Self {
@@ -146,6 +127,66 @@ impl Default for ResourceUsage {
     }
 }
 
+impl ProcessInfo {
+    pub fn new<T: AsRef<str>>(app: T) -> Self {
+        Self(imp::ProcessInfo::new(app))
+    }
+
+    pub fn args<T, U>(&mut self, args: T) -> &mut Self
+    where
+        T: IntoIterator<Item = U>,
+        U: AsRef<str>,
+    {
+        self.0.args(args);
+        self
+    }
+
+    pub fn envs<I, K, V>(&mut self, envs: I) -> &mut Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
+        self.0.envs(envs);
+        self
+    }
+
+    pub fn working_dir<T: AsRef<str>>(&mut self, dir: T) -> &mut Self {
+        self.0.working_dir(dir);
+        self
+    }
+
+    pub fn suspended(&mut self, v: bool) -> &mut Self {
+        self.0.suspended(v);
+        self
+    }
+
+    pub fn env_clear(&mut self) -> &mut Self {
+        self.0.env_clear();
+        self
+    }
+
+    pub fn env_inherit(&mut self) -> &mut Self {
+        self.0.env_inherit();
+        self
+    }
+
+    pub fn user<T, U>(&mut self, username: T, password: Option<U>) -> &mut Self
+    where
+        T: AsRef<str>,
+        U: AsRef<str>,
+    {
+        self.0.user(username, password);
+        self
+    }
+}
+
+impl AsInnerMut<imp::ProcessInfo> for ProcessInfo {
+    fn as_inner_mut(&mut self) -> &mut imp::ProcessInfo {
+        &mut self.0
+    }
+}
+
 impl Process {
     /// Returns `Ok(Some(status))` if process has terminated.
     pub fn exit_status(&mut self) -> Result<Option<ExitStatus>> {
@@ -168,26 +209,38 @@ impl Process {
     }
 }
 
+impl GroupRestrictions {
+    pub fn new<T: Into<ResourceLimits>>(limits: T) -> Self {
+        Self(imp::GroupRestrictions::new(limits))
+    }
+}
+
+impl AsInnerMut<imp::GroupRestrictions> for GroupRestrictions {
+    fn as_inner_mut(&mut self) -> &mut imp::GroupRestrictions {
+        &mut self.0
+    }
+}
+
 impl Group {
     /// Creates new process group.
-    pub fn new<T>(limits: T) -> Result<Self>
+    pub fn new<T>(restrictions: T) -> Result<Self>
     where
-        T: Into<ResourceLimits>,
+        T: Into<GroupRestrictions>,
     {
-        ps_impl::Group::new(limits).map(Self)
+        imp::Group::new(restrictions.into().0).map(Self)
     }
 
     /// Spawns process and assigns it to this group.
-    pub fn spawn<T, U>(&mut self, info: T, stdio: U) -> Result<Process>
+    pub fn spawn<T, U>(&mut self, mut info: T, stdio: U) -> Result<Process>
     where
-        T: AsRef<ProcessInfo>,
+        T: AsMut<ProcessInfo>,
         U: Into<ProcessStdio>,
     {
         let stdio = stdio.into();
         self.0
             .spawn(
-                info,
-                ps_impl::ProcessStdio {
+                &mut info.as_mut().0,
+                imp::ProcessStdio {
                     stdin: stdio.stdin.into_inner(),
                     stdout: stdio.stdout.into_inner(),
                     stderr: stdio.stderr.into_inner(),
@@ -219,8 +272,8 @@ impl Group {
     }
 }
 
-impl AsRef<ProcessInfo> for ProcessInfo {
-    fn as_ref(&self) -> &ProcessInfo {
+impl AsMut<ProcessInfo> for ProcessInfo {
+    fn as_mut(&mut self) -> &mut ProcessInfo {
         self
     }
 }

@@ -6,3 +6,4 @@ mod missing_decls;
 pub mod error;
 pub mod pipe;
 pub mod process;
+pub mod process_ext;

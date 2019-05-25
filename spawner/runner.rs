@@ -1,10 +1,16 @@
-use crate::process::{self, ExitStatus, Group, Process, ProcessStdio, ResourceUsage};
-use crate::task::Task;
+use crate::process::{
+    self, ExitStatus, Group, GroupRestrictions, Process, ProcessInfo, ProcessStdio, ResourceUsage,
+};
 use crate::{Error, Result};
 
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+
+/// An action that is performed when the process terminates.
+pub trait OnTerminate: Send {
+    fn on_terminate(&mut self);
+}
 
 /// Describes the termination reason for a process.
 #[derive(Clone, Debug, PartialEq)]
@@ -81,16 +87,25 @@ impl Runner {
 
 impl RunnerThread {
     /// Spawns runner thread, returning a handle to it.
-    pub fn spawn<T, U>(task: T, stdio: U) -> Result<Self>
-    where
-        T: Into<Task>,
-        U: Into<ProcessStdio>,
-    {
-        let task = task.into();
-        let stdio = stdio.into();
+    pub fn spawn(
+        info: ProcessInfo,
+        stdio: ProcessStdio,
+        restrictions: GroupRestrictions,
+        monitor_interval: Duration,
+        on_terminate: Option<Box<OnTerminate>>,
+    ) -> Result<Self> {
         let (sender, receiver) = channel();
         thread::Builder::new()
-            .spawn(move || RunnerThread::entry(task, stdio, receiver))
+            .spawn(move || {
+                RunnerThread::entry(
+                    info,
+                    stdio,
+                    restrictions,
+                    monitor_interval,
+                    on_terminate,
+                    receiver,
+                )
+            })
             .map_err(|_| Error::from("Cannot spawn RunnerThread"))
             .map(|handle| RunnerThread {
                 handle: handle,
@@ -109,17 +124,20 @@ impl RunnerThread {
             .unwrap_or(Err(Error::from("Runner thread panicked")))
     }
 
-    fn entry(task: Task, stdio: ProcessStdio, receiver: Receiver<Message>) -> Result<RunnerReport> {
-        let mut group = Group::new(task.resource_limits)?;
-        let mut process = group.spawn(task.process_info, stdio)?;
-        let result = RunnerThread::monitor_process(
-            &mut process,
-            &mut group,
-            task.monitor_interval,
-            receiver,
-        );
+    fn entry(
+        info: ProcessInfo,
+        stdio: ProcessStdio,
+        restrictions: GroupRestrictions,
+        monitor_interval: Duration,
+        on_terminate: Option<Box<OnTerminate>>,
+        receiver: Receiver<Message>,
+    ) -> Result<RunnerReport> {
+        let mut group = Group::new(restrictions)?;
+        let mut process = group.spawn(info, stdio)?;
+        let result =
+            RunnerThread::monitor_process(&mut process, &mut group, monitor_interval, receiver);
         let _ = group.terminate();
-        if let Some(mut handler) = task.on_terminate {
+        if let Some(mut handler) = on_terminate {
             handler.on_terminate();
         }
         result

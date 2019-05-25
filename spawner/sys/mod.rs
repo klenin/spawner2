@@ -17,3 +17,11 @@ cfg_if! {
 pub trait IntoInner<T> {
     fn into_inner(self) -> T;
 }
+
+pub trait AsInnerMut<T> {
+    fn as_inner_mut(&mut self) -> &mut T;
+}
+
+pub trait AsInner<T> {
+    fn as_inner(&self) -> &T;
+}
