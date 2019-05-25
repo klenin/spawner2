@@ -32,7 +32,7 @@ use std::process;
 use std::thread;
 use std::time::{Duration, Instant};
 
-pub struct ProcessStdio {
+pub struct Stdio {
     pub stdin: ReadPipe,
     pub stdout: WritePipe,
     pub stderr: WritePipe,
@@ -263,7 +263,7 @@ impl Group {
     pub fn spawn<T, U>(&mut self, mut info: T, stdio: U) -> Result<Process>
     where
         T: AsMut<ProcessInfo>,
-        U: Into<ProcessStdio>,
+        U: Into<Stdio>,
     {
         let info = info.as_mut();
         let stdio = stdio.into();

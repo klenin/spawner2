@@ -80,7 +80,7 @@ pub enum ExitStatus {
 }
 
 /// Describes the standard I/O streams of a process.
-pub struct ProcessStdio {
+pub struct Stdio {
     pub stdin: ReadPipe,
     pub stdout: WritePipe,
     pub stderr: WritePipe,
@@ -234,13 +234,13 @@ impl Group {
     pub fn spawn<T, U>(&mut self, mut info: T, stdio: U) -> Result<Process>
     where
         T: AsMut<ProcessInfo>,
-        U: Into<ProcessStdio>,
+        U: Into<Stdio>,
     {
         let stdio = stdio.into();
         self.0
             .spawn(
                 &mut info.as_mut().0,
-                imp::ProcessStdio {
+                imp::Stdio {
                     stdin: stdio.stdin.into_inner(),
                     stdout: stdio.stdout.into_inner(),
                     stderr: stdio.stderr.into_inner(),

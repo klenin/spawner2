@@ -1,6 +1,6 @@
 use crate::iograph::{IoBuilder, IoGraph, IoStreams, Istream, IstreamId, Ostream, OstreamId};
 use crate::pipe::{ReadPipe, WritePipe};
-use crate::process::{GroupRestrictions, ProcessInfo, ProcessStdio};
+use crate::process::{GroupRestrictions, ProcessInfo, Stdio};
 use crate::runner::{OnTerminate, Runner, RunnerReport, RunnerThread};
 use crate::rwhub::{ReadHubController, ReadHubThread, WriteHub};
 use crate::{Error, Result};
@@ -235,7 +235,7 @@ fn build_stdio(
     mapping: &StdioMapping,
     iostreams: &mut IoStreams,
     iograph: &IoGraph,
-) -> Result<(ProcessStdio, StdioThreads)> {
+) -> Result<(Stdio, StdioThreads)> {
     let stdin = iostreams.ostreams.remove(&mapping.stdin).unwrap();
     let stdout = iostreams.istreams.remove(&mapping.stdout).unwrap();
     let stderr = iostreams.istreams.remove(&mapping.stderr).unwrap();
@@ -245,7 +245,7 @@ fn build_stdio(
     let (stderr_w, stderr_r) = istream_endings(stderr, iograph.istream_edges(mapping.stderr))?;
 
     Ok((
-        ProcessStdio {
+        Stdio {
             stdin: stdin_r,
             stdout: stdout_w,
             stderr: stderr_w,

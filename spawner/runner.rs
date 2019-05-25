@@ -1,5 +1,5 @@
 use crate::process::{
-    self, ExitStatus, Group, GroupRestrictions, Process, ProcessInfo, ProcessStdio, ResourceUsage,
+    self, ExitStatus, Group, GroupRestrictions, Process, ProcessInfo, Stdio, ResourceUsage,
 };
 use crate::{Error, Result};
 
@@ -89,7 +89,7 @@ impl RunnerThread {
     /// Spawns runner thread, returning a handle to it.
     pub fn spawn(
         info: ProcessInfo,
-        stdio: ProcessStdio,
+        stdio: Stdio,
         restrictions: GroupRestrictions,
         monitor_interval: Duration,
         on_terminate: Option<Box<OnTerminate>>,
@@ -126,7 +126,7 @@ impl RunnerThread {
 
     fn entry(
         info: ProcessInfo,
-        stdio: ProcessStdio,
+        stdio: Stdio,
         restrictions: GroupRestrictions,
         monitor_interval: Duration,
         on_terminate: Option<Box<OnTerminate>>,

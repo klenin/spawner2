@@ -55,7 +55,7 @@ enum Env {
     User,
 }
 
-pub struct ProcessStdio {
+pub struct Stdio {
     pub stdin: ReadPipe,
     pub stdout: WritePipe,
     pub stderr: WritePipe,
@@ -249,7 +249,7 @@ impl Process {
     fn suspended<T, U>(info: T, stdio: U) -> Result<Self>
     where
         T: AsRef<ProcessInfo>,
-        U: Into<ProcessStdio>,
+        U: Into<Stdio>,
     {
         let stdio = stdio.into();
         let info = info.as_ref();
@@ -350,7 +350,7 @@ impl Group {
     pub fn spawn<T, U>(&mut self, info: T, stdio: U) -> Result<Process>
     where
         T: AsRef<ProcessInfo>,
-        U: Into<ProcessStdio>,
+        U: Into<Stdio>,
     {
         let info = info.as_ref();
         let ps = Process::suspended(info, stdio)?;
