@@ -7,12 +7,6 @@ fn ensure_error(report: &Report, error: &str) {
 }
 
 #[test]
-fn controller_without_argv() {
-    let err = run(&["--controller"]).unwrap_err();
-    assert_eq!(err.to_string(), "Controller must have an argv");
-}
-
-#[test]
 fn multiple_controllers() {
     let err = run(&[
         "--separator=@",
