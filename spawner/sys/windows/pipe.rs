@@ -46,10 +46,10 @@ pub fn create() -> Result<(ReadPipe, WritePipe)> {
 
     Ok((
         ReadPipe {
-            handle: Handle(read_handle),
+            handle: Handle::new(read_handle),
         },
         WritePipe {
-            handle: Handle(write_handle),
+            handle: Handle::new(write_handle),
             is_file: false,
         },
     ))
@@ -78,7 +78,7 @@ impl Read for ReadPipe {
         let mut bytes_read: DWORD = 0;
         unsafe {
             cvt(ReadFile(
-                self.handle.0,
+                self.handle.raw(),
                 mem::transmute(buf.as_mut_ptr()),
                 buf.len() as DWORD,
                 &mut bytes_read,
@@ -121,7 +121,7 @@ impl Write for WritePipe {
         let mut bytes_written: DWORD = 0;
         unsafe {
             cvt(WriteFile(
-                self.handle.0,
+                self.handle.raw(),
                 mem::transmute(buf.as_ptr()),
                 buf.len() as DWORD,
                 &mut bytes_written,
@@ -144,7 +144,7 @@ fn open<P: AsRef<Path>>(
     exclusive: bool,
 ) -> Result<Handle> {
     let handle = unsafe {
-        Handle(CreateFileW(
+        Handle::new(CreateFileW(
             /*lpFileName=*/ to_utf16(path.as_ref()).as_mut_ptr(),
             /*dwDesiredAccess=*/ access,
             /*dwShareMode=*/
@@ -159,13 +159,13 @@ fn open<P: AsRef<Path>>(
         ))
     };
 
-    if handle.0 == INVALID_HANDLE_VALUE {
+    if handle.raw() == INVALID_HANDLE_VALUE {
         return Err(Error::last_os_error());
     }
 
     unsafe {
         cvt(SetHandleInformation(
-            handle.0,
+            handle.raw(),
             HANDLE_FLAG_INHERIT,
             HANDLE_FLAG_INHERIT,
         ))

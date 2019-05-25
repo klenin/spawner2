@@ -1,9 +1,7 @@
 use crate::cmd::{
-    Command, Redirect, RedirectFlags, RedirectKind, RedirectList, StderrRedirectList,
+    Command, Environment, Redirect, RedirectFlags, RedirectKind, RedirectList, StderrRedirectList,
     StdinRedirectList, StdoutRedirectList,
 };
-
-use spawner::process::Environment;
 
 use spawner_opts::OptionValueParser;
 

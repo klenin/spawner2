@@ -1,25 +1,23 @@
 use crate::iograph::{IoBuilder, IoGraph, IoStreams, Istream, IstreamId, Ostream, OstreamId};
 use crate::pipe::{ReadPipe, WritePipe};
-use crate::process::{ProcessInfo, ProcessStdio, ResourceLimits};
-use crate::runner::{Runner, RunnerReport, RunnerThread};
+use crate::process::{GroupRestrictions, ProcessInfo, ProcessStdio};
+use crate::runner::{OnTerminate, Runner, RunnerReport, RunnerThread};
 use crate::rwhub::{ReadHubController, ReadHubThread, WriteHub};
 use crate::{Error, Result};
 
 use std::fmt;
 use std::time::Duration;
 
-/// An action that is performed when the task terminates.
-pub trait OnTerminate: Send {
-    fn on_terminate(&mut self);
+pub struct Controllers {
+    on_terminate: Option<Box<OnTerminate>>,
+    stdout_controller: Option<Box<ReadHubController>>,
 }
 
-/// Represents a program to be spawned.
-pub struct Task {
-    pub process_info: ProcessInfo,
-    pub resource_limits: ResourceLimits,
-    pub monitor_interval: Duration,
-    pub on_terminate: Option<Box<OnTerminate>>,
-    pub stdout_controller: Option<Box<ReadHubController>>,
+struct Task {
+    process_info: ProcessInfo,
+    restrictions: GroupRestrictions,
+    monitor_interval: Duration,
+    on_terminate: Option<Box<OnTerminate>>,
 }
 
 /// Mapping of the task's stdio into corresponding [`IoStreams`].
@@ -57,17 +55,37 @@ struct StdioThreads {
     stderr: Option<ReadHubThread>,
 }
 
-#[derive(Clone)]
-pub struct TaskController {
-    runner: Runner,
-}
-
 /// Controls the execution of a task list and all associated entities.
 pub struct Spawner {
     tasks: Vec<TaskThreads>,
     input_files: Vec<ReadHubThread>,
     output_files: Vec<WriteHub>,
     iograph: IoGraph,
+}
+
+impl Controllers {
+    pub fn new() -> Self {
+        Self {
+            on_terminate: None,
+            stdout_controller: None,
+        }
+    }
+
+    pub fn on_terminate<T>(mut self, on_terminate: T) -> Self
+    where
+        T: OnTerminate + 'static,
+    {
+        self.on_terminate = Some(Box::new(on_terminate));
+        self
+    }
+
+    pub fn stdout_controller<T>(mut self, ctl: T) -> Self
+    where
+        T: ReadHubController + 'static,
+    {
+        self.stdout_controller = Some(Box::new(ctl));
+        self
+    }
 }
 
 impl Tasks {
@@ -82,26 +100,28 @@ impl Tasks {
         &mut self.io
     }
 
-    pub fn add<T: Into<Task>>(&mut self, t: T) -> Result<StdioMapping> {
-        let mut task = t.into();
+    pub fn add(
+        &mut self,
+        process_info: ProcessInfo,
+        restrictions: GroupRestrictions,
+        monitor_interval: Duration,
+        controllers: Controllers,
+    ) -> Result<StdioMapping> {
         let mapping = StdioMapping {
             stdin: self.io.add_ostream(None)?,
-            stdout: self.io.add_istream(None, task.stdout_controller.take())?,
+            stdout: self.io.add_istream(None, controllers.stdout_controller)?,
             stderr: self.io.add_istream(None, None)?,
         };
-        self.tasks.push((task, mapping));
+        self.tasks.push((
+            Task {
+                process_info: process_info,
+                restrictions: restrictions,
+                monitor_interval: monitor_interval,
+                on_terminate: controllers.on_terminate,
+            },
+            mapping,
+        ));
         Ok(mapping)
-    }
-
-    pub fn extend<T, U>(&mut self, items: T) -> Result<()>
-    where
-        T: IntoIterator<Item = U>,
-        U: Into<Task>,
-    {
-        for task in items.into_iter() {
-            self.add(task.into())?;
-        }
-        Ok(())
     }
 
     pub fn stdio_mapping(&self, i: usize) -> StdioMapping {
@@ -121,12 +141,6 @@ impl fmt::Display for TaskErrors {
             write!(f, "{}\n", e)?;
         }
         Ok(())
-    }
-}
-
-impl TaskController {
-    pub fn runner(&self) -> &Runner {
-        &self.runner
     }
 }
 
@@ -152,7 +166,14 @@ impl Spawner {
             .into_iter()
             .zip(ps_and_stdio_threads.into_iter())
             .map(|((task, _), (ps_stdio, stdio_threads))| {
-                RunnerThread::spawn(task, ps_stdio).map(|rt| TaskThreads {
+                RunnerThread::spawn(
+                    task.process_info,
+                    ps_stdio,
+                    task.restrictions,
+                    task.monitor_interval,
+                    task.on_terminate,
+                )
+                .map(|rt| TaskThreads {
                     runner_thread: rt,
                     stdio_threads: stdio_threads,
                 })
@@ -201,11 +222,8 @@ impl Spawner {
         results
     }
 
-    /// Returns an iterator over the task controllers.
-    pub fn controllers<'a>(&'a self) -> impl Iterator<Item = TaskController> + 'a {
-        self.tasks.iter().map(|t| TaskController {
-            runner: t.runner_thread.runner(),
-        })
+    pub fn runners<'a>(&'a self) -> impl Iterator<Item = Runner> + 'a {
+        self.tasks.iter().map(|t| t.runner_thread.runner())
     }
 
     pub fn io_graph(&self) -> &IoGraph {

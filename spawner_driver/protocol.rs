@@ -1,9 +1,9 @@
 use spawner::iograph::IoGraph;
 use spawner::iograph::OstreamId;
 use spawner::pipe::WritePipe;
-use spawner::runner::Runner;
+use spawner::runner::{OnTerminate, Runner};
 use spawner::rwhub::{ReadHubController, WriteHub};
-use spawner::task::{OnTerminate, StdioMapping};
+use spawner::task::StdioMapping;
 use spawner::{Error, Result};
 
 use std::char;

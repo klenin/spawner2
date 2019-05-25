@@ -1,8 +1,6 @@
 use crate::cmd::*;
 use crate::value_parser::StdinRedirectParser;
 
-use spawner::process::Environment;
-
 use spawner_opts::{CmdLineOptions, OptionValueParser};
 
 use std::time::Duration;

@@ -16,7 +16,7 @@ use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
 use winapi::um::jobapi2::QueryInformationJobObject;
 use winapi::um::processthreadsapi::{
     DeleteProcThreadAttributeList, InitializeProcThreadAttributeList, UpdateProcThreadAttribute,
-    PROC_THREAD_ATTRIBUTE_LIST,
+    LPSTARTUPINFOW, PROC_THREAD_ATTRIBUTE_LIST,
 };
 use winapi::um::securitybaseapi::{ImpersonateLoggedOnUser, RevertToSelf};
 use winapi::um::userenv::{CreateEnvironmentBlock, DestroyEnvironmentBlock};
@@ -44,7 +44,7 @@ use std::ptr;
 use std::slice;
 use std::u32;
 
-pub struct Handle(pub HANDLE);
+pub struct Handle(HANDLE);
 
 unsafe impl Send for Handle {}
 
@@ -55,10 +55,10 @@ pub struct RawStdio {
 }
 
 pub struct User {
-    pub token: Handle,
-    pub winsta: HWINSTA,
-    pub desktop: HDESK,
-    pub desktop_name: Vec<u16>,
+    token: Handle,
+    winsta: HWINSTA,
+    desktop: HDESK,
+    desktop_name: Vec<u16>,
 }
 
 pub struct UserContext<'a>(&'a Option<User>);
@@ -69,7 +69,7 @@ pub struct EnvBlock {
 }
 
 pub struct StartupInfo {
-    pub base: STARTUPINFOEXW,
+    base: STARTUPINFOEXW,
     _att_list: AttList,
 }
 
@@ -135,6 +135,16 @@ pub fn cvt<T: IsZero>(v: T) -> std::result::Result<T, SysError> {
 
 pub fn to_utf16<S: AsRef<OsStr>>(s: S) -> Vec<u16> {
     s.as_ref().encode_wide().chain(std::iter::once(0)).collect()
+}
+
+impl Handle {
+    pub fn new(handle: HANDLE) -> Self {
+        Self(handle)
+    }
+
+    pub fn raw(&self) -> HANDLE {
+        self.0
+    }
 }
 
 impl Drop for Handle {
@@ -214,6 +224,10 @@ impl User {
                 )),
             })
         }
+    }
+
+    pub fn token(&self) -> &Handle {
+        &self.token
     }
 }
 
@@ -303,7 +317,7 @@ impl StartupInfo {
     pub fn create(
         stdio: &RawStdio,
         inherited_handles: &mut [HANDLE],
-        desktop_name: Option<&mut Vec<u16>>,
+        user: Option<&mut User>,
         show_window: bool,
     ) -> Result<Self> {
         let mut att_list = AttList::allocate(1)?;
@@ -323,14 +337,18 @@ impl StartupInfo {
         info.StartupInfo.hStdInput = stdio.stdin.0;
         info.StartupInfo.hStdOutput = stdio.stdout.0;
         info.StartupInfo.hStdError = stdio.stderr.0;
-        info.StartupInfo.lpDesktop = desktop_name
-            .map(|v| v.as_mut_ptr())
+        info.StartupInfo.lpDesktop = user
+            .map(|u| u.desktop_name.as_mut_ptr())
             .unwrap_or(ptr::null_mut());
 
         Ok(StartupInfo {
             base: info,
             _att_list: att_list,
         })
+    }
+
+    pub fn as_mut_ptr(&mut self) -> LPSTARTUPINFOW {
+        unsafe { mem::transmute(&mut self.base) }
     }
 }
 
@@ -421,7 +439,7 @@ impl PidList {
                     }
                 }
                 Err(sys_err) => {
-                    if sys_err.0 != ERROR_MORE_DATA {
+                    if sys_err.raw() != ERROR_MORE_DATA {
                         return Err(Error::from(sys_err));
                     }
                 }

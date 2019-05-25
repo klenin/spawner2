@@ -6,13 +6,19 @@ use crate::value_parser::{
 use spawner_opts::{CmdLineOptions, OptionValueParser};
 
 use spawner::pipe::FileLock;
-use spawner::process::Environment;
 use spawner::VERSION;
 
 use std::env::{self, VarError};
 use std::f64;
 use std::fmt::{self, Display, Formatter};
 use std::time::Duration;
+
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub enum Environment {
+    Clear,
+    Inherit,
+    UserDefault,
+}
 
 #[derive(Copy, Clone, Debug)]
 pub struct RedirectFlags {
