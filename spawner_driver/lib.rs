@@ -47,7 +47,6 @@ impl Commands {
         let mut default_cmd = Command::from_env()?;
         let mut pos = 0;
         let mut cmds: Vec<Command> = Vec::new();
-        let mut controller_exists = false;
 
         while pos < argv.len() {
             let mut cmd = default_cmd.clone();
@@ -64,14 +63,8 @@ impl Commands {
             pos = sep_pos + 1;
 
             if cmd.argv.is_empty() {
-                if cmd.controller {
-                    return Err(Error::from("Controller must have an argv"));
-                }
                 default_cmd = cmd;
-            } else if cmd.controller && controller_exists {
-                return Err(Error::from("There can be at most one controller"));
             } else {
-                controller_exists = controller_exists || cmd.controller;
                 default_cmd.separator = cmd.separator.clone();
                 cmds.push(cmd);
             }
@@ -81,7 +74,12 @@ impl Commands {
     }
 
     fn run(self) -> Result<Vec<Report>> {
-        let runner_reports = Driver::from_cmds(&self.0)?.spawn()?.wait();
+        let driver = Driver::from_cmds(&self.0)?;
+        for warning in driver.warnings() {
+            eprintln!("warning: {}", warning);
+        }
+
+        let runner_reports = driver.spawn()?.wait();
         let reports: Vec<Report> = runner_reports
             .into_iter()
             .zip(self.0.iter())
