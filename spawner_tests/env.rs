@@ -60,3 +60,10 @@ fn overwrite_var() {
     let env = Env::new(&["-env=clear", "-D:NAME=VAR", "-D:NAME=VAR1"]);
     assert_eq!(env.vars(), vec![("NAME", "VAR1")]);
 }
+
+#[test]
+fn default_env() {
+    let cmds: [&'static str; 0] = [];
+    let env = Env::new(&cmds);
+    assert!(env.vars().len() != 0);
+}
