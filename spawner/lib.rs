@@ -22,7 +22,7 @@ cfg_if! {
     }
 }
 
-pub mod iograph;
+pub mod io;
 pub mod pipe;
 pub mod process;
 pub mod rwhub;
