@@ -2,9 +2,7 @@ use crate::cmd::{Command, RedirectList};
 use crate::misc::{b2mb, dur2sec, mb2b};
 
 use spawner::process::{ExitStatus, LimitViolation};
-use spawner::runner::{RunnerReport, TerminationReason};
-use spawner::task::TaskResult;
-use spawner::Error;
+use spawner::{self, Error, SpawnerResult, TerminationReason};
 
 use json::{array, object, JsonValue};
 
@@ -108,7 +106,7 @@ struct Mb(f64);
 struct FltSecs(f64);
 
 impl Report {
-    pub fn new(cmd: &Command, result: TaskResult) -> Self {
+    pub fn new(cmd: &Command, result: SpawnerResult) -> Self {
         let mut report = Report::from(cmd);
         match result {
             Ok(runner_report) => {
@@ -127,7 +125,7 @@ impl Report {
                     report.terminate_reason = TerminateReason::from(tr);
                 }
             }
-            Err(e) => report.spawner_error = e.errors,
+            Err(errors) => report.spawner_error = errors.into_inner(),
         }
         report
     }
@@ -251,8 +249,8 @@ impl ReportKind {
     }
 }
 
-impl From<&RunnerReport> for ReportResult {
-    fn from(report: &RunnerReport) -> Self {
+impl From<&spawner::Report> for ReportResult {
+    fn from(report: &spawner::Report) -> Self {
         let time = dur2sec(&report.resource_usage.total_user_time);
         let wc_time = dur2sec(&report.resource_usage.wall_clock_time);
         Self {

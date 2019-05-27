@@ -1,10 +1,8 @@
-use spawner::iograph::IoGraph;
-use spawner::iograph::OstreamId;
+use spawner::io::{IoGraph, OstreamId, StdioMapping};
 use spawner::pipe::WritePipe;
-use spawner::runner::{OnTerminate, Runner};
-use spawner::rwhub::{ReadHubController, WriteHub};
-use spawner::task::StdioMapping;
+use spawner::rwhub::Connection;
 use spawner::{Error, Result};
+use spawner::{OnRead, OnTerminate, Runner};
 
 use std::char;
 use std::collections::HashMap;
@@ -159,7 +157,7 @@ impl ControllerStdout {
         Ok(())
     }
 
-    fn handle_msg(&mut self, write_hubs: &mut [WriteHub]) -> Result<()> {
+    fn handle_msg(&mut self, connections: &mut [Connection]) -> Result<()> {
         self.init()?;
         self.ctx.runner(self.controller_idx).reset_time_usage();
 
@@ -180,12 +178,13 @@ impl ControllerStdout {
             }
         }
 
-        for (mut wh, agent_idx) in write_hubs.iter_mut().zip(self.stdout_listeners.iter()) {
+        for (mut connection, agent_idx) in connections.iter_mut().zip(self.stdout_listeners.iter())
+        {
             if agent_idx.is_none() {
-                wh.write_all(self.buf.as_slice());
+                connection.send(self.buf.as_slice());
             } else if let MessageKind::Message(data) = msg.kind {
                 if *agent_idx == msg.agent_idx.map(|i| self.agent_indices[i.0]) {
-                    wh.write_all(data);
+                    connection.send(data);
                 }
             }
         }
@@ -194,21 +193,15 @@ impl ControllerStdout {
     }
 }
 
-impl ReadHubController for ControllerStdout {
-    fn handle_data(&mut self, data: &[u8], write_hubs: &mut [WriteHub]) -> Result<()> {
+impl OnRead for ControllerStdout {
+    fn on_read(&mut self, data: &[u8], connections: &mut [Connection]) -> Result<()> {
         let mut next_msg = self.buf.write(data)?;
         while self.buf.is_msg_ready() {
-            self.handle_msg(write_hubs)?;
+            self.handle_msg(connections)?;
             self.buf.clear();
             next_msg = self.buf.write(next_msg)?;
         }
         Ok(())
-    }
-}
-
-impl Into<Option<Box<ReadHubController>>> for ControllerStdout {
-    fn into(self) -> Option<Box<ReadHubController>> {
-        Some(Box::new(self))
     }
 }
 
@@ -232,16 +225,16 @@ impl AgentStdout {
     }
 }
 
-impl ReadHubController for AgentStdout {
-    fn handle_data(&mut self, data: &[u8], write_hubs: &mut [WriteHub]) -> Result<()> {
+impl OnRead for AgentStdout {
+    fn on_read(&mut self, data: &[u8], connections: &mut [Connection]) -> Result<()> {
         let mut next_msg = self.buf.write(data)?;
         while self.buf.is_msg_ready() {
             let agent = self.agent()?;
             agent.suspend();
             agent.reset_time_usage();
 
-            for mut wh in write_hubs.iter_mut() {
-                wh.write_all(self.buf.as_slice());
+            for mut connection in connections.iter_mut() {
+                connection.send(self.buf.as_slice());
             }
 
             self.buf.clear();
@@ -249,12 +242,6 @@ impl ReadHubController for AgentStdout {
             next_msg = self.buf.write(next_msg)?;
         }
         Ok(())
-    }
-}
-
-impl Into<Option<Box<ReadHubController>>> for AgentStdout {
-    fn into(self) -> Option<Box<ReadHubController>> {
-        Some(Box::new(self))
     }
 }
 

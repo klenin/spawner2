@@ -5,7 +5,6 @@ use crate::value_parser::{
 
 use spawner_opts::{CmdLineOptions, OptionValueParser};
 
-use spawner::pipe::FileLock;
 use spawner::VERSION;
 
 use std::env::{self, VarError};
@@ -429,16 +428,6 @@ impl Default for RedirectList {
         Self {
             items: Vec::new(),
             default_flags: Command::DEFAULT_FILE_FLAGS,
-        }
-    }
-}
-
-impl RedirectFlags {
-    pub fn file_lock(&self) -> FileLock {
-        if self.exclusive {
-            FileLock::Exclusive
-        } else {
-            FileLock::Shared
         }
     }
 }
