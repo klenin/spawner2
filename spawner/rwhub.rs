@@ -1,37 +1,24 @@
 use crate::pipe::{ReadPipe, WritePipe};
-use crate::{Error, Result};
 
 use std::io::{self, BufWriter, Read, Write};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::thread::{self, JoinHandle};
 
 /// Splits the [`ReadPipe`] allowing multiple readers to receive data from it.
 ///
 /// [`ReadPipe`]: struct.ReadPipe.html
 pub struct ReadHub {
     pipe: ReadPipe,
-    controller: Option<Box<(ReadHubController)>>,
-    write_hubs: Vec<WriteHub>,
-    buffer_size: usize,
+    connections: Vec<Connection>,
 }
 
-/// Allows dynamic control over data flow in [`ReadHub`].
+/// Represents connection between [`ReadHub`] and [`WriteHub`].
 ///
 /// [`ReadHub`]: struct.ReadHub.html
-pub trait ReadHubController: Send {
-    fn handle_data(&mut self, data: &[u8], write_hubs: &mut [WriteHub]) -> Result<()>;
+/// [`WriteHub`]: struct.WriteHub.html
+pub struct Connection {
+    wh: WriteHub,
+    is_dead: bool,
 }
-
-/// Continiously reads data from [`ReadHub`] sending it to corresponding receivers.
-/// Exits if one of the following conditions is met:
-/// * Error reading from [`ReadHub`].
-/// * EOF encountered.
-/// * [`ReadHubController::handle_data`] returned error.
-/// * All receivers are dead.
-///
-/// [`ReadHub`]: struct.ReadHub.html
-/// [`ReadHubController::handle_data`]: trait.ReadHubController.html#method.handle_data
-pub struct ReadHubThread(JoinHandle<Result<ReadPipe>>);
 
 enum WriteHubDst {
     Pipe(WritePipe),
@@ -42,111 +29,90 @@ enum WriteHubDst {
 ///
 /// [`WritePipe`]: struct.WritePipe.html
 #[derive(Clone)]
-pub struct WriteHub {
-    dst: Arc<Mutex<WriteHubDst>>,
-    error_encountered: bool,
-}
+pub struct WriteHub(Arc<Mutex<WriteHubDst>>);
 
 impl ReadHub {
-    pub fn new(pipe: ReadPipe, controller: Option<Box<ReadHubController>>) -> Self {
+    pub fn new(pipe: ReadPipe) -> Self {
         Self {
             pipe: pipe,
-            controller: controller,
-            write_hubs: Vec::new(),
-            buffer_size: 8192,
+            connections: Vec::new(),
         }
     }
 
     pub fn connect(&mut self, wh: &WriteHub) {
-        self.write_hubs.push(wh.clone());
+        self.connections.push(Connection {
+            wh: wh.clone(),
+            is_dead: false,
+        });
     }
 
-    pub fn write_hubs(&self) -> &Vec<WriteHub> {
-        &self.write_hubs
+    pub fn connections(&self) -> &[Connection] {
+        &self.connections
+    }
+
+    pub fn connections_mut(&mut self) -> &mut [Connection] {
+        &mut self.connections
+    }
+
+    pub fn transmit(&mut self, data: &[u8]) {
+        for c in self.connections.iter_mut() {
+            c.send(data);
+        }
+    }
+
+    pub fn into_inner(self) -> ReadPipe {
+        self.pipe
     }
 }
 
-impl ReadHubThread {
-    pub fn spawn(rh: ReadHub) -> Result<Self> {
-        thread::Builder::new()
-            .spawn(move || ReadHubThread::entry(rh))
-            .map_err(|_| Error::from("Cannot spawn ReadHubThread"))
-            .map(Self)
-    }
-
-    pub fn join(self) -> Result<ReadPipe> {
-        self.0
-            .join()
-            .unwrap_or(Err(Error::from("ReadHub thread panicked")))
-    }
-
-    fn entry(mut rh: ReadHub) -> Result<ReadPipe> {
-        let mut buffer: Vec<u8> = Vec::new();
-        buffer.resize(rh.buffer_size, 0);
-
-        loop {
-            let bytes_read = match rh.pipe.read(buffer.as_mut_slice()) {
-                Ok(x) => x,
-                Err(_) => break,
-            };
-            if bytes_read == 0 {
-                break;
-            }
-
-            let data = &buffer[..bytes_read];
-            if let Some(ctl) = &mut rh.controller {
-                ctl.handle_data(data, rh.write_hubs.as_mut_slice())?;
-            } else {
-                for wh in rh.write_hubs.iter_mut() {
-                    wh.write_all(data);
-                }
-            }
-
-            if rh.write_hubs.iter().all(|wh| wh.error_encountered) {
-                break;
-            }
-        }
-
-        Ok(rh.pipe)
+impl Read for ReadHub {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.pipe.read(buf)
     }
 }
 
-impl Write for WriteHubDst {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match self {
-            WriteHubDst::Pipe(p) => p.write(buf),
-            WriteHubDst::File(f) => f.write(buf),
+impl Connection {
+    pub fn send(&mut self, data: &[u8]) {
+        if self.wh.write_all(data).is_err() {
+            self.is_dead = true;
         }
     }
 
-    fn flush(&mut self) -> io::Result<()> {
-        match self {
-            WriteHubDst::Pipe(p) => p.flush(),
-            WriteHubDst::File(f) => f.flush(),
-        }
+    pub fn is_dead(&self) -> bool {
+        self.is_dead
     }
 }
 
 impl WriteHub {
-    pub fn new(pipe: WritePipe) -> Self {
-        Self {
-            dst: Arc::new(Mutex::new(match pipe.is_file() {
-                true => WriteHubDst::File(BufWriter::new(pipe)),
-                false => WriteHubDst::Pipe(pipe),
-            })),
-            error_encountered: false,
-        }
+    pub fn from_pipe(pipe: WritePipe) -> Self {
+        Self(Arc::new(Mutex::new(WriteHubDst::Pipe(pipe))))
     }
 
-    pub fn write_all(&mut self, data: &[u8]) {
-        if self.lock().and_then(|mut dst| dst.write_all(data)).is_err() {
-            self.error_encountered = true;
-        }
+    pub fn from_file(file: WritePipe) -> Self {
+        Self(Arc::new(Mutex::new(WriteHubDst::File(BufWriter::new(
+            file,
+        )))))
     }
 
     fn lock(&self) -> io::Result<MutexGuard<WriteHubDst>> {
-        self.dst
+        self.0
             .lock()
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "WriteHub mutex was poisoned"))
+    }
+}
+
+impl Write for WriteHub {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match *self.lock()? {
+            WriteHubDst::Pipe(ref mut p) => p.write(buf),
+            WriteHubDst::File(ref mut f) => f.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match *self.lock()? {
+            WriteHubDst::Pipe(ref mut p) => p.flush(),
+            WriteHubDst::File(ref mut f) => f.flush(),
+        }
     }
 }
