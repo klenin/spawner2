@@ -6,8 +6,7 @@ Param(
     [String]
     $Password,
 
-    [ValidateScript({ Test-Identity -Name $_ })]
-    [String]
+    [Switch]
     $Runner,
 
     [String[]]
@@ -23,16 +22,16 @@ Param(
 
 $helpMsg = @'
 Parameters:
-    -CreateUser <username>      Creates a new user and uses it as current.
-    -Password <string>          Specifies password for a new user.
-    -Runner <username>          Grants the following priveleges for <username>:
+    -CreateUser <username>      Create new user and use it as default.
+    -Password <string>          Specify password for a new user.
+    -Runner                     Grant following priveleges for default user:
                                     SeAssignPrimaryTokenPrivilege
                                     SeTcbPrivilege
                                     SeIncreaseQuotaPrivilege
                                 Allowing it to run processes as another user. 
-    -Dir <path>,<path>,...      Grants current user access to these directories.
-    -User <username>            Sets current user to <username>.
-    -Help                       Prints this message.
+    -Dir <path>,<path>,...      Grant default user access to these directories.
+    -User <username>            Set default user to <username>.
+    -Help                       Print this message.
 
 Examples:
     .\setup.ps1 -CreateUser some_user -Password 123 -Dir 'C:\dir1','C:\dir2'
@@ -53,18 +52,7 @@ if (!(Get-Module -ListAvailable -Name 'Carbon')) {
 
 Import-Module Carbon
 
-if ($Runner) {
-    $runnerPrivs = @(
-        'SeAssignPrimaryTokenPrivilege';
-        'SeTcbPrivilege';
-        'SeIncreaseQuotaPrivilege';
-    )
-    foreach ($p in $runnerPrivs) {
-        Grant-Privilege -Identity $Runner -Privilege $p
-    }
-}
-
-$currentUser = ''
+$defaultUser = $env:UserName
 
 if ($CreateUser) {
     if (!($Password)) {
@@ -73,17 +61,25 @@ if ($CreateUser) {
 
     $creds = New-Credential -User $CreateUser -Password $Password
     Install-User -Credential $creds
-    $currentUser = $CreateUser
+    $defaultUser = $CreateUser
 }
 
 if ($User) {
-    $currentUser = $User
+    $defaultUser = $User
 }
 
-if (!($currentUser) -and $Dir) {
-    throw "Please specify a user."
+if ($Runner) {
+    $runnerPrivs = @(
+        'SeAssignPrimaryTokenPrivilege';
+        'SeTcbPrivilege';
+        'SeIncreaseQuotaPrivilege';
+    )
+    foreach ($p in $runnerPrivs) {
+        Grant-Privilege -Identity $defaultUser -Privilege $p
+    }
 }
 
 foreach ($d in $Dir) {
-    Grant-Permission -Identity $currentUser -Permission FullControl -Path $d
+    $permission = [System.Security.AccessControl.FileSystemRights] "Read", "Write", "CreateFiles"
+    Grant-Permission -Identity $defaultUser -Permission $permission -Path $d
 }
