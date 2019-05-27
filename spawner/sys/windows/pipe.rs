@@ -17,14 +17,9 @@ use std::mem;
 use std::path::Path;
 use std::ptr;
 
-pub struct ReadPipe {
-    handle: Handle,
-}
+pub struct ReadPipe(Handle);
 
-pub struct WritePipe {
-    handle: Handle,
-    is_file: bool,
-}
+pub struct WritePipe(Handle);
 
 pub fn create() -> Result<(ReadPipe, WritePipe)> {
     let mut attrs = SECURITY_ATTRIBUTES {
@@ -45,31 +40,28 @@ pub fn create() -> Result<(ReadPipe, WritePipe)> {
     }
 
     Ok((
-        ReadPipe {
-            handle: Handle::new(read_handle),
-        },
-        WritePipe {
-            handle: Handle::new(write_handle),
-            is_file: false,
-        },
+        ReadPipe(Handle::new(read_handle)),
+        WritePipe(Handle::new(write_handle)),
     ))
 }
 
 impl ReadPipe {
-    pub fn open<P: AsRef<Path>>(path: P, exclusive: bool) -> Result<Self> {
-        Ok(Self {
-            handle: open(path, GENERIC_READ, OPEN_EXISTING, exclusive)?,
-        })
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
+        open(path, GENERIC_READ, OPEN_EXISTING, false).map(Self)
+    }
+
+    pub fn lock<P: AsRef<Path>>(path: P) -> Result<Self> {
+        open(path, GENERIC_READ, OPEN_EXISTING, true).map(Self)
     }
 
     pub fn null() -> Result<Self> {
-        Self::open("nul", false)
+        Self::open("nul")
     }
 }
 
 impl IntoInner<Handle> for ReadPipe {
     fn into_inner(self) -> Handle {
-        self.handle
+        self.0
     }
 }
 
@@ -78,7 +70,7 @@ impl Read for ReadPipe {
         let mut bytes_read: DWORD = 0;
         unsafe {
             cvt(ReadFile(
-                self.handle.raw(),
+                self.0.raw(),
                 mem::transmute(buf.as_mut_ptr()),
                 buf.len() as DWORD,
                 &mut bytes_read,
@@ -91,28 +83,22 @@ impl Read for ReadPipe {
 }
 
 impl WritePipe {
-    pub fn open<P: AsRef<Path>>(path: P, exclusive: bool) -> Result<Self> {
-        Ok(Self {
-            handle: open(path, GENERIC_WRITE, CREATE_ALWAYS, exclusive)?,
-            is_file: true,
-        })
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
+        open(path, GENERIC_WRITE, CREATE_ALWAYS, false).map(Self)
+    }
+
+    pub fn lock<P: AsRef<Path>>(path: P) -> Result<Self> {
+        open(path, GENERIC_WRITE, CREATE_ALWAYS, true).map(Self)
     }
 
     pub fn null() -> Result<Self> {
-        Ok(Self {
-            handle: open("nul", GENERIC_WRITE, OPEN_EXISTING, false)?,
-            is_file: false,
-        })
-    }
-
-    pub fn is_file(&self) -> bool {
-        self.is_file
+        open("nul", GENERIC_WRITE, OPEN_EXISTING, false).map(Self)
     }
 }
 
 impl IntoInner<Handle> for WritePipe {
     fn into_inner(self) -> Handle {
-        self.handle
+        self.0
     }
 }
 
@@ -121,7 +107,7 @@ impl Write for WritePipe {
         let mut bytes_written: DWORD = 0;
         unsafe {
             cvt(WriteFile(
-                self.handle.raw(),
+                self.0.raw(),
                 mem::transmute(buf.as_ptr()),
                 buf.len() as DWORD,
                 &mut bytes_written,
