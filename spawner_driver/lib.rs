@@ -50,7 +50,7 @@ impl Commands {
 
         while pos < argv.len() {
             let mut cmd = default_cmd.clone();
-            pos += cmd.parse(&argv[pos..]).map_err(Error::from)?;
+            pos += cmd.parse_argv(&argv[pos..]).map_err(Error::from)?;
 
             let mut sep_pos = argv.len();
             if let Some(sep) = &cmd.separator {

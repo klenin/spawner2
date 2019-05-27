@@ -18,6 +18,7 @@
 //!         names("-v", "--v"),
 //!         desc = "an option",
 //!         value_desc = "<float>",
+//!         env = "ENV_VAR",
 //!         parser = "FloatingLiteralParser"
 //!     )]
 //!     opt: f64,
@@ -49,6 +50,7 @@ pub struct OptionHelp {
     pub names: Vec<String>,
     pub desc: Option<String>,
     pub value_desc: Option<String>,
+    pub env: Option<String>,
 }
 
 pub struct Help {
@@ -60,10 +62,12 @@ pub struct Help {
 
 pub trait CmdLineOptions: Sized {
     fn help() -> Help;
-    fn parse<T, U>(&mut self, argv: T) -> Result<usize, String>
+    fn parse_argv<T, U>(&mut self, argv: T) -> Result<usize, String>
     where
         T: IntoIterator<Item = U>,
         U: AsRef<str>;
+
+    fn parse_env(&mut self) -> Result<(), String>;
 }
 
 pub trait OptionValueParser<T> {
@@ -90,8 +94,31 @@ impl fmt::Display for Help {
         for opt in self.options.iter() {
             write_opt(f, opt, delim)?;
         }
+
+        if self.options.iter().any(|opt| opt.env.is_some()) {
+            f.write_str("\nEnvironment variables and corresponding options:\n")?;
+            for opt in self.options.iter() {
+                write_env_desc(f, opt)?;
+            }
+        }
         Ok(())
     }
+}
+
+fn write_env_desc(f: &mut fmt::Formatter, opt: &OptionHelp) -> fmt::Result {
+    if let Some(ref env) = opt.env {
+        let indent = "  ";
+        let spaces = 30 - (env.len() + indent.len());
+        write!(f, "{}{}{:3$}", indent, env, " ", spaces)?;
+        for (idx, name) in opt.names.iter().enumerate() {
+            if idx > 0 {
+                f.write_str(", ")?;
+            }
+            f.write_str(name)?;
+        }
+        f.write_str("\n")?;
+    }
+    Ok(())
 }
 
 fn write_names(f: &mut fmt::Formatter, opt: &OptionHelp, delim: char) -> Result<usize, fmt::Error> {

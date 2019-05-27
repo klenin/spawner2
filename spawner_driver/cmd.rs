@@ -7,7 +7,6 @@ use spawner_opts::{CmdLineOptions, OptionValueParser};
 
 use spawner::VERSION;
 
-use std::env::{self, VarError};
 use std::f64;
 use std::fmt::{self, Display, Formatter};
 use std::time::Duration;
@@ -60,6 +59,7 @@ pub type StderrRedirectList = RedirectList;
 pub struct Command {
     #[opt(
         name = "-tl",
+        env = "SP_TIME_LIMIT",
         desc = "Set the time limit for an executable (user time)",
         value_desc = "<number>[unit]"
     )]
@@ -67,6 +67,7 @@ pub struct Command {
 
     #[opt(
         name = "-d",
+        env = "SP_DEADLINE",
         desc = "Set the time limit for an executable (wall-clock time)",
         value_desc = "<number>[unit]"
     )]
@@ -74,6 +75,7 @@ pub struct Command {
 
     #[opt(
         name = "-y",
+        env = "SP_IDLE_TIME_LIMIT",
         desc = "Set the idle time limit for an executable (idle time = wall-clock time - user time)",
         value_desc = "<number>[unit]"
     )]
@@ -81,6 +83,7 @@ pub struct Command {
 
     #[opt(
         name = "-ml",
+        env = "SP_MEMORY_LIMIT",
         desc = "Set the memory limit for an executable",
         value_desc = "<number>[unit]",
         parser = "MemValueParser"
@@ -89,6 +92,7 @@ pub struct Command {
 
     #[opt(
         name = "-wl",
+        env = "SP_WRITE_LIMIT",
         desc = "Set the write limit for an executable",
         value_desc = "<number>[unit]",
         parser = "MemValueParser"
@@ -97,6 +101,7 @@ pub struct Command {
 
     #[opt(
         name = "-lr",
+        env = "SP_LOAD_RATIO",
         desc = "The required load of the processor for this executable not to be considered idle (default 5%)",
         value_desc = "<number>[%]",
         parser = "PercentValueParser"
@@ -126,6 +131,7 @@ pub struct Command {
 
     #[opt(
         names("-mi", "--monitorInterval"),
+        env = "SP_MONITOR_INTERVAL",
         desc = "The sleep interval for a monitoring thread (default: 0.001s)",
         value_desc = "<number>[unit]"
     )]
@@ -133,6 +139,7 @@ pub struct Command {
 
     #[opt(
         name = "-s",
+        env = "SP_SECURITY_LEVEL",
         desc = "Set the security level to 0 or 1",
         value_desc = "{0|1}"
     )]
@@ -140,19 +147,26 @@ pub struct Command {
 
     #[opt(
         name = "-sw",
+        env = "SP_SHOW_WINDOW",
         desc = "Display program window on the screen",
         value_desc = "{0|1}"
     )]
     pub show_window: bool,
 
-    #[opt(name = "--debug", value_desc = "{0|1}")]
+    #[opt(name = "--debug", env = "SP_DEBUG", value_desc = "{0|1}")]
     pub debug: bool,
 
-    #[opt(name = "-wd", desc = "Set the working directory", value_desc = "<dir>")]
+    #[opt(
+        name = "-wd",
+        env = "SP_DIRECTORY",
+        desc = "Set the working directory",
+        value_desc = "<dir>"
+    )]
     pub working_directory: Option<String>,
 
     #[opt(
         name = "-hr",
+        env = "SP_HIDE_REPORT",
         desc = "Do not display report on console",
         value_desc = "{0|1}"
     )]
@@ -160,6 +174,7 @@ pub struct Command {
 
     #[opt(
         name = "-ho",
+        env = "SP_HIDE_OUTPUT",
         desc = "Do not display output on console",
         value_desc = "{0|1}"
     )]
@@ -167,6 +182,7 @@ pub struct Command {
 
     #[opt(
         names("-runas", "--delegated"),
+        env = "SP_RUNAS",
         desc = "Run spawner as delegate",
         value_desc = "{0|1}"
     )]
@@ -174,25 +190,38 @@ pub struct Command {
 
     #[opt(
         name = "-u",
+        env = "SP_USER",
         desc = "Run executable under <user>",
         value_desc = "<user>"
     )]
     pub username: Option<String>,
 
-    #[opt(name = "-p", desc = "Password for <user>", value_desc = "<password>")]
+    #[opt(
+        name = "-p",
+        env = "SP_PASSWORD",
+        desc = "Password for <user>",
+        value_desc = "<password>"
+    )]
     pub password: Option<String>,
 
     #[flag(
         names("-c", "--systempath"),
+        env = "SP_SYSTEM_PATH",
         desc = "Search for an executable in system path"
     )]
     pub use_syspath: bool,
 
-    #[opt(name = "-sr", desc = "Save report to <file>", value_desc = "<file>")]
+    #[opt(
+        name = "-sr",
+        env = "SP_REPORT_FILE",
+        desc = "Save report to <file>",
+        value_desc = "<file>"
+    )]
     pub output_file: Option<String>,
 
     #[opt(
         name = "-env",
+        env = "SP_ENVIRONMENT",
         desc = "Set environment variables for an executable (default: inherit)",
         value_desc = "{inherit|user-default|clear}"
     )]
@@ -207,6 +236,7 @@ pub struct Command {
 
     #[opt(
         names("-i", "--in"),
+        env = "SP_INPUT_FILE",
         desc = "Redirect stdin from [*[<file-flags>]:]<filename>\n\
                 or *[[<pipe-flags>]:]{null|std|<index>.stdout}",
         value_desc = "<value>",
@@ -222,6 +252,7 @@ pub struct Command {
     )]
     #[opt(
         names("-so", "--out"),
+        env = "SP_OUTPUT_FILE",
         desc = "Redirect stdout to [*[<file-flags>]:]<filename>\n\
                 or *[[<pipe-flags>]:]{null|std|<index>.stdin}",
         value_desc = "<value>",
@@ -231,6 +262,7 @@ pub struct Command {
 
     #[opt(
         names("-e", "-se", "--err"),
+        env = "SP_ERROR_FILE",
         desc = "Redirect stderr to [*[<file-flags>]:]<filename>\n\
                 or *[[<pipe-flags>]:]{null|std|<index>.stdin}",
         value_desc = "<value>",
@@ -240,6 +272,7 @@ pub struct Command {
 
     #[opt(
         name = "--separator",
+        env = "SP_SEPARATOR",
         desc = "Use '--<sep>' to separate executables",
         value_desc = "<sep>"
     )]
@@ -248,10 +281,18 @@ pub struct Command {
     #[flag(name = "--controller", desc = "Mark an executable as controller")]
     pub controller: bool,
 
-    #[opt(name = "--shared-memory", value_desc = "<value>")]
+    #[opt(
+        name = "--shared-memory",
+        env = "SP_SHARED_MEMORY",
+        value_desc = "<value>"
+    )]
     pub shared_memory: Option<String>,
 
-    #[flag(names("-j", "--json"), desc = "Use JSON format in report")]
+    #[flag(
+        names("-j", "--json"),
+        env = "SP_JSON",
+        desc = "Use JSON format in report"
+    )]
     pub use_json: bool,
 
     pub argv: Vec<String>,
@@ -295,22 +336,6 @@ impl Default for Command {
     }
 }
 
-macro_rules! parse_env_var {
-    ($val:expr, $var:expr, $parser:ident) => {
-        match env::var($var) {
-            Ok(v) => $parser::parse(&mut $val, v.as_str())?,
-            Err(e) => match e {
-                VarError::NotPresent => {}
-                _ => return Err(format!("Couldn't interpret {}: {}", $var, e)),
-            },
-        }
-    };
-
-    ($val:expr, $var:expr) => {
-        parse_env_var!($val, $var, DefaultValueParser)
-    };
-}
-
 impl Command {
     pub const DEFAULT_FILE_FLAGS: RedirectFlags = RedirectFlags {
         flush: false,
@@ -324,31 +349,7 @@ impl Command {
 
     pub fn from_env() -> Result<Self, String> {
         let mut opts = Self::default();
-        parse_env_var!(opts.time_limit, "SP_TIME_LIMIT");
-        parse_env_var!(opts.wall_clock_time_limit, "SP_DEADLINE");
-        parse_env_var!(opts.idle_time_limit, "SP_IDLE_TIME_LIMIT");
-        parse_env_var!(opts.memory_limit, "SP_MEMORY_LIMIT", MemValueParser);
-        parse_env_var!(opts.write_limit, "SP_WRITE_LIMIT", MemValueParser);
-        parse_env_var!(opts.load_ratio, "SP_LOAD_RATIO", PercentValueParser);
-        parse_env_var!(opts.monitor_interval, "SP_MONITOR_INTERVAL");
-        parse_env_var!(opts.secure, "SP_SECURITY_LEVEL");
-        parse_env_var!(opts.show_window, "SP_SHOW_WINDOW");
-        parse_env_var!(opts.debug, "SP_DEBUG");
-        parse_env_var!(opts.working_directory, "SP_DIRECTORY");
-        parse_env_var!(opts.hide_report, "SP_HIDE_REPORT");
-        parse_env_var!(opts.hide_output, "SP_HIDE_OUTPUT");
-        parse_env_var!(opts.delegated, "SP_RUNAS");
-        parse_env_var!(opts.username, "SP_USER");
-        parse_env_var!(opts.password, "SP_PASSWORD");
-        parse_env_var!(opts.use_syspath, "SP_SYSTEM_PATH");
-        parse_env_var!(opts.output_file, "SP_REPORT_FILE");
-        parse_env_var!(opts.env, "SP_ENVIRONMENT");
-        parse_env_var!(opts.stdin_redirect, "SP_INPUT_FILE", StdinRedirectParser);
-        parse_env_var!(opts.stdout_redirect, "SP_OUTPUT_FILE", StdoutRedirectParser);
-        parse_env_var!(opts.stderr_redirect, "SP_ERROR_FILE", StderrRedirectParser);
-        parse_env_var!(opts.separator, "SP_SEPARATOR");
-        parse_env_var!(opts.shared_memory, "SP_SHARED_MEMORY");
-        parse_env_var!(opts.use_json, "SP_JSON");
+        opts.parse_env()?;
         Ok(opts)
     }
 
@@ -357,7 +358,6 @@ impl Command {
         help.overview = Some(format!("Spawner sandbox v{}", VERSION));
         println!("{}", help);
         Self::print_redirect_examples();
-        Self::print_env_help();
     }
 
     fn print_redirect_examples() {
@@ -384,42 +384,6 @@ impl Command {
             println!("{}{}{:4$}{}", indent, sample, " ", desc, spaces);
         }
         println!("");
-    }
-
-    fn print_env_help() {
-        let env_opts = [
-            ("SP_TIME_LIMIT", "-tl"),
-            ("SP_DEADLINE", "-d"),
-            ("SP_IDLE_TIME_LIMIT", "-y"),
-            ("SP_MEMORY_LIMIT", "-ml"),
-            ("SP_WRITE_LIMIT", "-wl"),
-            ("SP_LOAD_RATIO", "-lr"),
-            ("SP_MONITOR_INTERVAL", "-mi"),
-            ("SP_SECURITY_LEVEL", "-s"),
-            ("SP_SHOW_WINDOW", "-sw"),
-            ("SP_DEBUG", "--debug"),
-            ("SP_DIRECTORY", "-wd"),
-            ("SP_HIDE_REPORT", "-hr"),
-            ("SP_HIDE_OUTPUT", "-ho"),
-            ("SP_RUNAS", "-runas, --delegated"),
-            ("SP_USER", "-u"),
-            ("SP_PASSWORD", "-p"),
-            ("SP_SYSTEM_PATH", "-c, --systempath"),
-            ("SP_REPORT_FILE", "-sr"),
-            ("SP_ENVIRONMENT", "-env"),
-            ("SP_INPUT_FILE", "-i, --in"),
-            ("SP_OUTPUT_FILE", "-so, --out"),
-            ("SP_ERROR_FILE", "-e, -se, --err"),
-            ("SP_SEPARATOR", "--separator"),
-            ("SP_SHARED_MEMORY", "--shared-memory"),
-            ("SP_JSON", "--json"),
-        ];
-        println!("Environment variables and corresponding options:");
-        for (var, opt) in env_opts.iter() {
-            let indent = "  ";
-            let spaces = 30 - (var.len() + indent.len());
-            println!("{}{}{:4$}{}", indent, var, " ", opt, spaces);
-        }
     }
 }
 

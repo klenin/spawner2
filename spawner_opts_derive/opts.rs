@@ -19,6 +19,7 @@ struct Opt<'a> {
     kind: OptKind,
     names: Vec<String>,
     desc: Option<String>,
+    env: Option<String>,
     field: &'a Field,
 }
 
@@ -28,6 +29,7 @@ enum OptAttribute<'a> {
     Desc(&'a MetaNameValue, String),
     ValueDesc(&'a MetaNameValue, String),
     Parser(&'a MetaNameValue, String),
+    Env(&'a MetaNameValue, String),
 }
 
 enum OptContainerAttribute {
@@ -73,7 +75,7 @@ impl<'a> OptAttribute<'a> {
         Error::new_spanned(
             v,
             "Expected one of: name = \"...\", names(...), desc = \"...\", \
-             value_desc = \"...\" parser = \"...\"",
+             value_desc = \"...\" parser = \"...\" env = \"...\"",
         )
     }
 
@@ -84,6 +86,7 @@ impl<'a> OptAttribute<'a> {
             "desc" => Ok(OptAttribute::Desc(nameval, expect_str(lit)?)),
             "value_desc" => Ok(OptAttribute::ValueDesc(nameval, expect_str(lit)?)),
             "parser" => Ok(OptAttribute::Parser(nameval, expect_str(lit)?)),
+            "env" => Ok(OptAttribute::Env(nameval, expect_str(lit)?)),
             _ => Err(OptAttribute::expected_one_of_err(nameval)),
         }
     }
@@ -109,6 +112,7 @@ impl<'a> Opt<'a> {
             kind: kind,
             names: Vec::new(),
             desc: None,
+            env: None,
             field: field,
         }
     }
@@ -152,6 +156,7 @@ impl<'a> Opt<'a> {
                         ));
                     }
                 },
+                OptAttribute::Env(_, s) => opt.env = Some(s),
             }
         }
 
@@ -337,6 +342,7 @@ impl<'a> OptContainer<'a> {
                 let names: Vec<TokenStream> =
                     opt.names.iter().map(|s| quote!(#s.to_string())).collect();
                 let desc = self.build_str_opt(&opt.desc);
+                let env = self.build_str_opt(&opt.env);
                 match opt.kind {
                     OptKind::Invalid => None,
                     OptKind::Flag => Some(quote! {
@@ -344,6 +350,7 @@ impl<'a> OptContainer<'a> {
                             names: vec![#(#names),*],
                             desc: #desc,
                             value_desc: None,
+                            env: #env,
                         }
                     }),
                     OptKind::Opt(ref v) => {
@@ -353,6 +360,7 @@ impl<'a> OptContainer<'a> {
                                 names: vec![#(#names),*],
                                 desc: #desc,
                                 value_desc: #vd,
+                                env: #env,
                             }
                         })
                     }
@@ -404,6 +412,18 @@ impl<'a> OptContainer<'a> {
         ))
     }
 
+    fn env_flag_parser<'b>(&'b self, flag: &'b Opt) -> Result<&'b TokenStream, Error> {
+        if let OptKind::Flag = flag.kind {
+            if let Some(parser) = self.default_parser.as_ref() {
+                return Ok(parser);
+            }
+        }
+        Err(Error::new_spanned(
+            flag.field,
+            "Unable to find parser for this field",
+        ))
+    }
+
     fn build_set_opts(&self) -> Result<Vec<TokenStream>, Vec<Error>> {
         let mut set_opts: Vec<TokenStream> = Vec::new();
         let mut errors: Vec<Error> = Vec::new();
@@ -440,13 +460,54 @@ impl<'a> OptContainer<'a> {
         }
     }
 
-    fn build_parse_fn(&self) -> Result<TokenStream, Vec<Error>> {
+    fn build_parse_env(&self) -> Result<Vec<TokenStream>, Vec<Error>> {
+        let mut result = Vec::new();
+        let mut errors = Vec::new();
+
+        for opt in &self.opts {
+            let env = match opt.env {
+                Some(ref env) => env,
+                _ => continue,
+            };
+            let parser = match opt.kind {
+                OptKind::Flag => self.env_flag_parser(opt),
+                OptKind::Opt(_) => self.opt_parser(opt),
+                _ => continue,
+            };
+
+            let field = &opt.field.ident;
+            match parser {
+                Ok(parser) => result.push(quote! {
+                    if let Some(val) = std::env::var(#env).ok() {
+                        #parser::parse(&mut self.#field, val.as_str())?;
+                    }
+                }),
+                Err(e) => errors.push(e),
+            }
+        }
+        match errors.len() {
+            0 => Ok(result),
+            _ => Err(errors),
+        }
+    }
+
+    fn build_parse_env_fn(&self) -> Result<TokenStream, Vec<Error>> {
+        let parse_env = self.build_parse_env()?;
+        Ok(quote! {
+            fn parse_env(&mut self) -> std::result::Result<(), String> {
+                #(#parse_env)*
+                Ok(())
+            }
+        })
+    }
+
+    fn build_parse_argv_fn(&self) -> Result<TokenStream, Vec<Error>> {
         let delimeters = &self.delimeters;
         let register_opts = self.build_register_opts();
         let set_opts = self.build_set_opts()?;
 
         Ok(quote! {
-            fn parse<T, U>(&mut self, argv: T) -> std::result::Result<usize, String>
+            fn parse_argv<T, U>(&mut self, argv: T) -> std::result::Result<usize, String>
             where
                 T: IntoIterator<Item = U>,
                 U: AsRef<str>
@@ -476,11 +537,13 @@ pub fn expand_derive_cmd_line_options(ast: &DeriveInput) -> Result<TokenStream, 
     if let Data::Struct(_) = ast.data {
         let struct_name = &ast.ident;
         let help_fn = cont.build_help_fn();
-        let parse_fn = cont.build_parse_fn()?;
+        let parse_argv_fn = cont.build_parse_argv_fn()?;
+        let parse_env_fn = cont.build_parse_env_fn()?;
         Ok(quote! {
             impl CmdLineOptions for #struct_name {
                 #help_fn
-                #parse_fn
+                #parse_argv_fn
+                #parse_env_fn
             }
         })
     } else {
