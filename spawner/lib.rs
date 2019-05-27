@@ -9,6 +9,7 @@ cfg_if! {
 
         pub mod windows {
             pub use sys::process_ext as process;
+            pub use sys::pipe_ext as pipe;
         }
     } else if #[cfg(unix)] {
         extern crate nix;

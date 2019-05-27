@@ -25,3 +25,7 @@ pub trait AsInnerMut<T> {
 pub trait AsInner<T> {
     fn as_inner(&self) -> &T;
 }
+
+pub trait FromInner<T> {
+    fn from_inner(inner: T) -> Self;
+}
