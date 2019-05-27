@@ -75,16 +75,16 @@ impl Commands {
 
     fn run(self) -> Result<Vec<Report>> {
         let driver = Driver::from_cmds(&self.0)?;
-        for warning in driver.warnings() {
+        for warning in driver.warnings().to_vec().iter() {
             eprintln!("warning: {}", warning);
         }
 
-        let runner_reports = driver.spawn()?.wait();
-        let reports: Vec<Report> = runner_reports
+        let reports = driver
+            .run()?
             .into_iter()
             .zip(self.0.iter())
-            .map(|(result, opts)| Report::new(opts, result))
-            .collect();
+            .map(|(report, opts)| Report::new(opts, report))
+            .collect::<Vec<_>>();
 
         if reports.is_empty() {
             Command::print_help();

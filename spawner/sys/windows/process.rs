@@ -312,7 +312,17 @@ macro_rules! count_endpoints {
 }
 
 impl GroupRestrictions {
-    pub fn new<T: Into<ResourceLimits>>(limits: T) -> Self {
+    pub fn new() -> Self {
+        Self {
+            limits: ResourceLimits::new(),
+            ui_restrictions: None,
+        }
+    }
+
+    pub fn with_limits<T>(limits: T) -> Self
+    where
+        T: Into<ResourceLimits>,
+    {
         Self {
             limits: limits.into(),
             ui_restrictions: None,
@@ -329,7 +339,11 @@ impl GroupRestrictions {
 }
 
 impl Group {
-    pub fn new<T>(restrictions: T) -> Result<Self>
+    pub fn new() -> Result<Self> {
+        Self::with_restrictions(GroupRestrictions::new())
+    }
+
+    pub fn with_restrictions<T>(restrictions: T) -> Result<Self>
     where
         T: Into<GroupRestrictions>,
     {

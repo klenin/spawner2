@@ -227,13 +227,24 @@ impl AsMut<ProcessInfo> for ProcessInfo {
 }
 
 impl GroupRestrictions {
-    pub fn new<T: Into<ResourceLimits>>(limits: T) -> Self {
+    pub fn new() -> Self {
+        Self::with_limits(ResourceLimits::new())
+    }
+
+    pub fn with_limits<T>(limits: T) -> Self
+    where
+        T: Into<ResourceLimits>,
+    {
         Self(limits.into())
     }
 }
 
 impl Group {
-    pub fn new<T>(restrictions: T) -> Result<Self>
+    pub fn new() -> Result<Self> {
+        Self::with_restrictions(GroupRestrictions::new())
+    }
+
+    pub fn with_restrictions<T>(restrictions: T) -> Result<Self>
     where
         T: Into<GroupRestrictions>,
     {
@@ -529,9 +540,9 @@ fn init_seccomp(filter: &mut SyscallFilter) -> Result<()> {
 
 fn init_child_process(info: &mut ProcessInfo, stdio: RawStdio, usr: Option<User>) -> Result<()> {
     close_stdio()?;
-    dup2(stdio.stdin.0, STDIN_FILENO)?;
-    dup2(stdio.stdout.0, STDOUT_FILENO)?;
-    dup2(stdio.stderr.0, STDERR_FILENO)?;
+    dup2(stdio.stdin.raw(), STDIN_FILENO)?;
+    dup2(stdio.stdout.raw(), STDOUT_FILENO)?;
+    dup2(stdio.stderr.raw(), STDERR_FILENO)?;
 
     info.working_dir
         .as_ref()

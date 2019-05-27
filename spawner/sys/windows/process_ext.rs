@@ -8,6 +8,7 @@ use winapi::um::winnt::{
     JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS, JOB_OBJECT_UILIMIT_WRITECLIPBOARD,
 };
 
+/// https://docs.microsoft.com/en-us/windows/desktop/api/winnt/ns-winnt-_jobobject_basic_ui_restrictions
 pub struct UiRestrictions(DWORD);
 
 pub trait GroupRestrictionsExt {

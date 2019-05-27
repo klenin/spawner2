@@ -8,21 +8,13 @@ use std::time::Duration;
 /// Describes the limit that has been hit.
 #[derive(Clone, Debug, PartialEq)]
 pub enum LimitViolation {
-    /// Process group exceeded wall clock time limit.
     WallClockTimeLimitExceeded,
-    /// Process group exceeded idle time limit.
     IdleTimeLimitExceeded,
-    /// Process group exceeded user time limit.
     UserTimeLimitExceeded,
-    /// Process group exceeded write limit.
     WriteLimitExceeded,
-    /// Process group exceeded memory limit.
     MemoryLimitExceeded,
-    /// Process group created too many child processes.
     ProcessLimitExceeded,
-    /// Process group has too many active processes.
     ActiveProcessLimitExceeded,
-    /// Process group has too many active network connections.
     ActiveNetworkConnectionLimitExceeded,
 }
 
@@ -73,9 +65,7 @@ pub struct ResourceUsage {
 /// Describes the result of a process after it has terminated.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExitStatus {
-    /// Process has crashed.
     Crashed(String),
-    /// Process has exited.
     Finished(u32),
 }
 
@@ -97,8 +87,8 @@ pub struct GroupRestrictions(imp::GroupRestrictions);
 /// Describes a group of processes.
 pub struct Group(imp::Group);
 
-impl Default for ResourceLimits {
-    fn default() -> Self {
+impl ResourceLimits {
+    pub fn new() -> Self {
         Self {
             wall_clock_time: None,
             total_idle_time: None,
@@ -112,8 +102,8 @@ impl Default for ResourceLimits {
     }
 }
 
-impl Default for ResourceUsage {
-    fn default() -> Self {
+impl ResourceUsage {
+    pub fn new() -> Self {
         Self {
             wall_clock_time: Duration::from_millis(0),
             total_user_time: Duration::from_millis(0),
@@ -188,7 +178,6 @@ impl AsInnerMut<imp::ProcessInfo> for ProcessInfo {
 }
 
 impl Process {
-    /// Returns `Ok(Some(status))` if process has terminated.
     pub fn exit_status(&mut self) -> Result<Option<ExitStatus>> {
         self.0.exit_status()
     }
@@ -203,15 +192,21 @@ impl Process {
         self.0.resume()
     }
 
-    /// Terminates this process, does not affect child processes.
     pub fn terminate(&self) -> Result<()> {
         self.0.terminate()
     }
 }
 
 impl GroupRestrictions {
-    pub fn new<T: Into<ResourceLimits>>(limits: T) -> Self {
-        Self(imp::GroupRestrictions::new(limits))
+    pub fn new() -> Self {
+        Self(imp::GroupRestrictions::new())
+    }
+
+    pub fn with_limits<T>(limits: T) -> Self
+    where
+        T: Into<ResourceLimits>,
+    {
+        Self(imp::GroupRestrictions::with_limits(limits))
     }
 }
 
@@ -222,15 +217,17 @@ impl AsInnerMut<imp::GroupRestrictions> for GroupRestrictions {
 }
 
 impl Group {
-    /// Creates new process group.
-    pub fn new<T>(restrictions: T) -> Result<Self>
+    pub fn new() -> Result<Self> {
+        imp::Group::new().map(Self)
+    }
+
+    pub fn with_restrictions<T>(restrictions: T) -> Result<Self>
     where
         T: Into<GroupRestrictions>,
     {
-        imp::Group::new(restrictions.into().0).map(Self)
+        imp::Group::with_restrictions(restrictions.into().0).map(Self)
     }
 
-    /// Spawns process and assigns it to this group.
     pub fn spawn<T, U>(&mut self, mut info: T, stdio: U) -> Result<Process>
     where
         T: AsMut<ProcessInfo>,
@@ -249,12 +246,10 @@ impl Group {
             .map(Process)
     }
 
-    /// Returns current resource usage.
     pub fn resource_usage(&mut self) -> Result<ResourceUsage> {
         self.0.resource_usage()
     }
 
-    // Checks process group for limit violation.
     pub fn check_limits(&mut self) -> Result<Option<LimitViolation>> {
         self.0.check_limits()
     }
@@ -265,8 +260,6 @@ impl Group {
         self.0.reset_time_usage()
     }
 
-    /// Terminates all processes in this group.
-    /// If process group has already been terminated, an `Ok` is returned.
     pub fn terminate(&self) -> Result<()> {
         self.0.terminate()
     }
