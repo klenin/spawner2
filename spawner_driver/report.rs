@@ -1,7 +1,7 @@
 use crate::cmd::{Command, RedirectList};
 use crate::misc::{b2mb, dur2sec, mb2b};
 
-use spawner::process::{ExitStatus, LimitViolation};
+use spawner::process::ExitStatus;
 use spawner::{self, Error, SpawnerResult, TerminationReason};
 
 use json::{array, object, JsonValue};
@@ -251,16 +251,21 @@ impl ReportKind {
 
 impl From<&spawner::Report> for ReportResult {
     fn from(report: &spawner::Report) -> Self {
-        let time = dur2sec(&report.resource_usage.total_user_time);
-        let wc_time = dur2sec(&report.resource_usage.wall_clock_time);
+        let timers = report.timers.unwrap_or_default();
+        let memory = report.memory.unwrap_or_default();
+        let io = report.io.unwrap_or_default();
+        let pid_counters = report.pid_counters.unwrap_or_default();
+
+        let time = dur2sec(&timers.total_user_time);
+        let wc_time = dur2sec(&report.wall_clock_time);
         Self {
             time: time,
             wall_clock_time: wc_time,
-            memory: report.resource_usage.peak_memory_used,
-            bytes_written: report.resource_usage.total_bytes_written,
-            kernel_time: dur2sec(&report.resource_usage.total_kernel_time),
+            memory: memory.max_usage,
+            bytes_written: io.total_bytes_written,
+            kernel_time: dur2sec(&timers.total_kernel_time),
             processor_load: if wc_time <= 1e-8 { 0.0 } else { time / wc_time },
-            processes_created: report.resource_usage.total_processes_created as u64,
+            processes_created: pid_counters.total_processes as u64,
         }
     }
 }
@@ -334,23 +339,19 @@ impl Display for TerminateReason {
 impl From<TerminationReason> for TerminateReason {
     fn from(reason: TerminationReason) -> Self {
         match reason {
-            TerminationReason::LimitViolation(lv) => match lv {
-                LimitViolation::WallClockTimeLimitExceeded => TerminateReason::TimeLimitExceeded,
-                LimitViolation::IdleTimeLimitExceeded => TerminateReason::IdleTimeLimitExceeded,
-                LimitViolation::UserTimeLimitExceeded => TerminateReason::TimeLimitExceeded,
-                LimitViolation::WriteLimitExceeded => TerminateReason::WriteLimitExceeded,
-                LimitViolation::MemoryLimitExceeded => TerminateReason::MemoryLimitExceeded,
-                LimitViolation::ProcessLimitExceeded => {
-                    TerminateReason::ProcessesCountLimitExceeded
-                }
-                LimitViolation::ActiveProcessLimitExceeded => {
-                    TerminateReason::ActiveProcessesCountLimitExceeded
-                }
-                LimitViolation::ActiveNetworkConnectionLimitExceeded => {
-                    TerminateReason::ActiveConnectionCountLimitExceeded
-                }
-            },
-            TerminationReason::ManuallyTerminated => TerminateReason::TerminatedByController,
+            TerminationReason::WallClockTimeLimitExceeded => TerminateReason::TimeLimitExceeded,
+            TerminationReason::IdleTimeLimitExceeded => TerminateReason::IdleTimeLimitExceeded,
+            TerminationReason::UserTimeLimitExceeded => TerminateReason::TimeLimitExceeded,
+            TerminationReason::WriteLimitExceeded => TerminateReason::WriteLimitExceeded,
+            TerminationReason::MemoryLimitExceeded => TerminateReason::MemoryLimitExceeded,
+            TerminationReason::ProcessLimitExceeded => TerminateReason::ProcessesCountLimitExceeded,
+            TerminationReason::ActiveProcessLimitExceeded => {
+                TerminateReason::ActiveProcessesCountLimitExceeded
+            }
+            TerminationReason::ActiveNetworkConnectionLimitExceeded => {
+                TerminateReason::ActiveConnectionCountLimitExceeded
+            }
+            TerminationReason::TerminatedByRunner => TerminateReason::TerminatedByController,
         }
     }
 }

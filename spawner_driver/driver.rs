@@ -7,8 +7,8 @@ use crate::protocol::{
 
 use spawner::io::{IoStreams, IstreamDst, IstreamId, OstreamId, OstreamSrc, StdioMapping};
 use spawner::pipe::{self, ReadPipe, WritePipe};
-use spawner::process::{GroupRestrictions, ProcessInfo, ResourceLimits};
-use spawner::{self, Actions, Error, Result, Router, Spawner, SpawnerResult};
+use spawner::process::{Group, ProcessInfo};
+use spawner::{Error, IdleTimeLimit, ResourceLimits, Result, SpawnedProgram, Spawner};
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -26,7 +26,7 @@ pub struct Driver<'a> {
     agent_indices: Vec<CommandIdx>,
     mappings: Vec<StdioMapping>,
     controller_stdin: ControllerStdin,
-    builders: Vec<spawner::Builder>,
+    spawned_programs: Vec<SpawnedProgram>,
     warnings: Warnings,
 }
 
@@ -82,45 +82,22 @@ impl<'a> Driver<'a> {
             agent_indices: agent_indices,
             mappings: mappings,
             controller_stdin: controller_stdin,
-            builders: Vec::new(),
+            spawned_programs: Vec::new(),
             warnings: warnings,
         };
         driver.check_cmds()?;
         for i in 0..cmds.len() {
-            driver.init_builder(CommandIdx(i));
+            let p = driver.create_program(CommandIdx(i))?;
+            driver.spawned_programs.push(p);
         }
         Ok(driver)
     }
 
-    pub fn run(mut self) -> Result<Vec<SpawnerResult>> {
-        let mut spawners = Vec::new();
-        for (sp_builder, mapping) in self.builders.into_iter().zip(self.mappings.iter()) {
-            match sp_builder.build(&mut self.io_streams, *mapping) {
-                Ok(sp) => spawners.push(sp),
-                Err(e) => {
-                    for sp in spawners.iter() {
-                        sp.runner().terminate();
-                    }
-                    return Err(e);
-                }
-            }
-        }
-
-        // Drop our reference to controller's stdin. Otherwise we'll hang on `router.wait()`.
-        drop(self.controller_stdin);
-
-        // Handle remaining i\o streams.
-        let router = Router::from_iostreams(&mut self.io_streams);
-
-        self.ctx.init(
-            spawners.iter().map(Spawner::runner).collect(),
-            self.io_streams.graph().clone(),
-            self.mappings,
-        );
-
-        let reports = spawners.into_iter().map(Spawner::wait).collect();
-        router.wait();
-        Ok(reports)
+    pub fn spawn(mut self) -> Result<Spawner> {
+        let graph = self.io_streams.graph().clone();
+        let sp = Spawner::spawn(self.spawned_programs, self.io_streams)?;
+        self.ctx.init(sp.runners().collect(), graph, self.mappings);
+        Ok(sp)
     }
 
     pub fn warnings(&self) -> &Warnings {
@@ -134,9 +111,6 @@ impl<'a> Driver<'a> {
 
         for cmd in self.cmds.iter() {
             assert!(cmd.argv.len() > 0);
-            if cmd.load_ratio != 5.0 {
-                self.warnings.emit("'-lr' option has no effect")
-            }
             if cmd.debug {
                 self.warnings.emit("'--debug' option has no effect");
             }
@@ -155,46 +129,56 @@ impl<'a> Driver<'a> {
         Ok(())
     }
 
-    fn init_builder(&mut self, cmd_idx: CommandIdx) {
+    fn create_program(&mut self, cmd_idx: CommandIdx) -> Result<SpawnedProgram> {
         let cmd = &self.cmds[cmd_idx.0];
         let role = self.roles[cmd_idx.0];
+        let stdio = self.mappings[cmd_idx.0];
         let mut info = create_base_process_info(cmd, role);
-        let mut restrictions = GroupRestrictions::with_limits(ResourceLimits {
-            wall_clock_time: cmd.wall_clock_time_limit,
-            total_idle_time: cmd.idle_time_limit,
-            total_user_time: cmd.time_limit,
-            peak_memory_used: cmd.memory_limit.map(mb2b),
-            total_bytes_written: cmd.write_limit.map(mb2b),
-            total_processes_created: cmd.process_count,
-            active_processes: cmd.active_process_count,
-            active_network_connections: cmd.active_connection_count,
-        });
-        self.init_extensions(cmd, &mut info, &mut restrictions);
+        let mut group = Group::new()?;
+        self.init_extensions(cmd, &mut info, &mut group)?;
 
-        let mut builder = spawner::Builder::new(info);
-        builder
-            .group_restrictions(restrictions)
+        let mut program = SpawnedProgram::new(info);
+        program
+            .stdio(stdio)
+            .group(group)
             .monitor_interval(cmd.monitor_interval)
-            .actions(match role {
-                Role::Default => Actions::new(),
-                Role::Agent(agent_idx) => Actions::new()
-                    .on_terminate(AgentTermination::new(
-                        agent_idx,
-                        self.controller_stdin.clone(),
-                    ))
-                    .on_stdout_read(AgentStdout::new(self.ctx.clone(), agent_idx, cmd_idx)),
-                Role::Controller => Actions::new()
-                    .on_terminate(ControllerTermination::new(
-                        self.ctx.clone(),
-                        self.agent_indices.clone(),
-                    ))
-                    .on_stdout_read(ControllerStdout::new(
-                        self.ctx.clone(),
-                        cmd_idx,
-                        self.agent_indices.clone(),
-                    )),
+            .resource_limits(ResourceLimits {
+                wall_clock_time: cmd.wall_clock_time_limit,
+                idle_time: cmd.idle_time_limit.map(|limit| IdleTimeLimit {
+                    total_idle_time: limit,
+                    cpu_load_threshold: cmd.load_ratio / 100.0,
+                }),
+                total_user_time: cmd.time_limit,
+                max_memory_usage: cmd.memory_limit.map(mb2b),
+                total_bytes_written: cmd.write_limit.map(mb2b),
+                total_processes_created: cmd.process_count,
+                active_processes: cmd.active_process_count,
+                active_network_connections: cmd.active_connection_count,
             });
-        self.builders.push(builder);
+        match role {
+            Role::Default => {}
+            Role::Agent(agent_idx) => {
+                program.on_terminate(AgentTermination::new(
+                    agent_idx,
+                    self.controller_stdin.clone(),
+                ));
+                self.io_streams.set_on_read(
+                    stdio.stdout,
+                    AgentStdout::new(self.ctx.clone(), agent_idx, cmd_idx),
+                );
+            }
+            Role::Controller => {
+                program.on_terminate(ControllerTermination::new(
+                    self.ctx.clone(),
+                    self.agent_indices.clone(),
+                ));
+                self.io_streams.set_on_read(
+                    stdio.stdout,
+                    ControllerStdout::new(self.ctx.clone(), cmd_idx, self.agent_indices.clone()),
+                );
+            }
+        }
+        Ok(program)
     }
 
     #[cfg(windows)]
@@ -202,9 +186,9 @@ impl<'a> Driver<'a> {
         &self,
         cmd: &Command,
         info: &mut ProcessInfo,
-        restrictions: &mut GroupRestrictions,
-    ) {
-        use spawner::windows::process::{GroupRestrictionsExt, ProcessInfoExt, UiRestrictions};
+        group: &mut Group,
+    ) -> Result<()> {
+        use spawner::windows::process::{GroupExt, ProcessInfoExt, UiRestrictions};
         if cmd.show_window {
             info.show_window(true);
         }
@@ -212,7 +196,7 @@ impl<'a> Driver<'a> {
             info.env_user();
         }
         if cmd.secure {
-            restrictions.ui_restrictions(
+            group.set_ui_restrictions(
                 UiRestrictions::new()
                     .limit_desktop()
                     .limit_display_settings()
@@ -222,8 +206,9 @@ impl<'a> Driver<'a> {
                     .limit_read_clipboard()
                     .limit_write_clipboard()
                     .limit_system_parameters(),
-            );
+            )?;
         }
+        Ok(())
     }
 
     #[cfg(unix)]
@@ -231,8 +216,8 @@ impl<'a> Driver<'a> {
         &self,
         cmd: &Command,
         info: &mut ProcessInfo,
-        _restrictions: &mut GroupRestrictions,
-    ) {
+        _group: &mut Group,
+    ) -> Result<()> {
         use spawner::unix::process::{ProcessInfoExt, SyscallFilterBuilder};
         if cmd.show_window {
             self.warnings.emit("'-sw' option works on windows only");
@@ -294,6 +279,7 @@ impl<'a> Driver<'a> {
             }
             info.syscall_filter(builder.build());
         }
+        Ok(())
     }
 }
 

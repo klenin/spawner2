@@ -1,8 +1,8 @@
 use spawner::io::{IoGraph, OstreamId, StdioMapping};
 use spawner::pipe::WritePipe;
-use spawner::rwhub::Connection;
+use spawner::rwhub::{Connection, OnRead};
 use spawner::{Error, Result};
-use spawner::{OnRead, OnTerminate, Runner};
+use spawner::{OnTerminate, Runner};
 
 use std::char;
 use std::collections::HashMap;
@@ -159,7 +159,9 @@ impl ControllerStdout {
 
     fn handle_msg(&mut self, connections: &mut [Connection]) -> Result<()> {
         self.init()?;
-        self.ctx.runner(self.controller_idx).reset_time_usage();
+        self.ctx
+            .runner(self.controller_idx)
+            .reset_wallclock_and_user_time();
 
         let msg = self.buf.as_msg()?;
         if let Some(agent_idx) = msg.agent_idx {
@@ -173,7 +175,10 @@ impl ControllerStdout {
             let agent = self.ctx.runner(self.agent_indices[agent_idx.0]);
             match msg.kind {
                 MessageKind::Terminate => agent.terminate(),
-                MessageKind::Resume => agent.resume(),
+                MessageKind::Resume => {
+                    agent.resume();
+                    agent.resume_time_accounting();
+                }
                 _ => {}
             }
         }
@@ -231,7 +236,8 @@ impl OnRead for AgentStdout {
         while self.buf.is_msg_ready() {
             let agent = self.agent()?;
             agent.suspend();
-            agent.reset_time_usage();
+            agent.stop_time_accounting();
+            agent.reset_wallclock_and_user_time();
 
             for mut connection in connections.iter_mut() {
                 connection.send(self.buf.as_slice());
@@ -281,7 +287,9 @@ impl OnTerminate for ControllerTermination {
     fn on_terminate(&mut self) {
         if self.ctx.wait_for_init().is_ok() {
             for i in self.agent_indices.iter() {
-                self.ctx.runner(*i).resume();
+                let agent = self.ctx.runner(*i);
+                agent.resume();
+                agent.resume_time_accounting();
             }
         }
     }

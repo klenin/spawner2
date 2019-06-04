@@ -80,7 +80,8 @@ impl Commands {
         }
 
         let reports = driver
-            .run()?
+            .spawn()?
+            .wait()
             .into_iter()
             .zip(self.0.iter())
             .map(|(report, opts)| Report::new(opts, report))
