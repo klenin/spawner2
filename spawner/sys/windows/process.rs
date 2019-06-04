@@ -1,7 +1,9 @@
-use crate::process::{ExitStatus, LimitViolation, ResourceLimits, ResourceUsage};
-use crate::sys::limit_checker::LimitChecker;
+use crate::process::{
+    ExitStatus, GroupIo, GroupMemory, GroupNetwork, GroupPidCounters, GroupTimers, OsLimit,
+};
 use crate::sys::windows::helpers::{
-    cvt, to_utf16, Endpoints, EnvBlock, Handle, PidList, RawStdio, StartupInfo, User, UserContext,
+    cvt, to_utf16, Endpoints, EnvBlock, Handle, JobNotifications, PidList, RawStdio, StartupInfo,
+    User, UserContext,
 };
 use crate::sys::windows::pipe::{ReadPipe, WritePipe};
 use crate::sys::windows::process_ext::UiRestrictions;
@@ -10,8 +12,6 @@ use crate::{Error, Result};
 
 use winapi::shared::minwindef::{DWORD, TRUE};
 use winapi::um::errhandlingapi::SetErrorMode;
-use winapi::um::handleapi::INVALID_HANDLE_VALUE;
-use winapi::um::ioapiset::{CreateIoCompletionPort, GetQueuedCompletionStatus};
 use winapi::um::jobapi2::{
     AssignProcessToJobObject, CreateJobObjectW, QueryInformationJobObject, SetInformationJobObject,
     TerminateJobObject,
@@ -26,12 +26,11 @@ use winapi::um::winbase::{
     SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX,
 };
 use winapi::um::winnt::{
-    JobObjectAssociateCompletionPortInformation, JobObjectBasicAndIoAccountingInformation,
+    JobObjectBasicAccountingInformation, JobObjectBasicAndIoAccountingInformation,
     JobObjectBasicUIRestrictions, JobObjectExtendedLimitInformation,
-    JOBOBJECT_ASSOCIATE_COMPLETION_PORT, JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION,
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION,
     JOBOBJECT_BASIC_UI_RESTRICTIONS, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JOB_OBJECT_LIMIT_ACTIVE_PROCESS, JOB_OBJECT_LIMIT_JOB_MEMORY,
-    JOB_OBJECT_MSG_ACTIVE_PROCESS_LIMIT, JOB_OBJECT_MSG_JOB_MEMORY_LIMIT, STATUS_ACCESS_VIOLATION,
+    JOB_OBJECT_LIMIT_ACTIVE_PROCESS, JOB_OBJECT_LIMIT_JOB_MEMORY, STATUS_ACCESS_VIOLATION,
     STATUS_ARRAY_BOUNDS_EXCEEDED, STATUS_BREAKPOINT, STATUS_CONTROL_C_EXIT,
     STATUS_DATATYPE_MISALIGNMENT, STATUS_FLOAT_DENORMAL_OPERAND, STATUS_FLOAT_INEXACT_RESULT,
     STATUS_FLOAT_INVALID_OPERATION, STATUS_FLOAT_MULTIPLE_FAULTS, STATUS_FLOAT_MULTIPLE_TRAPS,
@@ -46,7 +45,7 @@ use std::collections::HashMap;
 use std::fmt::{self, Write};
 use std::mem;
 use std::ptr;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use std::u32;
 
 enum Env {
@@ -80,16 +79,9 @@ pub struct Process {
 
 unsafe impl Send for Process {}
 
-pub struct GroupRestrictions {
-    limits: ResourceLimits,
-    ui_restrictions: Option<UiRestrictions>,
-}
-
 pub struct Group {
     job: Handle,
-    completion_port: Handle,
-    limit_checker: LimitChecker,
-    creation_time: Instant,
+    notifications: JobNotifications,
     pid_list: PidList,
     endpoints: Endpoints,
 }
@@ -246,14 +238,24 @@ impl Process {
         Ok(())
     }
 
-    fn suspended<T, U>(info: T, stdio: U) -> Result<Self>
-    where
-        T: AsRef<ProcessInfo>,
-        U: Into<Stdio>,
-    {
-        let stdio = stdio.into();
-        let info = info.as_ref();
+    pub fn spawn(info: &mut ProcessInfo, stdio: Stdio) -> Result<Self> {
+        let ps = Self::suspended(info, stdio)?;
+        if !info.suspended {
+            ps.resume()?;
+        }
+        Ok(ps)
+    }
 
+    pub fn spawn_in_group(info: &mut ProcessInfo, stdio: Stdio, group: &mut Group) -> Result<Self> {
+        let ps = Self::suspended(info, stdio)?;
+        group.add(&ps)?;
+        if !info.suspended {
+            ps.resume()?;
+        }
+        Ok(ps)
+    }
+
+    fn suspended(info: &mut ProcessInfo, stdio: Stdio) -> Result<Self> {
         let mut user = info
             .user_creds
             .as_ref()
@@ -311,136 +313,144 @@ macro_rules! count_endpoints {
     };
 }
 
-impl GroupRestrictions {
-    pub fn new() -> Self {
-        Self {
-            limits: ResourceLimits::new(),
-            ui_restrictions: None,
-        }
+impl Group {
+    pub fn new() -> Result<Self> {
+        unsafe { cvt(CreateJobObjectW(ptr::null_mut(), ptr::null())) }
+            .map(Handle::new)
+            .map_err(Error::from)
+            .and_then(|job| {
+                JobNotifications::new(&job).map(|notifications| Self {
+                    job: job,
+                    notifications: notifications,
+                    pid_list: PidList::new(),
+                    endpoints: Endpoints::new(),
+                })
+            })
     }
 
-    pub fn with_limits<T>(limits: T) -> Self
-    where
-        T: Into<ResourceLimits>,
-    {
-        Self {
-            limits: limits.into(),
-            ui_restrictions: None,
-        }
-    }
-
-    pub fn ui_restrictions<T>(&mut self, r: T) -> &mut Self
+    pub fn set_ui_restrictions<T>(&mut self, restrictions: T) -> Result<()>
     where
         T: Into<UiRestrictions>,
     {
-        self.ui_restrictions = Some(r.into());
-        self
+        let mut ui_restrictions = JOBOBJECT_BASIC_UI_RESTRICTIONS {
+            UIRestrictionsClass: restrictions.into().into_inner(),
+        };
+        unsafe {
+            cvt(SetInformationJobObject(
+                /*hJob=*/ self.job.raw(),
+                /*JobObjectInformationClass=*/ JobObjectBasicUIRestrictions,
+                /*lpJobObjectInformation=*/ mem::transmute(&mut ui_restrictions),
+                /*cbJobObjectInformationLength=*/
+                mem::size_of_val(&ui_restrictions) as DWORD,
+            ))?;
+        }
+        Ok(())
     }
-}
 
-impl Group {
-    pub fn new() -> Result<Self> {
-        Self::with_restrictions(GroupRestrictions::new())
+    pub fn add(&self, ps: &Process) -> Result<()> {
+        unsafe { cvt(AssignProcessToJobObject(self.job.raw(), ps.handle.raw()))? };
+        Ok(())
     }
 
-    pub fn with_restrictions<T>(restrictions: T) -> Result<Self>
-    where
-        T: Into<GroupRestrictions>,
-    {
-        let restrictions = restrictions.into();
-        let limits = restrictions.limits.clone();
-        create_job(restrictions).and_then(|job| {
-            create_job_completion_port(&job).map(|port| Self {
-                job: job,
-                completion_port: port,
-                limit_checker: LimitChecker::new(limits),
-                creation_time: Instant::now(),
-                pid_list: PidList::new(),
-                endpoints: Endpoints::new(),
+    pub fn memory(&mut self) -> Result<Option<GroupMemory>> {
+        self.ext_limit_info().map(|info| {
+            Some(GroupMemory {
+                max_usage: info.PeakJobMemoryUsed as u64,
             })
         })
     }
 
-    pub fn spawn<T, U>(&mut self, info: T, stdio: U) -> Result<Process>
-    where
-        T: AsRef<ProcessInfo>,
-        U: Into<Stdio>,
-    {
-        let info = info.as_ref();
-        let ps = Process::suspended(info, stdio)?;
-        cvt(unsafe { AssignProcessToJobObject(self.job.raw(), ps.handle.raw()) })
-            .map_err(Error::from)
-            .and_then(|_| if info.suspended { Ok(()) } else { ps.resume() })
-            .map_err(|e| {
-                let _ = ps.terminate();
-                e
+    pub fn io(&mut self) -> Result<Option<GroupIo>> {
+        self.basic_and_io_info().map(|info| {
+            Some(GroupIo {
+                total_bytes_written: info.IoInfo.WriteTransferCount,
             })
-            .map(|_| ps)
-    }
-
-    pub fn resource_usage(&mut self) -> Result<ResourceUsage> {
-        let basic_and_io_info = self.basic_and_io_info()?;
-        let ext_limit_info = self.ext_limit_info()?;
-
-        // Total user time in 100-nanosecond ticks.
-        let total_user_time =
-            unsafe { *basic_and_io_info.BasicInfo.TotalUserTime.QuadPart() } as u64;
-
-        // Total kernel time in 100-nanosecond ticks.
-        let total_kernel_time =
-            unsafe { *basic_and_io_info.BasicInfo.TotalKernelTime.QuadPart() } as u64;
-
-        Ok(ResourceUsage {
-            wall_clock_time: self.creation_time.elapsed(),
-            total_user_time: Duration::from_nanos(total_user_time * 100),
-            total_kernel_time: Duration::from_nanos(total_kernel_time * 100),
-            peak_memory_used: ext_limit_info.PeakJobMemoryUsed as u64,
-            total_processes_created: basic_and_io_info.BasicInfo.TotalProcesses as usize,
-            active_processes: basic_and_io_info.BasicInfo.ActiveProcesses as usize,
-            total_bytes_written: basic_and_io_info.IoInfo.WriteTransferCount,
-            active_network_connections: self.active_network_connections()?,
         })
     }
 
-    pub fn check_limits(&mut self) -> Result<Option<LimitViolation>> {
-        let mut num_bytes = 0;
-        let mut _key = 0;
-        let mut _overlapped = ptr::null_mut();
-        if unsafe {
-            GetQueuedCompletionStatus(
-                /*CompletionPort=*/ self.completion_port.raw(),
-                /*lpNumberOfBytes=*/ &mut num_bytes,
-                /*lpCompletionKey=*/ &mut _key,
-                /*lpOverlapped=*/ &mut _overlapped,
-                /*dwMilliseconds=*/ 0,
-            )
-        } == TRUE
-        {
-            match num_bytes {
-                JOB_OBJECT_MSG_JOB_MEMORY_LIMIT => {
-                    return Ok(Some(LimitViolation::MemoryLimitExceeded));
-                }
-                JOB_OBJECT_MSG_ACTIVE_PROCESS_LIMIT => {
-                    return Ok(Some(LimitViolation::ActiveProcessLimitExceeded));
-                }
-                _ => {}
+    pub fn pid_counters(&mut self) -> Result<Option<GroupPidCounters>> {
+        self.basic_and_io_info().map(|info| {
+            Some(GroupPidCounters {
+                total_processes: info.BasicInfo.TotalProcesses as usize,
+                active_processes: info.BasicInfo.ActiveProcesses as usize,
+            })
+        })
+    }
+
+    pub fn network(&mut self) -> Result<Option<GroupNetwork>> {
+        self.active_network_connections().map(|count| {
+            Some(GroupNetwork {
+                active_connections: count,
+            })
+        })
+    }
+
+    pub fn timers(&mut self) -> Result<Option<GroupTimers>> {
+        self.basic_info().map(|info| {
+            // Total user time in 100-nanosecond ticks.
+            let total_user_time = unsafe { *info.TotalUserTime.QuadPart() } as u64;
+            // Total kernel time in 100-nanosecond ticks.
+            let total_kernel_time = unsafe { *info.TotalKernelTime.QuadPart() } as u64;
+
+            Some(GroupTimers {
+                total_user_time: Duration::from_nanos(total_user_time * 100),
+                total_kernel_time: Duration::from_nanos(total_kernel_time * 100),
+            })
+        })
+    }
+
+    pub fn set_os_limit(&mut self, limit: OsLimit, value: u64) -> Result<bool> {
+        let mut ext_limit_info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { mem::zeroed() };
+
+        match limit {
+            OsLimit::Memory => {
+                ext_limit_info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
+                ext_limit_info.JobMemoryLimit = value as usize;
+            }
+            OsLimit::ActiveProcess => {
+                ext_limit_info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+                ext_limit_info.BasicLimitInformation.ActiveProcessLimit = value as DWORD;
             }
         }
 
-        self.resource_usage()
-            .map(|usage| self.limit_checker.check(usage))
+        unsafe {
+            cvt(SetInformationJobObject(
+                /*hJob=*/ self.job.raw(),
+                /*JobObjectInformationClass=*/ JobObjectExtendedLimitInformation,
+                /*lpJobObjectInformation=*/ mem::transmute(&mut ext_limit_info),
+                /*cbJobObjectInformationLength=*/ mem::size_of_val(&ext_limit_info) as DWORD,
+            ))?;
+        }
+
+        Ok(true)
     }
 
-    pub fn reset_time_usage(&mut self) -> Result<()> {
-        let zero = self.resource_usage()?;
-        self.limit_checker
-            .reset_timers(zero.wall_clock_time, zero.total_user_time);
-        Ok(())
+    pub fn is_os_limit_hit(&mut self, limit: OsLimit) -> Result<bool> {
+        match limit {
+            OsLimit::Memory => self.notifications.is_memory_limit_hit(),
+            OsLimit::ActiveProcess => self.notifications.is_active_process_limit_hit(),
+        }
     }
 
     pub fn terminate(&self) -> Result<()> {
         cvt(unsafe { TerminateJobObject(self.job.raw(), 0) })?;
         Ok(())
+    }
+
+    fn basic_info(&self) -> Result<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION> {
+        unsafe {
+            let mut basic_info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = mem::zeroed();
+
+            cvt(QueryInformationJobObject(
+                /*hJob=*/ self.job.raw(),
+                /*JobObjectInfoClass=*/ JobObjectBasicAccountingInformation,
+                /*lpJobObjectInfo=*/ mem::transmute(&mut basic_info),
+                /*cbJobObjectInfoLength=*/ mem::size_of_val(&basic_info) as DWORD,
+                /*lpReturnLength=*/ ptr::null_mut(),
+            ))
+            .map_err(Error::from)
+            .map(|_| basic_info)
+        }
     }
 
     fn basic_and_io_info(&self) -> Result<JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION> {
@@ -578,70 +588,6 @@ where
         w.write_str(escaped.as_str())
     }
     .unwrap();
-}
-
-fn create_job(restrictions: GroupRestrictions) -> Result<Handle> {
-    let limits = restrictions.limits;
-    unsafe {
-        let job = Handle::new(cvt(CreateJobObjectW(ptr::null_mut(), ptr::null()))?);
-
-        let mut ext_limit_info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = mem::zeroed();
-        if let Some(mem_limit) = limits.peak_memory_used {
-            ext_limit_info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
-            ext_limit_info.JobMemoryLimit = mem_limit as usize;
-        }
-        if let Some(proc_count) = limits.active_processes {
-            ext_limit_info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
-            ext_limit_info.BasicLimitInformation.ActiveProcessLimit = proc_count as DWORD;
-        }
-
-        cvt(SetInformationJobObject(
-            /*hJob=*/ job.raw(),
-            /*JobObjectInformationClass=*/ JobObjectExtendedLimitInformation,
-            /*lpJobObjectInformation=*/ mem::transmute(&mut ext_limit_info),
-            /*cbJobObjectInformationLength=*/ mem::size_of_val(&ext_limit_info) as DWORD,
-        ))?;
-
-        if let Some(class) = restrictions.ui_restrictions.map(IntoInner::into_inner) {
-            let mut ui_restrictions = JOBOBJECT_BASIC_UI_RESTRICTIONS {
-                UIRestrictionsClass: class,
-            };
-            cvt(SetInformationJobObject(
-                /*hJob=*/ job.raw(),
-                /*JobObjectInformationClass=*/ JobObjectBasicUIRestrictions,
-                /*lpJobObjectInformation=*/ mem::transmute(&mut ui_restrictions),
-                /*cbJobObjectInformationLength=*/
-                mem::size_of_val(&ui_restrictions) as DWORD,
-            ))?;
-        }
-
-        Ok(job)
-    }
-}
-
-fn create_job_completion_port(job: &Handle) -> Result<Handle> {
-    unsafe {
-        let port = Handle::new(cvt(CreateIoCompletionPort(
-            /*FileHandle=*/ INVALID_HANDLE_VALUE,
-            /*ExistingCompletionPort=*/ ptr::null_mut(),
-            /*CompletionKey=*/ 0,
-            /*NumberOfConcurrentThreads=*/ 1,
-        ))?);
-
-        let mut port_info = JOBOBJECT_ASSOCIATE_COMPLETION_PORT {
-            CompletionKey: ptr::null_mut(),
-            CompletionPort: port.raw(),
-        };
-
-        cvt(SetInformationJobObject(
-            /*hJob=*/ job.raw(),
-            /*JobObjectInformationClass=*/ JobObjectAssociateCompletionPortInformation,
-            /*lpJobObjectInformation=*/ mem::transmute(&mut port_info),
-            /*cbJobObjectInformationLength=*/ mem::size_of_val(&port_info) as DWORD,
-        ))?;
-
-        Ok(port)
-    }
 }
 
 fn create_env<I, K, V>(vars: I) -> Vec<u16>

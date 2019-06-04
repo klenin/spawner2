@@ -1,5 +1,6 @@
-use crate::process::{GroupRestrictions, ProcessInfo};
+use crate::process::{Group, ProcessInfo};
 use crate::sys::{AsInnerMut, IntoInner};
+use crate::Result;
 
 use winapi::shared::minwindef::DWORD;
 use winapi::um::winnt::{
@@ -11,8 +12,10 @@ use winapi::um::winnt::{
 /// https://docs.microsoft.com/en-us/windows/desktop/api/winnt/ns-winnt-_jobobject_basic_ui_restrictions
 pub struct UiRestrictions(DWORD);
 
-pub trait GroupRestrictionsExt {
-    fn ui_restrictions<T: Into<UiRestrictions>>(&mut self, r: T) -> &mut Self;
+pub trait GroupExt {
+    fn set_ui_restrictions<T>(&mut self, r: T) -> Result<()>
+    where
+        T: Into<UiRestrictions>;
 }
 
 pub trait ProcessInfoExt {
@@ -84,12 +87,11 @@ impl ProcessInfoExt for ProcessInfo {
     }
 }
 
-impl GroupRestrictionsExt for GroupRestrictions {
-    fn ui_restrictions<T>(&mut self, r: T) -> &mut Self
+impl GroupExt for Group {
+    fn set_ui_restrictions<T>(&mut self, r: T) -> Result<()>
     where
         T: Into<UiRestrictions>,
     {
-        self.as_inner_mut().ui_restrictions(r);
-        self
+        self.as_inner_mut().set_ui_restrictions(r)
     }
 }

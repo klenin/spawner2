@@ -1,5 +1,6 @@
-use crate::process::{ExitStatus, LimitViolation, ResourceLimits, ResourceUsage};
-use crate::sys::limit_checker::LimitChecker;
+use crate::process::{
+    ExitStatus, GroupIo, GroupMemory, GroupNetwork, GroupPidCounters, GroupTimers, OsLimit,
+};
 use crate::sys::unix::missing_decls::{sock_fprog, SECCOMP_MODE_FILTER};
 use crate::sys::unix::pipe::{PipeFd, ReadPipe, WritePipe};
 use crate::sys::unix::process_ext::SyscallFilter;
@@ -59,15 +60,11 @@ pub struct Process {
     exit_status: Option<ExitStatus>,
 }
 
-pub struct GroupRestrictions(ResourceLimits);
-
 pub struct Group {
     memory: Cgroup,
     cpuacct: Cgroup,
     pids: Cgroup,
     freezer: Cgroup,
-    limit_checker: LimitChecker,
-    creation_time: Instant,
     active_tasks: ActiveTasks,
     // Since we have information only about active tasks we need to memorize amount
     // of dead tasks and amount of bytes written by them.
@@ -82,6 +79,7 @@ struct DeadTasksInfo {
 struct ActiveTasks {
     wchar_by_pid: HashMap<Pid, u64>,
     pid_by_inode: HashMap<u32, Pid>,
+    last_update_time: Instant,
 }
 
 struct RawStdio {
@@ -201,7 +199,24 @@ impl Process {
         kill(self.pid, Signal::SIGKILL).map_err(Error::from)
     }
 
-    fn suspended(info: &mut ProcessInfo, stdio: RawStdio) -> Result<Self> {
+    pub fn spawn(info: &mut ProcessInfo, stdio: Stdio) -> Result<Self> {
+        let ps = Self::suspended(info, stdio)?;
+        if !info.suspended {
+            ps.resume()?;
+        }
+        Ok(ps)
+    }
+
+    pub fn spawn_in_group(info: &mut ProcessInfo, stdio: Stdio, group: &mut Group) -> Result<Self> {
+        let ps = Self::suspended(info, stdio)?;
+        group.add(&ps)?;
+        if !info.suspended {
+            ps.resume()?;
+        }
+        Ok(ps)
+    }
+
+    fn suspended(info: &mut ProcessInfo, stdio: Stdio) -> Result<Self> {
         let usr = info.username.as_ref().map(User::new).transpose()?;
 
         if let ForkResult::Parent { child, .. } = fork()? {
@@ -213,140 +228,105 @@ impl Process {
             });
         }
 
-        if let Err(_) = init_child_process(info, stdio, usr) {
-            // todo: Send error to parent process.
-        }
-        process::exit(errno());
-    }
-}
-
-impl AsMut<ProcessInfo> for ProcessInfo {
-    fn as_mut(&mut self) -> &mut ProcessInfo {
-        self
-    }
-}
-
-impl GroupRestrictions {
-    pub fn new() -> Self {
-        Self::with_limits(ResourceLimits::new())
-    }
-
-    pub fn with_limits<T>(limits: T) -> Self
-    where
-        T: Into<ResourceLimits>,
-    {
-        Self(limits.into())
-    }
-}
-
-impl Group {
-    pub fn new() -> Result<Self> {
-        Self::with_restrictions(GroupRestrictions::new())
-    }
-
-    pub fn with_restrictions<T>(restrictions: T) -> Result<Self>
-    where
-        T: Into<GroupRestrictions>,
-    {
-        let limits = restrictions.into().0;
-        let memory = create_cgroup("memory/sp")?;
-        let pids = create_cgroup("pids/sp")?;
-
-        if let Some(mem_limit) = limits.peak_memory_used {
-            memory.set_value("memory.limit_in_bytes", mem_limit)?;
-        }
-        if let Some(proc_count) = limits.active_processes {
-            pids.set_value("pids.max", proc_count)?;
-        }
-
-        Ok(Self {
-            memory: memory,
-            cpuacct: create_cgroup("cpuacct/sp")?,
-            pids: pids,
-            freezer: create_cgroup("freezer/sp")?,
-            limit_checker: LimitChecker::new(limits),
-            creation_time: Instant::now(),
-            active_tasks: ActiveTasks::new(),
-            dead_tasks_info: DeadTasksInfo::new(),
-        })
-    }
-
-    pub fn spawn<T, U>(&mut self, mut info: T, stdio: U) -> Result<Process>
-    where
-        T: AsMut<ProcessInfo>,
-        U: Into<Stdio>,
-    {
-        let info = info.as_mut();
-        let stdio = stdio.into();
-        let ps = Process::suspended(
+        if let Err(_) = init_child_process(
             info,
             RawStdio {
                 stdin: stdio.stdin.into_inner(),
                 stdout: stdio.stdout.into_inner(),
                 stderr: stdio.stderr.into_inner(),
             },
-        )?;
+            usr,
+        ) {
+            // todo: Send error to parent process.
+        }
+        process::exit(errno());
+    }
+}
+
+impl Group {
+    pub fn new() -> Result<Self> {
+        Ok(Self {
+            memory: create_cgroup("memory/sp")?,
+            cpuacct: create_cgroup("cpuacct/sp")?,
+            pids: create_cgroup("pids/sp")?,
+            freezer: create_cgroup("freezer/sp")?,
+            active_tasks: ActiveTasks::new(),
+            dead_tasks_info: DeadTasksInfo::new(),
+        })
+    }
+
+    pub fn add(&mut self, ps: &Process) -> Result<()> {
         self.memory
             .add_task(ps.pid)
             .and(self.cpuacct.add_task(ps.pid))
             .and(self.pids.add_task(ps.pid))
             .and(self.freezer.add_task(ps.pid))
             .map_err(Error::from)
-            .and_then(|_| if info.suspended { Ok(()) } else { ps.resume() })
-            .map_err(|e| {
-                let _ = ps.terminate();
-                e
-            })
-            .map(|_| ps)
     }
 
-    pub fn resource_usage(&mut self) -> Result<ResourceUsage> {
-        let total_user_time = self.cpuacct.get_value::<u64>("cpuacct.usage_user")?;
-        let total_sys_time = self.cpuacct.get_value::<u64>("cpuacct.usage_sys")?;
-
+    pub fn memory(&mut self) -> Result<Option<GroupMemory>> {
         let max_mem_usage = self.memory.get_value::<u64>("memory.max_usage_in_bytes")?;
         let max_kmem_usage = self
             .memory
             .get_value::<u64>("memory.kmem.max_usage_in_bytes")?;
+        Ok(Some(GroupMemory {
+            max_usage: max_mem_usage + max_kmem_usage,
+        }))
+    }
 
-        let dead_tasks_info = self.active_tasks.update(self.freezer.get_tasks()?);
-        self.dead_tasks_info.num_dead_tasks += dead_tasks_info.num_dead_tasks;
-        self.dead_tasks_info.total_bytes_written += dead_tasks_info.total_bytes_written;
-
-        Ok(ResourceUsage {
-            wall_clock_time: self.creation_time.elapsed(),
-            total_user_time: Duration::from_nanos(total_user_time),
-            total_kernel_time: Duration::from_nanos(total_sys_time),
-            peak_memory_used: max_mem_usage + max_kmem_usage,
+    pub fn io(&mut self) -> Result<Option<GroupIo>> {
+        self.update_tasks()?;
+        Ok(Some(GroupIo {
             total_bytes_written: self.active_tasks.total_bytes_written()
                 + self.dead_tasks_info.total_bytes_written,
-            total_processes_created: self.dead_tasks_info.num_dead_tasks
-                + self.active_tasks.count(),
-            active_processes: self.active_tasks.count(),
-            active_network_connections: self
+        }))
+    }
+
+    pub fn pid_counters(&mut self) -> Result<Option<GroupPidCounters>> {
+        self.update_tasks()?;
+        let active_processes = self.active_tasks.count();
+        Ok(Some(GroupPidCounters {
+            active_processes: active_processes,
+            total_processes: self.dead_tasks_info.num_dead_tasks + active_processes,
+        }))
+    }
+
+    pub fn network(&mut self) -> Result<Option<GroupNetwork>> {
+        self.update_tasks()?;
+        Ok(Some(GroupNetwork {
+            active_connections: self
                 .active_tasks
                 .count_network_connections()
                 .map_err(|e| Error::from(e.to_string()))?,
-        })
+        }))
     }
 
-    pub fn check_limits(&mut self) -> Result<Option<LimitViolation>> {
-        if self.memory.get_value::<usize>("memory.failcnt")? > 0 {
-            return Ok(Some(LimitViolation::MemoryLimitExceeded));
-        }
-        if self.pids.get_raw_value("pids.events")? != "max 0\n" {
-            return Ok(Some(LimitViolation::ActiveProcessLimitExceeded));
-        }
-
-        self.resource_usage()
-            .map(|usage| self.limit_checker.check(usage))
+    pub fn timers(&mut self) -> Result<Option<GroupTimers>> {
+        let total_user_time = self.cpuacct.get_value::<u64>("cpuacct.usage_user")?;
+        let total_sys_time = self.cpuacct.get_value::<u64>("cpuacct.usage_sys")?;
+        Ok(Some(GroupTimers {
+            total_user_time: Duration::from_nanos(total_user_time),
+            total_kernel_time: Duration::from_nanos(total_sys_time),
+        }))
     }
 
-    pub fn reset_time_usage(&mut self) -> Result<()> {
-        let zero = self.resource_usage()?;
-        self.limit_checker
-            .reset_timers(zero.wall_clock_time, zero.total_user_time);
-        Ok(())
+    pub fn set_os_limit(&mut self, limit: OsLimit, value: u64) -> Result<bool> {
+        match limit {
+            OsLimit::Memory => {
+                self.memory.set_value("memory.limit_in_bytes", value)?;
+            }
+            OsLimit::ActiveProcess => {
+                self.pids.set_value("pids.max", value)?;
+            }
+        }
+        Ok(true)
+    }
+
+    pub fn is_os_limit_hit(&self, limit: OsLimit) -> Result<bool> {
+        match limit {
+            OsLimit::Memory => Ok(self.memory.get_value::<usize>("memory.failcnt")? > 0),
+            OsLimit::ActiveProcess => Ok(self.pids.get_raw_value("pids.events")? != "max 0\n"),
+        }
     }
 
     pub fn terminate(&self) -> Result<()> {
@@ -356,6 +336,13 @@ impl Group {
         }
         self.freezer.send_signal_to_all_tasks(Signal::SIGKILL)?;
         self.freezer.set_raw_value("freezer.state", "THAWED")?;
+        Ok(())
+    }
+
+    fn update_tasks(&mut self) -> Result<()> {
+        let dead_tasks_info = self.active_tasks.update(&self.freezer)?;
+        self.dead_tasks_info.num_dead_tasks += dead_tasks_info.num_dead_tasks;
+        self.dead_tasks_info.total_bytes_written += dead_tasks_info.total_bytes_written;
         Ok(())
     }
 }
@@ -383,6 +370,7 @@ impl ActiveTasks {
         Self {
             wchar_by_pid: HashMap::new(),
             pid_by_inode: HashMap::new(),
+            last_update_time: Instant::now() - Duration::from_secs(10),
         }
     }
 
@@ -411,13 +399,19 @@ impl ActiveTasks {
             .count())
     }
 
-    fn update<T>(&mut self, pids: T) -> DeadTasksInfo
-    where
-        T: IntoIterator<Item = Pid>,
-    {
-        self.pid_by_inode.clear();
+    fn update(&mut self, freezer: &Cgroup) -> Result<DeadTasksInfo> {
+        let update_threshold = Duration::from_micros(300);
+        if self.last_update_time.elapsed() < update_threshold {
+            return Ok(DeadTasksInfo {
+                num_dead_tasks: 0,
+                total_bytes_written: 0,
+            });
+        }
 
-        let new_wchar_by_pid = pids
+        self.last_update_time = Instant::now();
+        self.pid_by_inode.clear();
+        let new_wchar_by_pid = freezer
+            .get_tasks()?
             .into_iter()
             .filter_map(|pid| procfs::Process::new(pid.as_raw()).ok())
             .map(|ps| {
@@ -453,13 +447,13 @@ impl ActiveTasks {
             }
         }
 
-        DeadTasksInfo {
+        Ok(DeadTasksInfo {
             num_dead_tasks: dead_tasks.len(),
             total_bytes_written: dead_tasks
                 .into_iter()
                 .map(|pid| old_wchar_by_pid.remove(&pid).unwrap())
                 .sum(),
-        }
+        })
     }
 }
 

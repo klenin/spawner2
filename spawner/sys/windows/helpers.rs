@@ -8,12 +8,13 @@ use crate::sys::windows::missing_decls::{
 use crate::{Error, Result};
 
 use winapi::shared::basetsd::{DWORD_PTR, SIZE_T, ULONG_PTR};
-use winapi::shared::minwindef::{DWORD, FALSE, HWINSTA, ULONG, WORD};
+use winapi::shared::minwindef::{DWORD, FALSE, HWINSTA, TRUE, ULONG, WORD};
 use winapi::shared::windef::HDESK;
 use winapi::shared::winerror::{ERROR_INSUFFICIENT_BUFFER, ERROR_MORE_DATA, NO_ERROR};
 use winapi::shared::ws2def::{AF_INET, AF_INET6};
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
-use winapi::um::jobapi2::QueryInformationJobObject;
+use winapi::um::ioapiset::{CreateIoCompletionPort, GetQueuedCompletionStatus};
+use winapi::um::jobapi2::{QueryInformationJobObject, SetInformationJobObject};
 use winapi::um::processthreadsapi::{
     DeleteProcThreadAttributeList, InitializeProcThreadAttributeList, UpdateProcThreadAttribute,
     LPSTARTUPINFOW, PROC_THREAD_ATTRIBUTE_LIST,
@@ -25,8 +26,10 @@ use winapi::um::winbase::{
     STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
 use winapi::um::winnt::{
-    JobObjectBasicProcessIdList, DELETE, HANDLE, JOBOBJECT_BASIC_PROCESS_ID_LIST, PVOID,
-    READ_CONTROL, WCHAR, WRITE_DAC, WRITE_OWNER,
+    JobObjectAssociateCompletionPortInformation, JobObjectBasicProcessIdList, DELETE, HANDLE,
+    JOBOBJECT_ASSOCIATE_COMPLETION_PORT, JOBOBJECT_BASIC_PROCESS_ID_LIST,
+    JOB_OBJECT_MSG_ACTIVE_PROCESS_LIMIT, JOB_OBJECT_MSG_JOB_MEMORY_LIMIT, PVOID, READ_CONTROL,
+    WCHAR, WRITE_DAC, WRITE_OWNER,
 };
 use winapi::um::winuser::{
     CloseDesktop, CloseWindowStation, CreateDesktopW, CreateWindowStationW,
@@ -81,6 +84,12 @@ struct AttList {
 pub struct PidList(Vec<u8>);
 
 pub struct Endpoints(Vec<u8>);
+
+pub struct JobNotifications {
+    completion_port: Handle,
+    is_memory_limit_hit: bool,
+    is_active_process_limit_hit: bool,
+}
 
 const DESKTOP_ALL: DWORD = DESKTOP_CREATEMENU
     | DESKTOP_CREATEWINDOW
@@ -538,5 +547,67 @@ impl Endpoints {
                 }
             }
         }
+    }
+}
+
+impl JobNotifications {
+    pub fn new(job: &Handle) -> Result<Self> {
+        unsafe {
+            let port = Handle::new(cvt(CreateIoCompletionPort(
+                /*FileHandle=*/ INVALID_HANDLE_VALUE,
+                /*ExistingCompletionPort=*/ ptr::null_mut(),
+                /*CompletionKey=*/ 0,
+                /*NumberOfConcurrentThreads=*/ 1,
+            ))?);
+
+            let mut port_info = JOBOBJECT_ASSOCIATE_COMPLETION_PORT {
+                CompletionKey: ptr::null_mut(),
+                CompletionPort: port.raw(),
+            };
+
+            cvt(SetInformationJobObject(
+                /*hJob=*/ job.raw(),
+                /*JobObjectInformationClass=*/ JobObjectAssociateCompletionPortInformation,
+                /*lpJobObjectInformation=*/ mem::transmute(&mut port_info),
+                /*cbJobObjectInformationLength=*/ mem::size_of_val(&port_info) as DWORD,
+            ))?;
+
+            Ok(Self {
+                completion_port: port,
+                is_memory_limit_hit: false,
+                is_active_process_limit_hit: false,
+            })
+        }
+    }
+
+    pub fn is_memory_limit_hit(&mut self) -> Result<bool> {
+        self.recv_message().map(|_| self.is_memory_limit_hit)
+    }
+    pub fn is_active_process_limit_hit(&mut self) -> Result<bool> {
+        self.recv_message()
+            .map(|_| self.is_active_process_limit_hit)
+    }
+
+    fn recv_message(&mut self) -> Result<()> {
+        let mut num_bytes = 0;
+        let mut _key = 0;
+        let mut _overlapped = ptr::null_mut();
+        if unsafe {
+            GetQueuedCompletionStatus(
+                /*CompletionPort=*/ self.completion_port.raw(),
+                /*lpNumberOfBytes=*/ &mut num_bytes,
+                /*lpCompletionKey=*/ &mut _key,
+                /*lpOverlapped=*/ &mut _overlapped,
+                /*dwMilliseconds=*/ 0,
+            )
+        } == TRUE
+        {
+            match num_bytes {
+                JOB_OBJECT_MSG_JOB_MEMORY_LIMIT => self.is_memory_limit_hit = true,
+                JOB_OBJECT_MSG_ACTIVE_PROCESS_LIMIT => self.is_active_process_limit_hit = true,
+                _ => {}
+            }
+        }
+        Ok(())
     }
 }
