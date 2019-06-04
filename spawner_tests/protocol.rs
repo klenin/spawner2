@@ -207,33 +207,8 @@ fn agent_terminated_by_controller() {
 }
 
 #[test]
-fn agent_suspended_after_write() {
-    let r = run(&[
-        "--separator=@",
-        "-d=4",
-        "--json",
-        "--@",
-        "--controller",
-        APP,
-        "1W#\n",
-        "loop",
-        "4",
-        "--@",
-        "-y=1",
-        "--in=*0.stdout",
-        "--out=*0.stdin",
-        APP,
-        "message\n",
-        "loop",
-        "4",
-    ])
-    .unwrap();
-    ensure_idle_time_limit_exceeded(&r[1]);
-}
-
-#[test]
 fn controller_deadline() {
-    let r = run(&["-d=1", "--controller", APP, "loop", "2"]).unwrap();
+    let r = run(&["-d=1", "-y=0.6", "--controller", APP, "loop", "2"]).unwrap();
     ensure_wall_clock_time_limit_exceeded(&r[0]);
 }
 
