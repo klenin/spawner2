@@ -29,6 +29,7 @@ pub mod process;
 pub mod rwhub;
 
 mod error;
+mod limit_checker;
 mod spawner;
 mod sys;
 

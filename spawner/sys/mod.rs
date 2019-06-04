@@ -1,7 +1,5 @@
 use cfg_if::cfg_if;
 
-mod limit_checker;
-
 cfg_if! {
     if #[cfg(windows)] {
         mod windows;
