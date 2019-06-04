@@ -154,7 +154,8 @@ impl<'a> Driver<'a> {
                 total_processes_created: cmd.process_count,
                 active_processes: cmd.active_process_count,
                 active_network_connections: cmd.active_connection_count,
-            });
+            })
+            .wait_for_children(cmd.wait_for_children);
         match role {
             Role::Default => {}
             Role::Agent(agent_idx) => {

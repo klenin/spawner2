@@ -62,6 +62,7 @@ fn parse_basic_opts() {
     check_opt!(&["--controller"], controller, true);
     check_opt!(&["-j"], use_json, true);
     check_opt!(&["--json"], use_json, true);
+    check_opt!(&["--wait-for-children"], wait_for_children, true);
 }
 
 #[test]

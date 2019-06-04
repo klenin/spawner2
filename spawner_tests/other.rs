@@ -120,7 +120,17 @@ fn exclusive_read_2() {
 }
 
 #[test]
-fn wait_for_child_process() {
-    let r = run(&["--separator=@", "-d=1", APP, "exec_rest", APP, "loop", "2"]).unwrap();
+fn wait_for_children() {
+    let r = run(&[
+        "--separator=@",
+        "--wait-for-children",
+        "-d=1",
+        APP,
+        "exec_rest",
+        APP,
+        "loop",
+        "2",
+    ])
+    .unwrap();
     ensure_wall_clock_time_limit_exceeded(&r[0]);
 }

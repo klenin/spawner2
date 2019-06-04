@@ -6,6 +6,7 @@ use spawner_driver::run;
 #[test]
 fn total_user_time() {
     let r = run(&[
+        "--wait-for-children",
         APP,
         "loop",
         "1.0",
@@ -25,6 +26,7 @@ fn total_user_time() {
 #[test]
 fn total_idle_time() {
     let r = run(&[
+        "--wait-for-children",
         APP,
         "sleep",
         "1.0",
@@ -45,6 +47,7 @@ fn total_idle_time() {
 #[test]
 fn total_processes_created() {
     let r = run(&[
+        "--wait-for-children",
         APP,
         "sleep",
         "0.1",
@@ -73,6 +76,7 @@ fn total_processes_created() {
 #[test]
 fn total_bytes_written_1() {
     let r = run(&[
+        "--wait-for-children",
         APP,
         "A",
         "exec_rest",
@@ -99,6 +103,7 @@ fn total_bytes_written_2() {
     let f1 = tmp.file("1.txt");
     let f2 = tmp.file("2.txt");
     let r = run(&[
+        "--wait-for-children",
         APP,
         "fwrite",
         &f1,
@@ -117,6 +122,7 @@ fn total_bytes_written_2() {
 #[test]
 fn memory_usage() {
     let r = run(&[
+        "--wait-for-children",
         APP,
         "alloc",
         "8",

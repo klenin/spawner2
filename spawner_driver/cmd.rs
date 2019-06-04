@@ -295,6 +295,12 @@ pub struct Command {
     )]
     pub use_json: bool,
 
+    #[flag(
+        name = "--wait-for-children",
+        desc = "Wait for all child processes to exit"
+    )]
+    pub wait_for_children: bool,
+
     pub argv: Vec<String>,
 }
 
@@ -331,6 +337,7 @@ impl Default for Command {
             controller: false,
             shared_memory: None,
             use_json: false,
+            wait_for_children: false,
             argv: Vec::new(),
         }
     }
