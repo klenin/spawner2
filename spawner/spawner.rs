@@ -1,15 +1,15 @@
 use crate::io::{IoGraph, IoStreams, Istream, IstreamId, Ostream, OstreamId, StdioMapping};
 use crate::pipe::{ReadPipe, WritePipe};
 use crate::process::{
-    self, ExitStatus, Group, GroupRestrictions, Process, ProcessInfo, ResourceUsage,
+    self, ExitStatus, Group, GroupIo, GroupMemory, GroupNetwork, GroupPidCounters, GroupTimers,
+    ProcessInfo,
 };
-use crate::rwhub::{Connection, ReadHub, WriteHub};
+use crate::runner::{RunnerData, RunnerMessage, RunnerThread};
+use crate::rwhub::{ReadHub, ReaderThread, WriteHub};
 use crate::{Error, Result};
 
 use std::fmt;
-use std::io::Read;
-use std::sync::mpsc::{channel, Receiver, Sender};
-use std::thread::{self, JoinHandle};
+use std::sync::mpsc::{channel, Sender};
 use std::time::Duration;
 
 /// An action that is performed when the process terminates.
@@ -17,283 +17,141 @@ pub trait OnTerminate: Send {
     fn on_terminate(&mut self);
 }
 
-/// An action that is performed when [`Spawner`] reads from stdout or stderr.
-///
-/// [`Spawner`]: struct.Spawner.html
-pub trait OnRead: Send {
-    fn on_read(&mut self, data: &[u8], connections: &mut [Connection]) -> Result<()>;
+/// Describes the termination reason for a process.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum TerminationReason {
+    WallClockTimeLimitExceeded,
+    IdleTimeLimitExceeded,
+    UserTimeLimitExceeded,
+    WriteLimitExceeded,
+    MemoryLimitExceeded,
+    ProcessLimitExceeded,
+    ActiveProcessLimitExceeded,
+    ActiveNetworkConnectionLimitExceeded,
+    TerminatedByRunner,
 }
 
-/// Describes the termination reason for a process.
-#[derive(Clone, Debug, PartialEq)]
-pub enum TerminationReason {
-    LimitViolation(process::LimitViolation),
-    /// Process was terminated by [`Runner`].
-    ///
-    /// [`Runner`]: struct.Runner.html
-    ManuallyTerminated,
+#[derive(Copy, Clone, Debug)]
+pub struct IdleTimeLimit {
+    pub total_idle_time: Duration,
+    pub cpu_load_threshold: f64,
+}
+
+/// The limits that are imposed on a process group.
+#[derive(Copy, Clone, Debug)]
+pub struct ResourceLimits {
+    pub idle_time: Option<IdleTimeLimit>,
+    /// The maximum allowed amount of time for a process group.
+    pub wall_clock_time: Option<Duration>,
+    /// The maximum allowed amount of user-mode execution time for a process group.
+    pub total_user_time: Option<Duration>,
+    /// The maximum allowed memory usage, in bytes.
+    pub max_memory_usage: Option<u64>,
+    /// The maximum allowed amount of bytes written by a process group.
+    pub total_bytes_written: Option<u64>,
+    /// The maximum allowed number of processes created.
+    pub total_processes_created: Option<usize>,
+    /// The maximum allowed number of active processes.
+    pub active_processes: Option<usize>,
+    /// The maximum allowed number of active network connections.
+    pub active_network_connections: Option<usize>,
 }
 
 /// Summary information about process's execution.
 #[derive(Clone, Debug)]
 pub struct Report {
-    pub resource_usage: ResourceUsage,
+    pub wall_clock_time: Duration,
+    pub memory: Option<GroupMemory>,
+    pub io: Option<GroupIo>,
+    pub timers: Option<GroupTimers>,
+    pub pid_counters: Option<GroupPidCounters>,
+    pub network: Option<GroupNetwork>,
     pub exit_status: ExitStatus,
     pub termination_reason: Option<TerminationReason>,
 }
 
-/// Describes the set of actions performed by [`Spawner`].
-///
-/// [`Spawner`]: struct.Spawner.html
-pub struct Actions {
-    on_terminate: Option<Box<OnTerminate>>,
-    on_stdout_read: Option<Box<OnRead>>,
-    on_stderr_read: Option<Box<OnRead>>,
-}
-
-struct ReaderThread(JoinHandle<Result<ReadPipe>>);
-
-pub struct Router {
-    readers: Vec<ReaderThread>,
-    _writers: Vec<WriteHub>,
-}
-
-struct RunnerThread(JoinHandle<Result<Report>>);
-
-enum Message {
-    Terminate,
-    Suspend,
-    Resume,
-    ResetTimeUsage,
-}
-
 #[derive(Clone)]
-pub struct Runner(Sender<Message>);
+pub struct Runner(Sender<RunnerMessage>);
 
 #[derive(Debug)]
 pub struct SpawnerErrors(Vec<Error>);
 
 pub type SpawnerResult = std::result::Result<Report, SpawnerErrors>;
 
-pub struct Spawner {
+pub struct SpawnedProgram {
+    info: ProcessInfo,
+    group: Option<Group>,
+    stdio: Option<StdioMapping>,
+    resource_limits: Option<ResourceLimits>,
+    monitor_interval: Duration,
+    on_terminate: Option<Box<OnTerminate>>,
+    wait_for_children: bool,
+}
+
+struct Stdio {
+    stdin_r: ReadPipe,
+    stdin_w: Option<WriteHub>,
+    stdout_r: Option<ReadHub>,
+    stdout_w: WritePipe,
+    stderr_r: Option<ReadHub>,
+    stderr_w: WritePipe,
+}
+
+struct Program {
     runner: Runner,
     monitoring_thread: RunnerThread,
     stdout_reader: Option<ReaderThread>,
     stderr_reader: Option<ReaderThread>,
 }
 
-pub struct Builder {
-    info: ProcessInfo,
-    restrictions: GroupRestrictions,
-    monitor_interval: Duration,
-    actions: Actions,
+pub struct Spawner {
+    programs: Vec<Program>,
+    other_readers: Vec<ReaderThread>,
+    other_writers: Vec<WriteHub>,
 }
 
-impl Actions {
-    pub fn new() -> Self {
+impl Default for ResourceLimits {
+    fn default() -> Self {
         Self {
-            on_terminate: None,
-            on_stdout_read: None,
-            on_stderr_read: None,
-        }
-    }
-
-    pub fn on_terminate<T>(mut self, on_terminate: T) -> Self
-    where
-        T: OnTerminate + 'static,
-    {
-        self.on_terminate = Some(Box::new(on_terminate));
-        self
-    }
-
-    pub fn on_stdout_read<T>(mut self, on_read: T) -> Self
-    where
-        T: OnRead + 'static,
-    {
-        self.on_stdout_read = Some(Box::new(on_read));
-        self
-    }
-
-    pub fn on_stderr_read<T>(mut self, on_read: T) -> Self
-    where
-        T: OnRead + 'static,
-    {
-        self.on_stderr_read = Some(Box::new(on_read));
-        self
-    }
-}
-
-impl ReaderThread {
-    fn spawn(mut rh: ReadHub, mut on_read: Option<Box<OnRead>>) -> Self {
-        Self(thread::spawn(move || {
-            let mut buffer: Vec<u8> = Vec::new();
-            buffer.resize(8192, 0);
-
-            loop {
-                let bytes_read = match rh.read(buffer.as_mut_slice()) {
-                    Ok(x) => x,
-                    Err(_) => break,
-                };
-                if bytes_read == 0 {
-                    break;
-                }
-
-                let data = &buffer[..bytes_read];
-                match on_read {
-                    Some(ref mut handler) => handler.on_read(data, rh.connections_mut())?,
-                    None => rh.transmit(data),
-                }
-
-                if rh.connections().iter().all(Connection::is_dead) {
-                    break;
-                }
-            }
-            Ok(rh.into_inner())
-        }))
-    }
-
-    fn join(self) -> Result<ReadPipe> {
-        self.0
-            .join()
-            .unwrap_or(Err(Error::from("ReaderThread panicked")))
-    }
-}
-
-impl Router {
-    pub fn from_iostreams(iostreams: &mut IoStreams) -> Self {
-        let readers = iostreams
-            .take_remaining_istreams()
-            .map(|(_, stream)| ReaderThread::spawn(stream.dst, None))
-            .collect();
-        let writers = iostreams
-            .take_remaining_ostreams()
-            .map(|(_, stream)| stream.src)
-            .collect();
-        Self {
-            readers: readers,
-            _writers: writers,
-        }
-    }
-
-    pub fn wait(self) {
-        for reader in self.readers.into_iter() {
-            let _ = reader.join();
-        }
-    }
-}
-
-impl RunnerThread {
-    fn spawn(
-        info: ProcessInfo,
-        stdio: process::Stdio,
-        restrictions: GroupRestrictions,
-        monitor_interval: Duration,
-        on_terminate: Option<Box<OnTerminate>>,
-        receiver: Receiver<Message>,
-    ) -> Self {
-        Self(thread::spawn(move || {
-            let mut group = Group::with_restrictions(restrictions)?;
-            let mut process = group.spawn(info, stdio)?;
-            let result =
-                RunnerThread::monitor_process(&mut process, &mut group, monitor_interval, receiver);
-            let _ = group.terminate();
-            if let Some(mut handler) = on_terminate {
-                handler.on_terminate();
-            }
-            result
-        }))
-    }
-
-    fn join(self) -> Result<Report> {
-        self.0
-            .join()
-            .unwrap_or(Err(Error::from("RunnerThread panicked")))
-    }
-
-    fn monitor_process(
-        process: &mut Process,
-        group: &mut Group,
-        monitor_interval: Duration,
-        receiver: Receiver<Message>,
-    ) -> Result<Report> {
-        let mut term_reason = None;
-        let mut exited = false;
-        loop {
-            if let Some(exit_status) = process.exit_status()? {
-                exited = true;
-                let res_usage = group.resource_usage()?;
-                if res_usage.active_processes == 0 {
-                    return Ok(Report {
-                        resource_usage: res_usage,
-                        exit_status: exit_status,
-                        termination_reason: term_reason.or_else(|| {
-                            group
-                                .check_limits()
-                                .unwrap_or(None)
-                                .map(TerminationReason::LimitViolation)
-                        }),
-                    });
-                }
-            }
-
-            if let Some(lv) = group.check_limits()? {
-                group.terminate()?;
-                term_reason = Some(TerminationReason::LimitViolation(lv));
-            }
-
-            if let Ok(msg) = receiver.try_recv() {
-                match msg {
-                    Message::Terminate => {
-                        group.terminate()?;
-                        term_reason = Some(TerminationReason::ManuallyTerminated);
-                    }
-                    Message::Suspend => {
-                        if !exited {
-                            process.suspend()?;
-                        }
-                    }
-                    Message::Resume => {
-                        if !exited {
-                            process.resume()?;
-                        }
-                    }
-                    Message::ResetTimeUsage => group.reset_time_usage()?,
-                }
-            }
-
-            thread::sleep(monitor_interval);
+            wall_clock_time: None,
+            idle_time: None,
+            total_user_time: None,
+            max_memory_usage: None,
+            total_bytes_written: None,
+            total_processes_created: None,
+            active_processes: None,
+            active_network_connections: None,
         }
     }
 }
 
 impl Runner {
-    fn send(&self, m: Message) {
+    fn send(&self, m: RunnerMessage) {
         let _ = self.0.send(m);
     }
 
-    /// Sends message to a runner thread that will terminate process group.
-    /// This method will do nothing if a runner thread has exited.
     pub fn terminate(&self) {
-        self.send(Message::Terminate)
+        self.send(RunnerMessage::Terminate)
     }
 
-    /// Sends message to a runner thread that will suspend the main thread of a running process.
-    /// This method will do nothing if a runner thread has exited.
     pub fn suspend(&self) {
-        self.send(Message::Suspend)
+        self.send(RunnerMessage::Suspend)
     }
 
-    /// Sends message to a runner thread that will resume the main thread of a running process.
-    /// This method will do nothing if a runner thread has exited.
     pub fn resume(&self) {
-        self.send(Message::Resume)
+        self.send(RunnerMessage::Resume)
     }
 
-    /// Sends message to a runner thread that will reset wall clock,
-    /// user and idle time usage of a process group.
-    /// This method will do nothing if a runner thread has exited.
-    pub fn reset_time_usage(&self) {
-        self.send(Message::ResetTimeUsage)
+    pub fn reset_wallclock_and_user_time(&self) {
+        self.send(RunnerMessage::ResetWallclockAndUserTime)
+    }
+
+    pub fn stop_time_accounting(&self) {
+        self.send(RunnerMessage::StopTimeAccounting)
+    }
+
+    pub fn resume_time_accounting(&self) {
+        self.send(RunnerMessage::ResumeTimeAccounting)
     }
 }
 
@@ -318,51 +176,160 @@ impl fmt::Display for SpawnerErrors {
     }
 }
 
+impl SpawnedProgram {
+    pub fn new(info: ProcessInfo) -> Self {
+        Self {
+            info: info,
+            group: None,
+            stdio: None,
+            resource_limits: None,
+            monitor_interval: Duration::from_millis(1),
+            on_terminate: None,
+            wait_for_children: false,
+        }
+    }
+
+    pub fn group(&mut self, group: Group) -> &mut Self {
+        self.group = Some(group);
+        self
+    }
+
+    pub fn resource_limits(&mut self, resource_limits: ResourceLimits) -> &mut Self {
+        self.resource_limits = Some(resource_limits);
+        self
+    }
+
+    pub fn monitor_interval(&mut self, monitor_interval: Duration) -> &mut Self {
+        self.monitor_interval = monitor_interval;
+        self
+    }
+
+    pub fn on_terminate<T>(&mut self, on_terminate: T) -> &mut Self
+    where
+        T: OnTerminate + 'static,
+    {
+        self.on_terminate = Some(Box::new(on_terminate));
+        self
+    }
+
+    pub fn stdio(&mut self, stdio: StdioMapping) -> &mut Self {
+        self.stdio = Some(stdio);
+        self
+    }
+
+    pub fn wait_for_children(&mut self, wait: bool) -> &mut Self {
+        self.wait_for_children = wait;
+        self
+    }
+}
+
 impl Spawner {
-    pub fn spawn(
-        info: ProcessInfo,
-        io_streams: &mut IoStreams,
-        stdio_mapping: StdioMapping,
-        restrictions: GroupRestrictions,
-        monitor_interval: Duration,
-        actions: Actions,
-    ) -> Result<Self> {
-        let stdio = io_streams.take_stdio(stdio_mapping);
-        let graph = io_streams.graph();
-        let (sender, receiver) = channel();
+    pub fn spawn<I>(programs: I, mut iostreams: IoStreams) -> Result<Self>
+    where
+        I: IntoIterator<Item = SpawnedProgram>,
+    {
+        let mut active_programs = Vec::new();
+        for p in programs.into_iter() {
+            match Program::spawn(p, &mut iostreams) {
+                Ok(p) => active_programs.push(p),
+                Err(e) => {
+                    for p in active_programs.iter() {
+                        p.runner.terminate();
+                    }
+                    return Err(e);
+                }
+            }
+        }
 
-        let (stdin_r, _stdin_w) = ostream_endings(graph, stdio.stdin, stdio_mapping.stdin)?;
-        let (stdout_w, stdout_r) = istream_endings(graph, stdio.stdout, stdio_mapping.stdout)?;
-        let (stderr_w, stderr_r) = istream_endings(graph, stdio.stderr, stdio_mapping.stderr)?;
-
-        let on_terminate = actions.on_terminate;
-        let on_stdout_read = actions.on_stdout_read;
-        let on_stderr_read = actions.on_stderr_read;
+        let other_readers = iostreams
+            .take_remaining_istreams()
+            .map(|(_, stream)| stream.dst.start_reading())
+            .collect();
+        let other_writers = iostreams
+            .take_remaining_ostreams()
+            .map(|(_, stream)| stream.src)
+            .collect();
 
         Ok(Self {
-            runner: Runner(sender),
-            monitoring_thread: RunnerThread::spawn(
-                info,
-                process::Stdio {
-                    stdin: stdin_r,
-                    stdout: stdout_w,
-                    stderr: stderr_w,
-                },
-                restrictions,
-                monitor_interval,
-                on_terminate,
-                receiver,
-            ),
-            stdout_reader: stdout_r.map(|rh| ReaderThread::spawn(rh, on_stdout_read)),
-            stderr_reader: stderr_r.map(|rh| ReaderThread::spawn(rh, on_stderr_read)),
+            programs: active_programs,
+            other_readers: other_readers,
+            other_writers: other_writers,
         })
     }
 
-    pub fn runner(&self) -> Runner {
-        self.runner.clone()
+    pub fn runners<'a>(&'a self) -> impl Iterator<Item = Runner> + 'a {
+        self.programs.iter().map(|p| p.runner.clone())
     }
 
-    pub fn wait(self) -> SpawnerResult {
+    pub fn wait(self) -> Vec<SpawnerResult> {
+        let result = self.programs.into_iter().map(Program::wait).collect();
+        for reader in self.other_readers.into_iter() {
+            let _ = reader.join();
+        }
+        drop(self.other_writers);
+        result
+    }
+}
+
+impl Stdio {
+    fn from_iostreams(iostreams: &mut IoStreams, mapping: StdioMapping) -> Result<Self> {
+        let stdio = iostreams.take_stdio(mapping);
+        let graph = iostreams.graph();
+        let (stdin_r, stdin_w) = ostream_endings(graph, stdio.stdin, mapping.stdin)?;
+        let (stdout_w, stdout_r) = istream_endings(graph, stdio.stdout, mapping.stdout)?;
+        let (stderr_w, stderr_r) = istream_endings(graph, stdio.stderr, mapping.stderr)?;
+        Ok(Self {
+            stdin_r: stdin_r,
+            stdin_w: stdin_w,
+            stdout_r: stdout_r,
+            stdout_w: stdout_w,
+            stderr_r: stderr_r,
+            stderr_w: stderr_w,
+        })
+    }
+}
+
+impl Program {
+    fn spawn(p: SpawnedProgram, iostreams: &mut IoStreams) -> Result<Self> {
+        let (sender, receiver) = channel();
+        let stdio = match p.stdio {
+            Some(stdio) => Stdio::from_iostreams(iostreams, stdio)?,
+            None => Stdio {
+                stdin_r: ReadPipe::null()?,
+                stdin_w: None,
+                stdout_r: None,
+                stdout_w: WritePipe::null()?,
+                stderr_r: None,
+                stderr_w: WritePipe::null()?,
+            },
+        };
+        drop(stdio.stdin_w);
+
+        Ok(Self {
+            runner: Runner(sender),
+            monitoring_thread: RunnerThread::spawn(RunnerData {
+                info: p.info,
+                stdio: process::Stdio {
+                    stdin: stdio.stdin_r,
+                    stdout: stdio.stdout_w,
+                    stderr: stdio.stderr_w,
+                },
+                group: match p.group {
+                    Some(group) => group,
+                    None => Group::new()?,
+                },
+                limits: p.resource_limits.unwrap_or_default(),
+                monitor_interval: p.monitor_interval,
+                on_terminate: p.on_terminate,
+                receiver: receiver,
+                wait_for_children: p.wait_for_children,
+            }),
+            stdout_reader: stdio.stdout_r.map(ReadHub::start_reading),
+            stderr_reader: stdio.stderr_r.map(ReadHub::start_reading),
+        })
+    }
+
+    fn wait(self) -> SpawnerResult {
         let mut errors = SpawnerErrors(
             std::iter::once(self.stdout_reader)
                 .chain(Some(self.stderr_reader))
@@ -385,43 +352,6 @@ impl Spawner {
                 Err(errors)
             }
         }
-    }
-}
-
-impl Builder {
-    pub fn new(info: ProcessInfo) -> Self {
-        Self {
-            info: info,
-            restrictions: GroupRestrictions::new(),
-            monitor_interval: Duration::from_millis(1),
-            actions: Actions::new(),
-        }
-    }
-
-    pub fn group_restrictions(&mut self, gr: GroupRestrictions) -> &mut Self {
-        self.restrictions = gr;
-        self
-    }
-
-    pub fn monitor_interval(&mut self, mi: Duration) -> &mut Self {
-        self.monitor_interval = mi;
-        self
-    }
-
-    pub fn actions(&mut self, actions: Actions) -> &mut Self {
-        self.actions = actions;
-        self
-    }
-
-    pub fn build(self, io_streams: &mut IoStreams, stdio_mapping: StdioMapping) -> Result<Spawner> {
-        Spawner::spawn(
-            self.info,
-            io_streams,
-            stdio_mapping,
-            self.restrictions,
-            self.monitor_interval,
-            self.actions,
-        )
     }
 }
 

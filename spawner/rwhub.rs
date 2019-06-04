@@ -1,7 +1,15 @@
 use crate::pipe::{ReadPipe, WritePipe};
+use crate::{Error, Result};
 
 use std::io::{self, BufWriter, Read, Write};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::thread::{self, JoinHandle};
+
+pub trait OnRead: Send {
+    fn on_read(&mut self, data: &[u8], connections: &mut [Connection]) -> Result<()>;
+}
+
+pub struct ReaderThread(JoinHandle<Result<ReadPipe>>);
 
 /// Splits the [`ReadPipe`] allowing multiple readers to receive data from it.
 ///
@@ -9,6 +17,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 pub struct ReadHub {
     pipe: ReadPipe,
     connections: Vec<Connection>,
+    on_read: Option<Box<OnRead>>,
 }
 
 /// Represents connection between [`ReadHub`] and [`WriteHub`].
@@ -31,12 +40,28 @@ enum WriteHubDst {
 #[derive(Clone)]
 pub struct WriteHub(Arc<Mutex<WriteHubDst>>);
 
+impl ReaderThread {
+    pub fn join(self) -> Result<ReadPipe> {
+        self.0
+            .join()
+            .unwrap_or(Err(Error::from("ReaderThread panicked")))
+    }
+}
+
 impl ReadHub {
     pub fn new(pipe: ReadPipe) -> Self {
         Self {
             pipe: pipe,
             connections: Vec::new(),
+            on_read: None,
         }
+    }
+
+    pub fn set_on_read<T>(&mut self, on_read: T)
+    where
+        T: OnRead + 'static,
+    {
+        self.on_read = Some(Box::new(on_read));
     }
 
     pub fn connect(&mut self, wh: &WriteHub) {
@@ -46,22 +71,40 @@ impl ReadHub {
         });
     }
 
-    pub fn connections(&self) -> &[Connection] {
-        &self.connections
+    pub fn start_reading(mut self) -> ReaderThread {
+        ReaderThread(thread::spawn(move || {
+            let mut buffer: Vec<u8> = Vec::new();
+            buffer.resize(8192, 0);
+
+            loop {
+                let bytes_read = match self.read(buffer.as_mut_slice()) {
+                    Ok(x) => x,
+                    Err(_) => break,
+                };
+                if bytes_read == 0 {
+                    break;
+                }
+
+                self.transmit(&buffer[..bytes_read])?;
+                if self.connections.iter().all(Connection::is_dead) {
+                    break;
+                }
+            }
+            Ok(self.pipe)
+        }))
     }
 
-    pub fn connections_mut(&mut self) -> &mut [Connection] {
-        &mut self.connections
-    }
-
-    pub fn transmit(&mut self, data: &[u8]) {
-        for c in self.connections.iter_mut() {
-            c.send(data);
+    fn transmit(&mut self, data: &[u8]) -> Result<()> {
+        let connections = &mut self.connections;
+        match self.on_read {
+            Some(ref mut handler) => handler.on_read(data, connections),
+            None => {
+                for c in connections {
+                    c.send(data);
+                }
+                Ok(())
+            }
         }
-    }
-
-    pub fn into_inner(self) -> ReadPipe {
-        self.pipe
     }
 }
 
