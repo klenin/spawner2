@@ -5,9 +5,7 @@ use crate::protocol::{
     ControllerStdout, ControllerTermination,
 };
 
-use spawner::io::{
-    IoBuilder, IoStreams, IstreamDst, IstreamId, OstreamId, OstreamSrc, StdioMapping,
-};
+use spawner::io::{IoStreams, IstreamDst, IstreamId, OstreamId, OstreamSrc, StdioMapping};
 use spawner::pipe::{self, ReadPipe, WritePipe};
 use spawner::process::{GroupRestrictions, ProcessInfo, ResourceLimits};
 use spawner::{self, Actions, Error, Result, Router, Spawner, SpawnerResult};
@@ -41,7 +39,7 @@ enum Role {
 
 struct DriverIo {
     controller_idx: Option<usize>,
-    builder: IoBuilder,
+    io_streams: IoStreams,
     mappings: Vec<StdioMapping>,
     output_files: HashMap<PathBuf, OstreamId>,
     warnings: Warnings,
@@ -310,13 +308,13 @@ impl Role {
 
 impl DriverIo {
     fn from_cmds(cmds: &Vec<Command>) -> Result<Self> {
-        let mut builder = IoBuilder::new();
+        let mut io_streams = IoStreams::new();
         let mappings = cmds
             .iter()
-            .map(|_| builder.add_stdio())
+            .map(|_| io_streams.add_stdio())
             .collect::<Result<_>>()?;
         let mut driver_io = Self {
-            builder: builder,
+            io_streams: io_streams,
             mappings: mappings,
             controller_idx: cmds.iter().position(|cmd| cmd.controller),
             output_files: HashMap::new(),
@@ -336,9 +334,10 @@ impl DriverIo {
         let (r, w) = pipe::create()?;
         if let Some(idx) = self.controller_idx {
             let stdin = self.mappings[idx].stdin;
-            self.builder.add_ostream_src(stdin, OstreamSrc::Pipe(r))?;
+            self.io_streams
+                .add_ostream_src(stdin, OstreamSrc::Pipe(r))?;
         }
-        Ok((self.builder.build(), self.mappings, ControllerStdin::new(w)))
+        Ok((self.io_streams, self.mappings, ControllerStdin::new(w)))
     }
 
     fn redirect_istream(&mut self, istream: IstreamId, redirect_list: &RedirectList) -> Result<()> {
@@ -355,7 +354,7 @@ impl DriverIo {
                 }
                 _ => continue,
             };
-            self.builder
+            self.io_streams
                 .add_istream_dst(istream, IstreamDst::Ostream(id))?;
         }
         Ok(())
@@ -371,7 +370,7 @@ impl DriverIo {
                 }
                 _ => continue,
             };
-            self.builder
+            self.io_streams
                 .add_ostream_src(ostream, OstreamSrc::Istream(id))?;
         }
         Ok(())
@@ -386,13 +385,13 @@ impl DriverIo {
             match self.exclusive_input_files.get(&path).map(|&id| id) {
                 Some(id) => Ok(id),
                 None => {
-                    let id = self.builder.add_file_istream(ReadPipe::lock(&path)?)?;
+                    let id = self.io_streams.add_file_istream(ReadPipe::lock(&path)?)?;
                     self.exclusive_input_files.insert(path, id);
                     Ok(id)
                 }
             }
         } else {
-            self.builder.add_file_istream(ReadPipe::open(path)?)
+            self.io_streams.add_file_istream(ReadPipe::open(path)?)
         }
     }
 
@@ -403,7 +402,7 @@ impl DriverIo {
                 .emit("Exclusive redirect works on windows only");
         }
         let path = canonicalize(path)?;
-        self.builder.add_file_istream(ReadPipe::open(path)?)
+        self.io_streams.add_file_istream(ReadPipe::open(path)?)
     }
 
     #[cfg(windows)]
@@ -419,7 +418,7 @@ impl DriverIo {
                 } else {
                     WritePipe::open(&path)?
                 };
-                let id = self.builder.add_file_ostream(pipe)?;
+                let id = self.io_streams.add_file_ostream(pipe)?;
                 self.output_files.insert(path, id);
                 Ok(id)
             }
@@ -436,7 +435,7 @@ impl DriverIo {
         match self.output_files.get(&path).map(|&id| id) {
             Some(id) => Ok(id),
             None => {
-                let id = self.builder.add_file_ostream(WritePipe::open(&path)?)?;
+                let id = self.io_streams.add_file_ostream(WritePipe::open(&path)?)?;
                 self.output_files.insert(path, id);
                 Ok(id)
             }

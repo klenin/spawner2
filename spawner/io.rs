@@ -1,5 +1,5 @@
 use crate::pipe::{self, ReadPipe, WritePipe};
-use crate::rwhub::{ReadHub, WriteHub};
+use crate::rwhub::{OnRead, ReadHub, WriteHub};
 use crate::Result;
 
 use std::collections::HashMap;
@@ -57,9 +57,140 @@ pub enum OstreamSrc {
     Istream(IstreamId),
 }
 
-pub struct IoBuilder(IoStreams);
-
 impl IoStreams {
+    pub fn new() -> Self {
+        Self {
+            istreams: HashMap::new(),
+            ostreams: HashMap::new(),
+            graph: IoGraph {
+                istream_edges: Vec::new(),
+                ostream_edges: Vec::new(),
+            },
+        }
+    }
+
+    pub fn add_istream(&mut self, pipe: Option<ReadPipe>) -> Result<IstreamId> {
+        let id = IstreamId(self.graph.istream_edges.len());
+        self.istreams.insert(
+            id,
+            match pipe {
+                Some(p) => Istream {
+                    src: None,
+                    dst: ReadHub::new(p),
+                },
+                None => {
+                    let (r, w) = pipe::create()?;
+                    Istream {
+                        src: Some(w),
+                        dst: ReadHub::new(r),
+                    }
+                }
+            },
+        );
+        self.graph.istream_edges.push(Vec::new());
+        Ok(id)
+    }
+
+    pub fn add_file_istream(&mut self, file: ReadPipe) -> Result<IstreamId> {
+        self.add_istream(Some(file))
+    }
+
+    pub fn add_istream_dst<D: Into<IstreamDst>>(
+        &mut self,
+        istream: IstreamId,
+        dst: D,
+    ) -> Result<()> {
+        let ostream = match dst.into() {
+            IstreamDst::Pipe(p) => self.add_ostream(Some(p))?,
+            IstreamDst::File(f) => self.add_file_ostream(f)?,
+            IstreamDst::Ostream(i) => i,
+        };
+
+        self.connect(istream, ostream);
+        Ok(())
+    }
+
+    pub fn add_ostream(&mut self, pipe: Option<WritePipe>) -> Result<OstreamId> {
+        let id = OstreamId(self.graph.ostream_edges.len());
+        self.ostreams.insert(
+            id,
+            match pipe {
+                Some(p) => Ostream {
+                    src: WriteHub::from_pipe(p),
+                    dst: None,
+                },
+                None => {
+                    let (r, w) = pipe::create()?;
+                    Ostream {
+                        src: WriteHub::from_pipe(w),
+                        dst: Some(r),
+                    }
+                }
+            },
+        );
+        self.graph.ostream_edges.push(Vec::new());
+        Ok(id)
+    }
+
+    pub fn add_file_ostream(&mut self, file: WritePipe) -> Result<OstreamId> {
+        let id = OstreamId(self.graph.ostream_edges.len());
+        self.ostreams.insert(
+            id,
+            Ostream {
+                src: WriteHub::from_file(file),
+                dst: None,
+            },
+        );
+        self.graph.ostream_edges.push(Vec::new());
+        Ok(id)
+    }
+
+    pub fn add_ostream_src<S: Into<OstreamSrc>>(
+        &mut self,
+        ostream: OstreamId,
+        src: S,
+    ) -> Result<()> {
+        let istream = match src.into() {
+            OstreamSrc::Pipe(p) => self.add_istream(Some(p))?,
+            OstreamSrc::File(f) => self.add_file_istream(f)?,
+            OstreamSrc::Istream(i) => i,
+        };
+        self.connect(istream, ostream);
+        Ok(())
+    }
+
+    pub fn add_stdio(&mut self) -> Result<StdioMapping> {
+        Ok(StdioMapping {
+            stdin: self.add_ostream(None)?,
+            stdout: self.add_istream(None)?,
+            stderr: self.add_istream(None)?,
+        })
+    }
+
+    pub fn connect(&mut self, istream_id: IstreamId, ostream_id: OstreamId) {
+        let istream = self.istreams.get_mut(&istream_id).unwrap();
+        let ostream = self.ostreams.get_mut(&ostream_id).unwrap();
+        if self
+            .graph
+            .istream_edges(istream_id)
+            .iter()
+            .any(|&id| id == ostream_id)
+        {
+            return;
+        }
+
+        istream.dst.connect(&ostream.src);
+        self.graph.istream_edges[istream_id.0].push(ostream_id);
+        self.graph.ostream_edges[ostream_id.0].push(istream_id);
+    }
+
+    pub fn set_on_read<T>(&mut self, id: IstreamId, on_read: T)
+    where
+        T: OnRead + 'static,
+    {
+        self.istreams.get_mut(&id).unwrap().dst.set_on_read(on_read)
+    }
+
     pub fn take_istream(&mut self, id: IstreamId) -> Istream {
         self.istreams.remove(&id).unwrap()
     }
@@ -100,138 +231,5 @@ impl IoGraph {
 
     pub fn ostream_edges(&self, id: OstreamId) -> &Vec<IstreamId> {
         &self.ostream_edges[id.0]
-    }
-}
-
-impl IoBuilder {
-    pub fn new() -> Self {
-        Self(IoStreams {
-            istreams: HashMap::new(),
-            ostreams: HashMap::new(),
-            graph: IoGraph {
-                istream_edges: Vec::new(),
-                ostream_edges: Vec::new(),
-            },
-        })
-    }
-
-    pub fn add_stdio(&mut self) -> Result<StdioMapping> {
-        Ok(StdioMapping {
-            stdin: self.add_ostream(None)?,
-            stdout: self.add_istream(None)?,
-            stderr: self.add_istream(None)?,
-        })
-    }
-
-    pub fn add_istream(&mut self, pipe: Option<ReadPipe>) -> Result<IstreamId> {
-        let id = IstreamId(self.0.istreams.len());
-        self.0.istreams.insert(
-            id,
-            match pipe {
-                Some(p) => Istream {
-                    src: None,
-                    dst: ReadHub::new(p),
-                },
-                None => {
-                    let (r, w) = pipe::create()?;
-                    Istream {
-                        src: Some(w),
-                        dst: ReadHub::new(r),
-                    }
-                }
-            },
-        );
-        self.0.graph.istream_edges.push(Vec::new());
-        Ok(id)
-    }
-
-    pub fn add_file_istream(&mut self, file: ReadPipe) -> Result<IstreamId> {
-        self.add_istream(Some(file))
-    }
-
-    pub fn add_istream_dst<D: Into<IstreamDst>>(
-        &mut self,
-        istream: IstreamId,
-        dst: D,
-    ) -> Result<()> {
-        let ostream = match dst.into() {
-            IstreamDst::Pipe(p) => self.add_ostream(Some(p))?,
-            IstreamDst::File(f) => self.add_file_ostream(f)?,
-            IstreamDst::Ostream(i) => i,
-        };
-
-        self.connect(istream, ostream);
-        Ok(())
-    }
-
-    pub fn add_ostream(&mut self, pipe: Option<WritePipe>) -> Result<OstreamId> {
-        let id = OstreamId(self.0.ostreams.len());
-        self.0.ostreams.insert(
-            id,
-            match pipe {
-                Some(p) => Ostream {
-                    src: WriteHub::from_pipe(p),
-                    dst: None,
-                },
-                None => {
-                    let (r, w) = pipe::create()?;
-                    Ostream {
-                        src: WriteHub::from_pipe(w),
-                        dst: Some(r),
-                    }
-                }
-            },
-        );
-        self.0.graph.ostream_edges.push(Vec::new());
-        Ok(id)
-    }
-
-    pub fn add_file_ostream(&mut self, file: WritePipe) -> Result<OstreamId> {
-        let id = OstreamId(self.0.ostreams.len());
-        self.0.ostreams.insert(
-            id,
-            Ostream {
-                src: WriteHub::from_file(file),
-                dst: None,
-            },
-        );
-        self.0.graph.ostream_edges.push(Vec::new());
-        Ok(id)
-    }
-
-    pub fn add_ostream_src<S: Into<OstreamSrc>>(
-        &mut self,
-        ostream: OstreamId,
-        src: S,
-    ) -> Result<()> {
-        let istream = match src.into() {
-            OstreamSrc::Pipe(p) => self.add_istream(Some(p))?,
-            OstreamSrc::File(f) => self.add_file_istream(f)?,
-            OstreamSrc::Istream(i) => i,
-        };
-        self.connect(istream, ostream);
-        Ok(())
-    }
-
-    pub fn connect(&mut self, istream_id: IstreamId, ostream_id: OstreamId) {
-        let istream = self.0.istreams.get_mut(&istream_id).unwrap();
-        let ostream = self.0.ostreams.get_mut(&ostream_id).unwrap();
-        if self
-            .0
-            .graph
-            .istream_edges(istream_id)
-            .iter()
-            .any(|&id| id == ostream_id)
-        {
-            return;
-        }
-
-        istream.dst.connect(&ostream.src);
-        self.0.graph.istream_edges[istream_id.0].push(ostream_id);
-        self.0.graph.ostream_edges[ostream_id.0].push(istream_id);
-    }
-
-    pub fn build(self) -> IoStreams {
-        self.0
     }
 }
