@@ -164,9 +164,6 @@ impl Report {
             "SpawnerError" => if self.spawner_error.is_empty() {
                 array!["<none>"]
             } else {
-                for e in self.spawner_error.iter() {
-                    println!("{}", e.call_stack());
-                }
                 self.spawner_error
                     .iter()
                     .map(|e| e.to_string().into())
