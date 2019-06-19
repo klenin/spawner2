@@ -76,7 +76,7 @@ pub struct Command {
     #[opt(
         name = "-y",
         env = "SP_IDLE_TIME_LIMIT",
-        desc = "Set the idle time limit for an executable (idle time = wall-clock time - user time)",
+        desc = "Set the idle time limit for an executable",
         value_desc = "<number>[unit]"
     )]
     pub idle_time_limit: Option<Duration>,
