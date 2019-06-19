@@ -32,7 +32,6 @@ pub struct RunnerThread(JoinHandle<Result<Report>>);
 struct ProcessMonitor {
     limit_checker: LimitChecker,
     process: Process,
-    process_exited: bool,
     creation_time: Instant,
     term_reason: Option<TerminationReason>,
     group: Group,
@@ -83,7 +82,6 @@ impl ProcessMonitor {
         Ok(Self {
             limit_checker: limit_checker,
             process: ps,
-            process_exited: false,
             creation_time: Instant::now(),
             term_reason: None,
             group: data.group,
@@ -114,7 +112,6 @@ impl ProcessMonitor {
             None => return Ok(None),
         };
 
-        self.process_exited = true;
         let pid_counters = self.group.pid_counters()?;
 
         if self.wait_for_children
@@ -148,12 +145,12 @@ impl ProcessMonitor {
                     self.term_reason = Some(TerminationReason::TerminatedByRunner);
                 }
                 RunnerMessage::Suspend => {
-                    if !self.process_exited {
+                    if self.process.exit_status()?.is_none() {
                         self.process.suspend()?;
                     }
                 }
                 RunnerMessage::Resume => {
-                    if !self.process_exited {
+                    if self.process.exit_status()?.is_none() {
                         self.process.resume()?;
                     }
                 }
