@@ -6,7 +6,8 @@ mod cmd;
 mod driver;
 mod io;
 mod misc;
-mod protocol;
+mod protocol_entities;
+mod protocol_handlers;
 mod report;
 mod value_parser;
 
