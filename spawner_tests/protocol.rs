@@ -71,6 +71,7 @@ fn agent_termination_message() {
 #[test]
 fn message_to_agent() {
     let tmp = TmpDir::new();
+    let stdout = tmp.file("stdout.txt");
     let stderr1 = tmp.file("stderr1.txt");
     let stderr2 = tmp.file("stderr2.txt");
 
@@ -79,6 +80,7 @@ fn message_to_agent() {
         "-d=1",
         "--@",
         "--controller",
+        format!("--out={}", stdout).as_str(),
         APP,
         "1W#\n2W#\n2#message\n",
         "--@",
@@ -93,6 +95,8 @@ fn message_to_agent() {
         "pipe_loop",
     ])
     .unwrap();
+
+    assert_eq!("1W#\n2W#\n2#message\n", read_all(stdout));
     assert_eq!("", read_all(stderr1));
     assert_eq!("message\n", read_all(stderr2));
 }
