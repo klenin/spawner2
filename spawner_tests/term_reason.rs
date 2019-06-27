@@ -156,7 +156,7 @@ fn abnormal_exit() {
 
 #[test]
 fn close_stdout_on_exit() {
-    // if stdout_writer does not close stdout on exit then the reader will hang on stdin().read(...).
+    // if stdout writer does not close stdout on exit then the reader will hang on stdin().read(...).
     let reports = run(&[
         "-d=1",
         "--separator=@",
