@@ -28,7 +28,7 @@ use spawner_opts::CmdLineOptions;
 
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self, Write};
+use std::io::Write;
 
 struct Commands(Vec<Command>);
 
@@ -77,14 +77,11 @@ impl Commands {
     }
 
     fn run(self) -> Result<Vec<Report>> {
-        let driver = Driver::from_cmds(&self.0)?;
-        for warning in driver.warnings().to_vec().iter() {
-            eprintln!("warning: {}", warning);
-        }
+        let driver = Driver::new(&self.0)?;
+        eprintln!("{}", driver.warnings());
 
         let reports = driver
-            .spawn()?
-            .wait()
+            .run()
             .into_iter()
             .zip(self.0.iter())
             .map(|(report, opts)| Report::new(opts, report))
@@ -98,7 +95,7 @@ impl Commands {
         Ok(reports)
     }
 
-    fn print_reports(&self, reports: &Vec<Report>) -> io::Result<()> {
+    fn print_reports(&self, reports: &Vec<Report>) -> std::io::Result<()> {
         let mut output_files: HashMap<&String, Vec<&Report>> = HashMap::new();
         for (i, cmd) in self.0.iter().enumerate() {
             if !cmd.hide_report && reports.len() == 1 {
