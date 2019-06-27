@@ -23,10 +23,9 @@ cfg_if! {
     }
 }
 
-pub mod io;
+pub mod dataflow;
 pub mod pipe;
 pub mod process;
-pub mod rwhub;
 
 mod error;
 mod limit_checker;
