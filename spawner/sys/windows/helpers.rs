@@ -47,6 +47,7 @@ use std::ptr;
 use std::slice;
 use std::u32;
 
+#[derive(Debug)]
 pub struct Handle(HANDLE);
 
 unsafe impl Send for Handle {}

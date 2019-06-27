@@ -9,12 +9,14 @@ use std::path::Path;
 ///
 /// [`create`]: fn.create.html
 /// [`ReadPipe::open`]: struct.ReadPipe.html#method.open
+#[derive(Debug)]
 pub struct ReadPipe(imp::ReadPipe);
 
 /// A reference to the writing end of a pipe or to the file opened in write mode.
 ///
 /// [`create`]: fn.create.html
 /// [`WritePipe::open`]: struct.WritePipe.html#method.open
+#[derive(Debug)]
 pub struct WritePipe(imp::WritePipe);
 
 /// Creates a new pipe returning the [`ReadPipe`] and [`WritePipe`] pair.

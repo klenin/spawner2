@@ -9,10 +9,13 @@ use std::io::{self, Read, Write};
 use std::os::unix::io::RawFd;
 use std::path::Path;
 
+#[derive(Debug)]
 pub struct PipeFd(RawFd);
 
+#[derive(Debug)]
 pub struct ReadPipe(PipeFd);
 
+#[derive(Debug)]
 pub struct WritePipe(PipeFd);
 
 pub fn create() -> Result<(ReadPipe, WritePipe)> {

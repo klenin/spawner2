@@ -17,8 +17,10 @@ use std::mem;
 use std::path::Path;
 use std::ptr;
 
+#[derive(Debug)]
 pub struct ReadPipe(Handle);
 
+#[derive(Debug)]
 pub struct WritePipe(Handle);
 
 pub fn create() -> Result<(ReadPipe, WritePipe)> {
