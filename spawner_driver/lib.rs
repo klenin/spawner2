@@ -4,6 +4,7 @@ extern crate spawner_opts;
 
 mod cmd;
 mod driver;
+mod io;
 mod misc;
 mod protocol;
 mod report;
