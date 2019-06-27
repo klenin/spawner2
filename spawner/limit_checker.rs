@@ -62,7 +62,7 @@ impl LimitChecker {
         self.time_accounting_stopped = false;
     }
 
-    pub fn reset_wallclock_and_user_time(&mut self) {
+    pub fn reset_time(&mut self) {
         self.wall_clock_time = Duration::from_millis(0);
         self.total_user_time = Duration::from_millis(0);
     }

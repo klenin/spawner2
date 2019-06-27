@@ -1,16 +1,14 @@
-use crate::io::{IoGraph, IoStreams, Istream, IstreamId, Ostream, OstreamId, StdioMapping};
+use crate::limit_checker::{EnabledOsLimits, LimitChecker};
 use crate::pipe::{ReadPipe, WritePipe};
 use crate::process::{
-    self, ExitStatus, Group, GroupIo, GroupMemory, GroupNetwork, GroupPidCounters, GroupTimers,
-    ProcessInfo,
+    ExitStatus, Group, GroupIo, GroupMemory, GroupNetwork, GroupPidCounters, GroupTimers, OsLimit,
+    Process, ProcessInfo, Stdio,
 };
-use crate::runner::{RunnerData, RunnerMessage, RunnerThread};
-use crate::rwhub::{ReadHub, ReaderThread, WriteHub};
 use crate::{Error, Result};
 
-use std::fmt;
-use std::sync::mpsc::{channel, Sender};
-use std::time::Duration;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 /// An action that is performed when the process terminates.
 pub trait OnTerminate: Send {
@@ -57,6 +55,15 @@ pub struct ResourceLimits {
     pub active_network_connections: Option<usize>,
 }
 
+pub enum RunnerMessage {
+    Terminate,
+    Suspend,
+    Resume,
+    StopTimeAccounting,
+    ResumeTimeAccounting,
+    ResetTime,
+}
+
 /// Summary information about process's execution.
 #[derive(Clone, Debug)]
 pub struct Report {
@@ -70,44 +77,36 @@ pub struct Report {
     pub termination_reason: Option<TerminationReason>,
 }
 
-#[derive(Clone)]
-pub struct Runner(Sender<RunnerMessage>);
-
-#[derive(Debug)]
-pub struct SpawnerErrors(Vec<Error>);
-
-pub type SpawnerResult = std::result::Result<Report, SpawnerErrors>;
+pub type MessageChannel = (Sender<RunnerMessage>, Receiver<RunnerMessage>);
 
 pub struct SpawnedProgram {
     info: ProcessInfo,
     group: Option<Group>,
-    stdio: Option<StdioMapping>,
+    stdio: Option<Stdio>,
     resource_limits: Option<ResourceLimits>,
     monitor_interval: Duration,
     on_terminate: Option<Box<OnTerminate>>,
     wait_for_children: bool,
+    msg_channel: MessageChannel,
 }
 
-struct Stdio {
-    stdin_r: ReadPipe,
-    stdin_w: Option<WriteHub>,
-    stdout_r: Option<ReadHub>,
-    stdout_w: WritePipe,
-    stderr_r: Option<ReadHub>,
-    stderr_w: WritePipe,
+pub struct Runner {
+    sender: Sender<RunnerMessage>,
+    handle: JoinHandle<Result<Report>>,
 }
 
-struct Program {
-    runner: Runner,
-    monitoring_thread: RunnerThread,
-    stdout_reader: Option<ReaderThread>,
-    stderr_reader: Option<ReaderThread>,
-}
+pub struct Spawner(Vec<Runner>);
 
-pub struct Spawner {
-    programs: Vec<Program>,
-    other_readers: Vec<ReaderThread>,
-    other_writers: Vec<WriteHub>,
+struct ProcessMonitor {
+    limit_checker: LimitChecker,
+    process: Process,
+    creation_time: Instant,
+    term_reason: Option<TerminationReason>,
+    group: Group,
+    msg_receiver: Receiver<RunnerMessage>,
+    monitor_interval: Duration,
+    wait_for_children: bool,
+    on_terminate: Option<Box<OnTerminate>>,
 }
 
 impl Default for ResourceLimits {
@@ -125,57 +124,6 @@ impl Default for ResourceLimits {
     }
 }
 
-impl Runner {
-    fn send(&self, m: RunnerMessage) {
-        let _ = self.0.send(m);
-    }
-
-    pub fn terminate(&self) {
-        self.send(RunnerMessage::Terminate)
-    }
-
-    pub fn suspend(&self) {
-        self.send(RunnerMessage::Suspend)
-    }
-
-    pub fn resume(&self) {
-        self.send(RunnerMessage::Resume)
-    }
-
-    pub fn reset_wallclock_and_user_time(&self) {
-        self.send(RunnerMessage::ResetWallclockAndUserTime)
-    }
-
-    pub fn stop_time_accounting(&self) {
-        self.send(RunnerMessage::StopTimeAccounting)
-    }
-
-    pub fn resume_time_accounting(&self) {
-        self.send(RunnerMessage::ResumeTimeAccounting)
-    }
-}
-
-impl SpawnerErrors {
-    pub fn iter<'a>(&'a self) -> impl Iterator<Item = &'a Error> + 'a {
-        self.0.iter()
-    }
-
-    pub fn into_inner(self) -> Vec<Error> {
-        self.0
-    }
-}
-
-impl std::error::Error for SpawnerErrors {}
-
-impl fmt::Display for SpawnerErrors {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for e in self.iter() {
-            writeln!(f, "{}", e)?;
-        }
-        Ok(())
-    }
-}
-
 impl SpawnedProgram {
     pub fn new(info: ProcessInfo) -> Self {
         Self {
@@ -186,6 +134,7 @@ impl SpawnedProgram {
             monitor_interval: Duration::from_millis(1),
             on_terminate: None,
             wait_for_children: false,
+            msg_channel: channel(),
         }
     }
 
@@ -212,7 +161,7 @@ impl SpawnedProgram {
         self
     }
 
-    pub fn stdio(&mut self, stdio: StdioMapping) -> &mut Self {
+    pub fn stdio(&mut self, stdio: Stdio) -> &mut Self {
         self.stdio = Some(stdio);
         self
     }
@@ -221,160 +170,182 @@ impl SpawnedProgram {
         self.wait_for_children = wait;
         self
     }
+
+    pub fn msg_channel(&mut self, channel: MessageChannel) -> &mut Self {
+        self.msg_channel = channel;
+        self
+    }
+}
+
+impl Runner {
+    pub fn sender(&self) -> &Sender<RunnerMessage> {
+        &self.sender
+    }
 }
 
 impl Spawner {
-    pub fn spawn<I>(programs: I, mut iostreams: IoStreams) -> Result<Self>
+    pub fn spawn<I>(programs: I) -> Self
     where
         I: IntoIterator<Item = SpawnedProgram>,
     {
-        let mut active_programs = Vec::new();
-        for p in programs.into_iter() {
-            match Program::spawn(p, &mut iostreams) {
-                Ok(p) => active_programs.push(p),
-                Err(e) => {
-                    for p in active_programs.iter() {
-                        p.runner.terminate();
-                    }
-                    return Err(e);
-                }
-            }
-        }
-
-        let other_readers = iostreams
-            .take_remaining_istreams()
-            .map(|(_, stream)| stream.dst.start_reading())
-            .collect();
-        let other_writers = iostreams
-            .take_remaining_ostreams()
-            .map(|(_, stream)| stream.src)
-            .collect();
-
-        Ok(Self {
-            programs: active_programs,
-            other_readers: other_readers,
-            other_writers: other_writers,
-        })
-    }
-
-    pub fn runners<'a>(&'a self) -> impl Iterator<Item = Runner> + 'a {
-        self.programs.iter().map(|p| p.runner.clone())
-    }
-
-    pub fn wait(self) -> Vec<SpawnerResult> {
-        let result = self.programs.into_iter().map(Program::wait).collect();
-        for reader in self.other_readers.into_iter() {
-            let _ = reader.join();
-        }
-        drop(self.other_writers);
-        result
-    }
-}
-
-impl Stdio {
-    fn from_iostreams(iostreams: &mut IoStreams, mapping: StdioMapping) -> Result<Self> {
-        let stdio = iostreams.take_stdio(mapping);
-        let graph = iostreams.graph();
-        let (stdin_r, stdin_w) = ostream_endings(graph, stdio.stdin, mapping.stdin)?;
-        let (stdout_w, stdout_r) = istream_endings(graph, stdio.stdout, mapping.stdout)?;
-        let (stderr_w, stderr_r) = istream_endings(graph, stdio.stderr, mapping.stderr)?;
-        Ok(Self {
-            stdin_r: stdin_r,
-            stdin_w: stdin_w,
-            stdout_r: stdout_r,
-            stdout_w: stdout_w,
-            stderr_r: stderr_r,
-            stderr_w: stderr_w,
-        })
-    }
-}
-
-impl Program {
-    fn spawn(p: SpawnedProgram, iostreams: &mut IoStreams) -> Result<Self> {
-        let (sender, receiver) = channel();
-        let stdio = match p.stdio {
-            Some(stdio) => Stdio::from_iostreams(iostreams, stdio)?,
-            None => Stdio {
-                stdin_r: ReadPipe::null()?,
-                stdin_w: None,
-                stdout_r: None,
-                stdout_w: WritePipe::null()?,
-                stderr_r: None,
-                stderr_w: WritePipe::null()?,
-            },
-        };
-        drop(stdio.stdin_w);
-
-        Ok(Self {
-            runner: Runner(sender),
-            monitoring_thread: RunnerThread::spawn(RunnerData {
-                info: p.info,
-                stdio: process::Stdio {
-                    stdin: stdio.stdin_r,
-                    stdout: stdio.stdout_w,
-                    stderr: stdio.stderr_w,
-                },
-                group: match p.group {
-                    Some(group) => group,
-                    None => Group::new()?,
-                },
-                limits: p.resource_limits.unwrap_or_default(),
-                monitor_interval: p.monitor_interval,
-                on_terminate: p.on_terminate,
-                receiver: receiver,
-                wait_for_children: p.wait_for_children,
-            }),
-            stdout_reader: stdio.stdout_r.map(ReadHub::start_reading),
-            stderr_reader: stdio.stderr_r.map(ReadHub::start_reading),
-        })
-    }
-
-    fn wait(self) -> SpawnerResult {
-        let mut errors = SpawnerErrors(
-            std::iter::once(self.stdout_reader)
-                .chain(Some(self.stderr_reader))
-                .filter_map(|reader_opt| {
-                    reader_opt.map(|reader| reader.join().err()).unwrap_or(None)
+        Self(
+            programs
+                .into_iter()
+                .map(|prog| Runner {
+                    sender: prog.msg_channel.0.clone(),
+                    handle: thread::spawn(move || {
+                        ProcessMonitor::new(prog).and_then(|mut pm| pm.start_monitoring())
+                    }),
                 })
                 .collect(),
-        );
+        )
+    }
 
-        match self.monitoring_thread.join() {
-            Ok(report) => {
-                if errors.0.is_empty() {
-                    Ok(report)
-                } else {
-                    Err(errors)
-                }
-            }
-            Err(e) => {
-                errors.0.push(e);
-                Err(errors)
-            }
-        }
+    pub fn runners(&self) -> &[Runner] {
+        &self.0
+    }
+
+    pub fn wait(self) -> Vec<Result<Report>> {
+        self.0
+            .into_iter()
+            .map(|runner| {
+                runner
+                    .handle
+                    .join()
+                    .unwrap_or(Err(Error::from("Runner thread panicked")))
+            })
+            .collect()
     }
 }
 
-fn ostream_endings(
-    graph: &IoGraph,
-    ostream: Ostream,
-    id: OstreamId,
-) -> Result<(ReadPipe, Option<WriteHub>)> {
-    Ok(if graph.ostream_edges(id).is_empty() {
-        (ReadPipe::null()?, None)
-    } else {
-        (ostream.dst.unwrap(), Some(ostream.src))
-    })
+impl ProcessMonitor {
+    fn new(program: SpawnedProgram) -> Result<Self> {
+        let msg_receiver = program.msg_channel.1;
+        let limits = program.resource_limits.unwrap_or_default();
+        let monitor_interval = program.monitor_interval;
+        let wait_for_children = program.wait_for_children;
+        let on_terminate = program.on_terminate;
+        let mut group = match program.group {
+            Some(g) => g,
+            None => Group::new()?,
+        };
+        let limit_checker = LimitChecker::new(
+            limits,
+            EnabledOsLimits {
+                memory: limits
+                    .max_memory_usage
+                    .map(|limit| group.set_os_limit(OsLimit::Memory, limit))
+                    .transpose()?
+                    .unwrap_or(false),
+                active_process: limits
+                    .active_processes
+                    .map(|limit| group.set_os_limit(OsLimit::ActiveProcess, limit as u64))
+                    .transpose()?
+                    .unwrap_or(false),
+            },
+        );
+        Process::spawn_in_group(
+            program.info,
+            match program.stdio {
+                Some(stdio) => stdio,
+                None => Stdio {
+                    stdin: ReadPipe::null()?,
+                    stdout: WritePipe::null()?,
+                    stderr: WritePipe::null()?,
+                },
+            },
+            &mut group,
+        )
+        .map(|ps| Self {
+            limit_checker: limit_checker,
+            process: ps,
+            creation_time: Instant::now(),
+            term_reason: None,
+            group: group,
+            msg_receiver: msg_receiver,
+            monitor_interval: monitor_interval,
+            wait_for_children: wait_for_children,
+            on_terminate: on_terminate,
+        })
+    }
+
+    fn start_monitoring(&mut self) -> Result<Report> {
+        loop {
+            if let Some(report) = self.get_report()? {
+                return Ok(report);
+            }
+            if let Some(tr) = self.limit_checker.check(&mut self.group)? {
+                self.group.terminate()?;
+                self.term_reason = Some(tr);
+            }
+            self.handle_messages()?;
+            thread::sleep(self.monitor_interval);
+        }
+    }
+
+    fn get_report(&mut self) -> Result<Option<Report>> {
+        let exit_status = match self.process.exit_status()? {
+            Some(status) => status,
+            None => return Ok(None),
+        };
+
+        let pid_counters = self.group.pid_counters()?;
+
+        if self.wait_for_children
+            && pid_counters.is_some()
+            && pid_counters.unwrap().active_processes != 0
+        {
+            return Ok(None);
+        }
+
+        if self.term_reason.is_none() {
+            self.term_reason = self.limit_checker.check(&mut self.group)?;
+        }
+
+        Ok(Some(Report {
+            wall_clock_time: self.creation_time.elapsed(),
+            memory: self.group.memory()?,
+            io: self.group.io()?,
+            timers: self.group.timers()?,
+            pid_counters: pid_counters,
+            network: self.group.network()?,
+            exit_status: exit_status,
+            termination_reason: self.term_reason,
+        }))
+    }
+
+    fn handle_messages(&mut self) -> Result<()> {
+        for msg in self.msg_receiver.try_iter().take(10) {
+            match msg {
+                RunnerMessage::Terminate => {
+                    self.group.terminate()?;
+                    self.term_reason = Some(TerminationReason::TerminatedByRunner);
+                }
+                RunnerMessage::Suspend => {
+                    if self.process.exit_status()?.is_none() {
+                        self.process.suspend()?;
+                    }
+                }
+                RunnerMessage::Resume => {
+                    if self.process.exit_status()?.is_none() {
+                        self.process.resume()?;
+                    }
+                }
+                RunnerMessage::ResetTime => self.limit_checker.reset_time(),
+                RunnerMessage::StopTimeAccounting => self.limit_checker.stop_time_accounting(),
+                RunnerMessage::ResumeTimeAccounting => self.limit_checker.resume_time_accounting(),
+            }
+        }
+
+        Ok(())
+    }
 }
 
-fn istream_endings(
-    graph: &IoGraph,
-    istream: Istream,
-    id: IstreamId,
-) -> Result<(WritePipe, Option<ReadHub>)> {
-    Ok(if graph.istream_edges(id).is_empty() {
-        (WritePipe::null()?, None)
-    } else {
-        (istream.src.unwrap(), Some(istream.dst))
-    })
+impl Drop for ProcessMonitor {
+    fn drop(&mut self) {
+        let _ = self.group.terminate();
+        if let Some(mut handler) = self.on_terminate.take() {
+            handler.on_terminate();
+        }
+    }
 }
