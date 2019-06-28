@@ -60,15 +60,19 @@ pub struct Process {
     exit_status: Option<ExitStatus>,
 }
 
+pub struct ResourceUsage<'a> {
+    group: &'a Group,
+    active_tasks: ActiveTasks,
+    // Since we have information only about active tasks we need to memorize amount
+    // of dead tasks and amount of bytes written by them.
+    dead_tasks_info: DeadTasksInfo,
+}
+
 pub struct Group {
     memory: Cgroup,
     cpuacct: Cgroup,
     pids: Cgroup,
     freezer: Cgroup,
-    active_tasks: ActiveTasks,
-    // Since we have information only about active tasks we need to memorize amount
-    // of dead tasks and amount of bytes written by them.
-    dead_tasks_info: DeadTasksInfo,
 }
 
 struct DeadTasksInfo {
@@ -243,6 +247,63 @@ impl Process {
     }
 }
 
+impl<'a> ResourceUsage<'a> {
+    pub fn new(group: &'a Group) -> Self {
+        Self {
+            group: group,
+            active_tasks: ActiveTasks::new(),
+            dead_tasks_info: DeadTasksInfo::new(),
+        }
+    }
+
+    pub fn update(&mut self) -> Result<()> {
+        let dead_tasks_info = self.active_tasks.update(&self.group.freezer)?;
+        self.dead_tasks_info.num_dead_tasks += dead_tasks_info.num_dead_tasks;
+        self.dead_tasks_info.total_bytes_written += dead_tasks_info.total_bytes_written;
+        Ok(())
+    }
+
+    pub fn memory(&self) -> Result<Option<GroupMemory>> {
+        let mem = &self.group.memory;
+        Ok(Some(GroupMemory {
+            max_usage: mem.get_value::<u64>("memory.max_usage_in_bytes")?
+                + mem.get_value::<u64>("memory.kmem.max_usage_in_bytes")?,
+        }))
+    }
+
+    pub fn io(&self) -> Result<Option<GroupIo>> {
+        Ok(Some(GroupIo {
+            total_bytes_written: self.active_tasks.total_bytes_written()
+                + self.dead_tasks_info.total_bytes_written,
+        }))
+    }
+
+    pub fn pid_counters(&self) -> Result<Option<GroupPidCounters>> {
+        let active_processes = self.active_tasks.count();
+        Ok(Some(GroupPidCounters {
+            active_processes: active_processes,
+            total_processes: self.dead_tasks_info.num_dead_tasks + active_processes,
+        }))
+    }
+
+    pub fn network(&self) -> Result<Option<GroupNetwork>> {
+        Ok(Some(GroupNetwork {
+            active_connections: self
+                .active_tasks
+                .count_network_connections()
+                .map_err(|e| Error::from(e.to_string()))?,
+        }))
+    }
+
+    pub fn timers(&self) -> Result<Option<GroupTimers>> {
+        let cpuacct = &self.group.cpuacct;
+        Ok(Some(GroupTimers {
+            total_user_time: Duration::from_nanos(cpuacct.get_value::<u64>("cpuacct.usage_user")?),
+            total_kernel_time: Duration::from_nanos(cpuacct.get_value::<u64>("cpuacct.usage_sys")?),
+        }))
+    }
+}
+
 impl Group {
     pub fn new() -> Result<Self> {
         Ok(Self {
@@ -250,8 +311,6 @@ impl Group {
             cpuacct: create_cgroup("cpuacct/sp")?,
             pids: create_cgroup("pids/sp")?,
             freezer: create_cgroup("freezer/sp")?,
-            active_tasks: ActiveTasks::new(),
-            dead_tasks_info: DeadTasksInfo::new(),
         })
     }
 
@@ -262,52 +321,6 @@ impl Group {
             .and(self.pids.add_task(ps.pid))
             .and(self.freezer.add_task(ps.pid))
             .map_err(Error::from)
-    }
-
-    pub fn memory(&mut self) -> Result<Option<GroupMemory>> {
-        let max_mem_usage = self.memory.get_value::<u64>("memory.max_usage_in_bytes")?;
-        let max_kmem_usage = self
-            .memory
-            .get_value::<u64>("memory.kmem.max_usage_in_bytes")?;
-        Ok(Some(GroupMemory {
-            max_usage: max_mem_usage + max_kmem_usage,
-        }))
-    }
-
-    pub fn io(&mut self) -> Result<Option<GroupIo>> {
-        self.update_tasks()?;
-        Ok(Some(GroupIo {
-            total_bytes_written: self.active_tasks.total_bytes_written()
-                + self.dead_tasks_info.total_bytes_written,
-        }))
-    }
-
-    pub fn pid_counters(&mut self) -> Result<Option<GroupPidCounters>> {
-        self.update_tasks()?;
-        let active_processes = self.active_tasks.count();
-        Ok(Some(GroupPidCounters {
-            active_processes: active_processes,
-            total_processes: self.dead_tasks_info.num_dead_tasks + active_processes,
-        }))
-    }
-
-    pub fn network(&mut self) -> Result<Option<GroupNetwork>> {
-        self.update_tasks()?;
-        Ok(Some(GroupNetwork {
-            active_connections: self
-                .active_tasks
-                .count_network_connections()
-                .map_err(|e| Error::from(e.to_string()))?,
-        }))
-    }
-
-    pub fn timers(&mut self) -> Result<Option<GroupTimers>> {
-        let total_user_time = self.cpuacct.get_value::<u64>("cpuacct.usage_user")?;
-        let total_sys_time = self.cpuacct.get_value::<u64>("cpuacct.usage_sys")?;
-        Ok(Some(GroupTimers {
-            total_user_time: Duration::from_nanos(total_user_time),
-            total_kernel_time: Duration::from_nanos(total_sys_time),
-        }))
     }
 
     pub fn set_os_limit(&mut self, limit: OsLimit, value: u64) -> Result<bool> {
@@ -336,13 +349,6 @@ impl Group {
         }
         self.freezer.send_signal_to_all_tasks(Signal::SIGKILL)?;
         self.freezer.set_raw_value("freezer.state", "THAWED")?;
-        Ok(())
-    }
-
-    fn update_tasks(&mut self) -> Result<()> {
-        let dead_tasks_info = self.active_tasks.update(&self.freezer)?;
-        self.dead_tasks_info.num_dead_tasks += dead_tasks_info.num_dead_tasks;
-        self.dead_tasks_info.total_bytes_written += dead_tasks_info.total_bytes_written;
         Ok(())
     }
 }

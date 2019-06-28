@@ -90,7 +90,7 @@ pub fn init_os_specific_process_extensions(
 pub fn init_os_specific_process_extensions(
     cmd: &Command,
     info: &mut ProcessInfo,
-    group: &mut Group,
+    _group: &mut Group,
     warnings: &Warnings,
 ) -> Result<()> {
     use spawner::unix::process::{ProcessInfoExt, SyscallFilterBuilder};

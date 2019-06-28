@@ -58,6 +58,8 @@ pub enum OsLimit {
     ActiveProcess,
 }
 
+pub struct ResourceUsage<'a>(imp::ResourceUsage<'a>);
+
 /// Describes a group of processes.
 pub struct Group(imp::Group);
 
@@ -156,6 +158,36 @@ impl Process {
     }
 }
 
+impl<'a> ResourceUsage<'a> {
+    pub fn new(group: &'a Group) -> Self {
+        Self(imp::ResourceUsage::new(&group.0))
+    }
+
+    pub fn update(&mut self) -> Result<()> {
+        self.0.update()
+    }
+
+    pub fn timers(&self) -> Result<Option<GroupTimers>> {
+        self.0.timers()
+    }
+
+    pub fn memory(&self) -> Result<Option<GroupMemory>> {
+        self.0.memory()
+    }
+
+    pub fn io(&self) -> Result<Option<GroupIo>> {
+        self.0.io()
+    }
+
+    pub fn pid_counters(&self) -> Result<Option<GroupPidCounters>> {
+        self.0.pid_counters()
+    }
+
+    pub fn network(&self) -> Result<Option<GroupNetwork>> {
+        self.0.network()
+    }
+}
+
 impl Group {
     pub fn new() -> Result<Self> {
         imp::Group::new().map(Self)
@@ -165,33 +197,13 @@ impl Group {
         self.0.add(&ps.0)
     }
 
-    pub fn memory(&mut self) -> Result<Option<GroupMemory>> {
-        self.0.memory()
-    }
-
-    pub fn io(&mut self) -> Result<Option<GroupIo>> {
-        self.0.io()
-    }
-
-    pub fn pid_counters(&mut self) -> Result<Option<GroupPidCounters>> {
-        self.0.pid_counters()
-    }
-
-    pub fn network(&mut self) -> Result<Option<GroupNetwork>> {
-        self.0.network()
-    }
-
-    pub fn timers(&mut self) -> Result<Option<GroupTimers>> {
-        self.0.timers()
-    }
-
     /// Returns `true` if the limit was set.
     pub fn set_os_limit(&mut self, limit: OsLimit, value: u64) -> Result<bool> {
         self.0.set_os_limit(limit, value)
     }
 
     /// Returns `true` if the limit was hit.
-    pub fn is_os_limit_hit(&mut self, limit: OsLimit) -> Result<bool> {
+    pub fn is_os_limit_hit(&self, limit: OsLimit) -> Result<bool> {
         self.0.is_os_limit_hit(limit)
     }
 

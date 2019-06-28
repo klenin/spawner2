@@ -1,8 +1,8 @@
-use crate::limit_checker::{EnabledOsLimits, LimitChecker};
+use crate::limit_checker::LimitChecker;
 use crate::pipe::{ReadPipe, WritePipe};
 use crate::process::{
     ExitStatus, Group, GroupIo, GroupMemory, GroupNetwork, GroupPidCounters, GroupTimers, OsLimit,
-    Process, ProcessInfo, Stdio,
+    Process, ProcessInfo, ResourceUsage, Stdio,
 };
 use crate::{Error, Result};
 
@@ -102,7 +102,6 @@ struct ProcessMonitor {
     process: Process,
     creation_time: Instant,
     term_reason: Option<TerminationReason>,
-    group: Group,
     msg_receiver: Receiver<RunnerMessage>,
     monitor_interval: Duration,
     wait_for_children: bool,
@@ -193,9 +192,7 @@ impl Spawner {
                 .into_iter()
                 .map(|prog| Runner {
                     sender: prog.msg_channel.0.clone(),
-                    handle: thread::spawn(move || {
-                        ProcessMonitor::new(prog).and_then(|mut pm| pm.start_monitoring())
-                    }),
+                    handle: thread::spawn(move || ProcessMonitor::start_monitoring(prog)),
                 })
                 .collect(),
         )
@@ -219,7 +216,7 @@ impl Spawner {
 }
 
 impl ProcessMonitor {
-    fn new(program: SpawnedProgram) -> Result<Self> {
+    fn start_monitoring(program: SpawnedProgram) -> Result<Report> {
         let msg_receiver = program.msg_channel.1;
         let limits = program.resource_limits.unwrap_or_default();
         let monitor_interval = program.monitor_interval;
@@ -229,21 +226,14 @@ impl ProcessMonitor {
             Some(g) => g,
             None => Group::new()?,
         };
-        let limit_checker = LimitChecker::new(
-            limits,
-            EnabledOsLimits {
-                memory: limits
-                    .max_memory_usage
-                    .map(|limit| group.set_os_limit(OsLimit::Memory, limit))
-                    .transpose()?
-                    .unwrap_or(false),
-                active_process: limits
-                    .active_processes
-                    .map(|limit| group.set_os_limit(OsLimit::ActiveProcess, limit as u64))
-                    .transpose()?
-                    .unwrap_or(false),
-            },
-        );
+
+        if let Some(mem_limit) = limits.max_memory_usage {
+            group.set_os_limit(OsLimit::Memory, mem_limit)?;
+        }
+        if let Some(num) = limits.active_processes {
+            group.set_os_limit(OsLimit::ActiveProcess, num as u64)?;
+        }
+
         Process::spawn_in_group(
             program.info,
             match program.stdio {
@@ -257,40 +247,59 @@ impl ProcessMonitor {
             &mut group,
         )
         .map(|ps| Self {
-            limit_checker: limit_checker,
+            limit_checker: LimitChecker::new(limits),
             process: ps,
             creation_time: Instant::now(),
             term_reason: None,
-            group: group,
             msg_receiver: msg_receiver,
             monitor_interval: monitor_interval,
             wait_for_children: wait_for_children,
             on_terminate: on_terminate,
         })
+        .and_then(|pm| pm.monitoring_loop(group))
     }
 
-    fn start_monitoring(&mut self) -> Result<Report> {
+    fn monitoring_loop(mut self, group: Group) -> Result<Report> {
+        let mut usage = ResourceUsage::new(&group);
+        let mut last_check_time = Instant::now();
         loop {
-            if let Some(report) = self.get_report()? {
-                return Ok(report);
+            usage.update()?;
+            if last_check_time.elapsed() > self.monitor_interval {
+                last_check_time = Instant::now();
+                if let Some(report) = self.get_report(&group, &usage)? {
+                    return Ok(report);
+                }
+                if let Some(tr) = self.check_limits(&group, &usage)? {
+                    group.terminate()?;
+                    self.term_reason = Some(tr);
+                }
             }
-            if let Some(tr) = self.limit_checker.check(&mut self.group)? {
-                self.group.terminate()?;
-                self.term_reason = Some(tr);
-            }
-            self.handle_messages()?;
-            thread::sleep(self.monitor_interval);
+            self.handle_messages(&group)?;
+            thread::sleep(Duration::from_millis(1));
         }
     }
 
-    fn get_report(&mut self) -> Result<Option<Report>> {
+    fn check_limits(
+        &mut self,
+        group: &Group,
+        usage: &ResourceUsage,
+    ) -> Result<Option<TerminationReason>> {
+        if group.is_os_limit_hit(OsLimit::Memory)? {
+            return Ok(Some(TerminationReason::MemoryLimitExceeded));
+        }
+        if group.is_os_limit_hit(OsLimit::ActiveProcess)? {
+            return Ok(Some(TerminationReason::ActiveProcessLimitExceeded));
+        }
+        self.limit_checker.check(usage)
+    }
+
+    fn get_report(&mut self, group: &Group, usage: &ResourceUsage) -> Result<Option<Report>> {
         let exit_status = match self.process.exit_status()? {
             Some(status) => status,
             None => return Ok(None),
         };
 
-        let pid_counters = self.group.pid_counters()?;
-
+        let pid_counters = usage.pid_counters()?;
         if self.wait_for_children
             && pid_counters.is_some()
             && pid_counters.unwrap().active_processes != 0
@@ -299,26 +308,26 @@ impl ProcessMonitor {
         }
 
         if self.term_reason.is_none() {
-            self.term_reason = self.limit_checker.check(&mut self.group)?;
+            self.term_reason = self.check_limits(group, usage)?;
         }
 
         Ok(Some(Report {
             wall_clock_time: self.creation_time.elapsed(),
-            memory: self.group.memory()?,
-            io: self.group.io()?,
-            timers: self.group.timers()?,
+            memory: usage.memory()?,
+            io: usage.io()?,
+            timers: usage.timers()?,
             pid_counters: pid_counters,
-            network: self.group.network()?,
+            network: usage.network()?,
             exit_status: exit_status,
             termination_reason: self.term_reason,
         }))
     }
 
-    fn handle_messages(&mut self) -> Result<()> {
+    fn handle_messages(&mut self, group: &Group) -> Result<()> {
         for msg in self.msg_receiver.try_iter().take(10) {
             match msg {
                 RunnerMessage::Terminate => {
-                    self.group.terminate()?;
+                    group.terminate()?;
                     self.term_reason = Some(TerminationReason::TerminatedByRunner);
                 }
                 RunnerMessage::Suspend => {
@@ -336,14 +345,12 @@ impl ProcessMonitor {
                 RunnerMessage::ResumeTimeAccounting => self.limit_checker.resume_time_accounting(),
             }
         }
-
         Ok(())
     }
 }
 
 impl Drop for ProcessMonitor {
     fn drop(&mut self) {
-        let _ = self.group.terminate();
         if let Some(mut handler) = self.on_terminate.take() {
             handler.on_terminate();
         }

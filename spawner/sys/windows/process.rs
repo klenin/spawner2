@@ -41,6 +41,7 @@ use winapi::um::winnt::{
     STATUS_SINGLE_STEP, STATUS_STACK_OVERFLOW,
 };
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{self, Write};
 use std::mem;
@@ -79,11 +80,15 @@ pub struct Process {
 
 unsafe impl Send for Process {}
 
+pub struct ResourceUsage<'a> {
+    group: &'a Group,
+    pid_list: RefCell<PidList>,
+    endpoints: RefCell<Endpoints>,
+}
+
 pub struct Group {
     job: Handle,
-    notifications: JobNotifications,
-    pid_list: PidList,
-    endpoints: Endpoints,
+    notifications: RefCell<JobNotifications>,
 }
 
 impl ProcessInfo {
@@ -313,6 +318,72 @@ macro_rules! count_endpoints {
     };
 }
 
+impl<'a> ResourceUsage<'a> {
+    pub fn new(group: &'a Group) -> Self {
+        Self {
+            group: group,
+            pid_list: RefCell::new(PidList::new()),
+            endpoints: RefCell::new(Endpoints::new()),
+        }
+    }
+
+    pub fn update(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    pub fn timers(&self) -> Result<Option<GroupTimers>> {
+        self.group.basic_info().map(|info| {
+            // Total user time in 100-nanosecond ticks.
+            let total_user_time = unsafe { *info.TotalUserTime.QuadPart() } as u64;
+            // Total kernel time in 100-nanosecond ticks.
+            let total_kernel_time = unsafe { *info.TotalKernelTime.QuadPart() } as u64;
+
+            Some(GroupTimers {
+                total_user_time: Duration::from_nanos(total_user_time * 100),
+                total_kernel_time: Duration::from_nanos(total_kernel_time * 100),
+            })
+        })
+    }
+
+    pub fn memory(&self) -> Result<Option<GroupMemory>> {
+        self.group.ext_limit_info().map(|info| {
+            Some(GroupMemory {
+                max_usage: info.PeakJobMemoryUsed as u64,
+            })
+        })
+    }
+
+    pub fn io(&self) -> Result<Option<GroupIo>> {
+        self.group.basic_and_io_info().map(|info| {
+            Some(GroupIo {
+                total_bytes_written: info.IoInfo.WriteTransferCount,
+            })
+        })
+    }
+
+    pub fn pid_counters(&self) -> Result<Option<GroupPidCounters>> {
+        self.group.basic_and_io_info().map(|info| {
+            Some(GroupPidCounters {
+                total_processes: info.BasicInfo.TotalProcesses as usize,
+                active_processes: info.BasicInfo.ActiveProcesses as usize,
+            })
+        })
+    }
+
+    pub fn network(&self) -> Result<Option<GroupNetwork>> {
+        let mut pid_list = self.pid_list.borrow_mut();
+        let pids = pid_list.update(&self.group.job)?;
+        let mut endpoints = self.endpoints.borrow_mut();
+
+        Ok(Some(GroupNetwork {
+            active_connections: count_endpoints!(pids, endpoints.load_tcpv4()?)
+                + count_endpoints!(pids, endpoints.load_tcpv6()?)
+                + count_endpoints!(pids, endpoints.load_udpv4()?)
+                + count_endpoints!(pids, endpoints.load_udpv6()?),
+        }))
+    }
+}
+
 impl Group {
     pub fn new() -> Result<Self> {
         unsafe { cvt(CreateJobObjectW(ptr::null_mut(), ptr::null())) }
@@ -321,9 +392,7 @@ impl Group {
             .and_then(|job| {
                 JobNotifications::new(&job).map(|notifications| Self {
                     job: job,
-                    notifications: notifications,
-                    pid_list: PidList::new(),
-                    endpoints: Endpoints::new(),
+                    notifications: RefCell::new(notifications),
                 })
             })
     }
@@ -352,53 +421,6 @@ impl Group {
         Ok(())
     }
 
-    pub fn memory(&mut self) -> Result<Option<GroupMemory>> {
-        self.ext_limit_info().map(|info| {
-            Some(GroupMemory {
-                max_usage: info.PeakJobMemoryUsed as u64,
-            })
-        })
-    }
-
-    pub fn io(&mut self) -> Result<Option<GroupIo>> {
-        self.basic_and_io_info().map(|info| {
-            Some(GroupIo {
-                total_bytes_written: info.IoInfo.WriteTransferCount,
-            })
-        })
-    }
-
-    pub fn pid_counters(&mut self) -> Result<Option<GroupPidCounters>> {
-        self.basic_and_io_info().map(|info| {
-            Some(GroupPidCounters {
-                total_processes: info.BasicInfo.TotalProcesses as usize,
-                active_processes: info.BasicInfo.ActiveProcesses as usize,
-            })
-        })
-    }
-
-    pub fn network(&mut self) -> Result<Option<GroupNetwork>> {
-        self.active_network_connections().map(|count| {
-            Some(GroupNetwork {
-                active_connections: count,
-            })
-        })
-    }
-
-    pub fn timers(&mut self) -> Result<Option<GroupTimers>> {
-        self.basic_info().map(|info| {
-            // Total user time in 100-nanosecond ticks.
-            let total_user_time = unsafe { *info.TotalUserTime.QuadPart() } as u64;
-            // Total kernel time in 100-nanosecond ticks.
-            let total_kernel_time = unsafe { *info.TotalKernelTime.QuadPart() } as u64;
-
-            Some(GroupTimers {
-                total_user_time: Duration::from_nanos(total_user_time * 100),
-                total_kernel_time: Duration::from_nanos(total_kernel_time * 100),
-            })
-        })
-    }
-
     pub fn set_os_limit(&mut self, limit: OsLimit, value: u64) -> Result<bool> {
         let mut ext_limit_info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { mem::zeroed() };
 
@@ -425,10 +447,11 @@ impl Group {
         Ok(true)
     }
 
-    pub fn is_os_limit_hit(&mut self, limit: OsLimit) -> Result<bool> {
+    pub fn is_os_limit_hit(&self, limit: OsLimit) -> Result<bool> {
+        let mut notifications = self.notifications.borrow_mut();
         match limit {
-            OsLimit::Memory => self.notifications.is_memory_limit_hit(),
-            OsLimit::ActiveProcess => self.notifications.is_active_process_limit_hit(),
+            OsLimit::Memory => notifications.is_memory_limit_hit(),
+            OsLimit::ActiveProcess => notifications.is_active_process_limit_hit(),
         }
     }
 
@@ -483,14 +506,6 @@ impl Group {
             .map_err(Error::from)
             .map(|_| ext_info)
         }
-    }
-
-    fn active_network_connections(&mut self) -> Result<usize> {
-        let pids = self.pid_list.update(&self.job)?;
-        Ok(count_endpoints!(pids, self.endpoints.load_tcpv4()?)
-            + count_endpoints!(pids, self.endpoints.load_tcpv6()?)
-            + count_endpoints!(pids, self.endpoints.load_udpv4()?)
-            + count_endpoints!(pids, self.endpoints.load_udpv6()?))
     }
 }
 

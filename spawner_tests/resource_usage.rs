@@ -3,10 +3,10 @@ use crate::common::{TmpDir, APP, MEM_ERR, TIME_ERR};
 
 use spawner_driver::run;
 
-#[test]
-fn total_user_time() {
+fn total_user_time(arg: &str) {
     let r = run(&[
         "--wait-for-children",
+        arg,
         APP,
         "loop",
         "1.0",
@@ -24,9 +24,19 @@ fn total_user_time() {
 }
 
 #[test]
-fn total_idle_time() {
+fn total_user_time_mi_1ms() {
+    total_user_time("-mi=1ms");
+}
+
+#[test]
+fn total_user_time_mi_1s() {
+    total_user_time("-mi=1s");
+}
+
+fn total_idle_time(arg: &str) {
     let r = run(&[
         "--wait-for-children",
+        arg,
         APP,
         "sleep",
         "1.0",
@@ -45,9 +55,19 @@ fn total_idle_time() {
 }
 
 #[test]
-fn total_processes_created() {
+fn total_idle_time_mi_1ms() {
+    total_idle_time("-mi=1ms");
+}
+
+#[test]
+fn total_idle_time_mi_1s() {
+    total_idle_time("-mi=1s");
+}
+
+fn total_processes_created(arg: &str) {
     let r = run(&[
         "--wait-for-children",
+        arg,
         APP,
         "sleep",
         "0.1",
@@ -72,38 +92,24 @@ fn total_processes_created() {
     assert_eq!(r[0].result.processes_created, 5);
 }
 
-#[cfg(windows)]
 #[test]
-fn total_bytes_written_1() {
-    let r = run(&[
-        "--wait-for-children",
-        APP,
-        "A",
-        "exec_rest",
-        APP,
-        "A",
-        "exec_rest",
-        APP,
-        "A",
-        "exec_rest",
-        APP,
-        "A",
-        "exec_rest",
-        APP,
-        "A",
-    ])
-    .unwrap();
-    assert_eq!(r[0].result.bytes_written, 5);
+fn total_processes_created_mi_1ms() {
+    total_processes_created("-mi=1ms");
 }
 
 #[test]
-fn total_bytes_written_2() {
+fn total_processes_created_mi_1s() {
+    total_processes_created("-mi=1s");
+}
+
+fn total_bytes_written(arg: &str) {
     let tmp = TmpDir::new();
     let _10mb = (10 * 1024).to_string();
     let f1 = tmp.file("1.txt");
     let f2 = tmp.file("2.txt");
     let r = run(&[
         "--wait-for-children",
+        arg,
         APP,
         "fwrite",
         &f1,
@@ -115,14 +121,23 @@ fn total_bytes_written_2() {
         &_10mb,
     ])
     .unwrap();
-
     assert_approx_eq!(r[0].result.bytes_written, 20 * 1024 * 1024, MEM_ERR);
 }
 
 #[test]
-fn memory_usage() {
+fn total_bytes_written_mi_1ms() {
+    total_bytes_written("-mi=1ms");
+}
+
+#[test]
+fn total_bytes_written_mi_1s() {
+    total_bytes_written("-mi=1s");
+}
+
+fn memory_usage(arg: &str) {
     let r = run(&[
         "--wait-for-children",
+        arg,
         APP,
         "alloc",
         "8",
@@ -137,4 +152,14 @@ fn memory_usage() {
     ])
     .unwrap();
     assert_approx_eq!(r[0].result.memory, 24 * 1024 * 1024, MEM_ERR * 2);
+}
+
+#[test]
+fn memory_usage_mi_1ms() {
+    memory_usage("-mi=1ms");
+}
+
+#[test]
+fn memory_usage_mi_1s() {
+    memory_usage("-mi=1s");
 }
