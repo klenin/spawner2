@@ -264,16 +264,18 @@ impl ProcessMonitor {
         let mut last_check_time = Instant::now();
         loop {
             usage.update()?;
+            if let Some(report) = self.get_report(&group, &usage)? {
+                return Ok(report);
+            }
+
             if last_check_time.elapsed() > self.monitor_interval {
                 last_check_time = Instant::now();
-                if let Some(report) = self.get_report(&group, &usage)? {
-                    return Ok(report);
-                }
                 if let Some(tr) = self.check_limits(&group, &usage)? {
                     group.terminate()?;
                     self.term_reason = Some(tr);
                 }
             }
+
             self.handle_messages(&group)?;
             thread::sleep(Duration::from_millis(1));
         }
