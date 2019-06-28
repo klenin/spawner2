@@ -153,7 +153,12 @@ pub struct Command {
     )]
     pub show_window: bool,
 
-    #[opt(name = "--debug", env = "SP_DEBUG", value_desc = "{0|1}")]
+    #[opt(
+        name = "--debug",
+        env = "SP_DEBUG",
+        desc = "Print the stack trace of an error",
+        value_desc = "{0|1}"
+    )]
     pub debug: bool,
 
     #[opt(

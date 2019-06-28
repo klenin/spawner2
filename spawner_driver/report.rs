@@ -38,6 +38,7 @@ pub enum ReportKind {
 #[derive(Debug)]
 pub struct ReportOptions {
     pub search_in_path: bool,
+    pub debug: bool,
 }
 
 #[derive(Default, Debug)]
@@ -94,6 +95,7 @@ pub struct LegacyReport<'a> {
     pub exit_code: u32,
     pub exit_status: &'a String,
     pub spawner_error: &'a Vec<Error>,
+    pub debug: bool,
 }
 
 struct NoneOrJoin<T, U>(T)
@@ -167,9 +169,15 @@ impl Report {
             } else {
                 self.spawner_error
                     .iter()
-                    .map(|e| e.to_string().into())
-                    .collect::<Vec<JsonValue>>()
-                    .into()
+                    .map(|e| {
+                        if self.options.debug {
+                            format!("{:?}", e)
+                        } else {
+                            format!("{}", e)
+                        }
+                        .into()
+                    })
+                    .collect::<Vec<JsonValue>>().into()
             }
         }
     }
@@ -192,6 +200,7 @@ impl Report {
             exit_code: self.exit_code,
             exit_status: &self.exit_status,
             spawner_error: &self.spawner_error,
+            debug: self.options.debug,
         }
     }
 }
@@ -222,6 +231,7 @@ impl From<&Command> for Report {
             limit: limit,
             options: ReportOptions {
                 search_in_path: cmd.use_syspath,
+                debug: cmd.debug,
             },
             working_directory: cmd.working_directory.clone(),
             create_process_method: "CreateProcess".to_string(),
@@ -387,7 +397,11 @@ impl<'a> Display for LegacyReport<'a> {
         line!(
             f,
             "SpawnerError:",
-            NoneOrJoin(self.spawner_error.iter().map(|e| e.to_string()))
+            NoneOrJoin(self.spawner_error.iter().map(|e| if self.debug {
+                format!("{:?}", e)
+            } else {
+                format!("{}", e)
+            }))
         )
     }
 }

@@ -5,14 +5,12 @@ use backtrace::Backtrace;
 use std::fmt;
 use std::io;
 
-#[derive(Debug)]
 enum ErrorKind {
     Sys(SysError),
     Other(String),
     Io(io::Error),
 }
 
-#[derive(Debug)]
 pub struct Error {
     kind: ErrorKind,
     backtrace: Backtrace,
@@ -29,10 +27,6 @@ impl Error {
     pub fn last_os_error() -> Self {
         Error::from(SysError::last())
     }
-
-    pub fn call_stack(&self) -> String {
-        format!("{:?}", self.backtrace)
-    }
 }
 
 impl std::error::Error for Error {}
@@ -44,6 +38,13 @@ impl fmt::Display for Error {
             ErrorKind::Sys(e) => write!(f, "{}", e),
             ErrorKind::Other(s) => write!(f, "{}", s),
         }
+    }
+}
+
+impl fmt::Debug for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}\n{:?}", self, self.backtrace)?;
+        Ok(())
     }
 }
 

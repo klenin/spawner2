@@ -181,9 +181,6 @@ fn check_cmds(cmds: &Vec<Command>, warnings: &Warnings) -> Result<()> {
     }
     for cmd in cmds.iter() {
         assert!(cmd.argv.len() > 0);
-        if cmd.debug {
-            warnings.emit("'--debug' option has no effect");
-        }
         if cmd.delegated {
             warnings.emit("'-runas', '--delegated' options have no effect");
         }
