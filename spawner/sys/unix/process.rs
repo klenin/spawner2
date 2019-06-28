@@ -4,10 +4,10 @@ use crate::process::{
 use crate::sys::unix::missing_decls::{sock_fprog, SECCOMP_MODE_FILTER};
 use crate::sys::unix::pipe::{PipeFd, ReadPipe, WritePipe};
 use crate::sys::unix::process_ext::SyscallFilter;
+use crate::sys::unix::shared_mem::SharedMem;
 use crate::sys::{AsInnerMut, IntoInner};
 use crate::{Error, Result};
 
-use nix::errno::errno;
 use nix::libc::{
     c_ushort, getpwnam, prctl, PR_SET_NO_NEW_PRIVS, PR_SET_SECCOMP, STDERR_FILENO, STDIN_FILENO,
     STDOUT_FILENO,
@@ -29,6 +29,7 @@ use rand::{thread_rng, Rng};
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::iter;
+use std::mem;
 use std::process;
 use std::thread;
 use std::time::Duration;
@@ -55,9 +56,21 @@ pub struct ProcessInfo {
     filter: Option<SyscallFilter>,
 }
 
+#[derive(Copy, Clone)]
+enum InitError {
+    None,
+    Other(nix::Error),
+    Seccomp(nix::Error),
+}
+
+enum ProcessStatus {
+    Alive(SharedMem<InitError>),
+    Exited(ExitStatus),
+}
+
 pub struct Process {
     pid: Pid,
-    exit_status: Option<ExitStatus>,
+    status: ProcessStatus,
 }
 
 pub struct ResourceUsage<'a> {
@@ -170,24 +183,35 @@ impl ProcessInfo {
 
 impl Process {
     pub fn exit_status(&mut self) -> Result<Option<ExitStatus>> {
-        if self.exit_status.is_none() {
-            self.exit_status = match waitpid(self.pid, Some(WaitPidFlag::WNOHANG))? {
-                WaitStatus::Exited(pid, code) => {
-                    assert_eq!(pid, self.pid);
-                    Some(ExitStatus::Finished(code as u32))
-                }
-                WaitStatus::Signaled(pid, signal, _) => {
-                    assert_eq!(pid, self.pid);
-                    Some(ExitStatus::Crashed(format!(
-                        "Process terminated by the '{}' signal",
-                        signal
-                    )))
-                }
-                _ => None,
-            };
+        if let ProcessStatus::Exited(ref status) = self.status {
+            return Ok(Some(status.clone()));
         }
 
-        Ok(self.exit_status.clone())
+        let exit_status = match waitpid(self.pid, Some(WaitPidFlag::WNOHANG))? {
+            WaitStatus::Exited(pid, code) => {
+                assert_eq!(pid, self.pid);
+                ExitStatus::Finished(code as u32)
+            }
+            WaitStatus::Signaled(pid, signal, _) => {
+                assert_eq!(pid, self.pid);
+                ExitStatus::Crashed(format!("Process terminated by the '{}' signal", signal))
+            }
+            _ => return Ok(None),
+        };
+
+        if let ProcessStatus::Alive(init_error) =
+            mem::replace(&mut self.status, ProcessStatus::Exited(exit_status.clone()))
+        {
+            match *init_error.lock().unwrap() {
+                InitError::None => {}
+                InitError::Other(e) => return Err(Error::from(e)),
+                InitError::Seccomp(e) => {
+                    return Err(Error::from(format!("Failed to initialize seccomp: {}", e)));
+                }
+            }
+        }
+
+        Ok(Some(exit_status))
     }
 
     pub fn suspend(&self) -> Result<()> {
@@ -221,28 +245,47 @@ impl Process {
 
     fn suspended(info: &mut ProcessInfo, stdio: Stdio) -> Result<Self> {
         let usr = info.username.as_ref().map(User::new).transpose()?;
+        let init_error = SharedMem::alloc(InitError::None)?;
+
+        let mut env = match info.env {
+            Env::Clear => HashMap::new(),
+            Env::Inherit => std::env::vars().collect(),
+        };
+        env.extend(info.envs.iter().map(|(k, v)| (k.clone(), v.clone())));
+
+        let c_cmd = to_cstr(info.app.as_str())?;
+        let c_args = iter::once(info.app.as_str())
+            .chain(info.args.iter().map(|s| s.as_str()))
+            .map(to_cstr)
+            .collect::<Result<Vec<_>>>()?;
+        let c_env = env
+            .into_iter()
+            .map(|(k, v)| to_cstr(format!("{}={}", k, v)))
+            .collect::<Result<Vec<_>>>()?;
 
         if let ForkResult::Parent { child, .. } = fork()? {
             // Wait for initialization.
             waitpid(child, Some(WaitPidFlag::WSTOPPED))?;
             return Ok(Process {
                 pid: child,
-                exit_status: None,
+                status: ProcessStatus::Alive(init_error),
             });
         }
 
-        if let Err(_) = init_child_process(
-            info,
+        *init_error.lock().unwrap() = init_child_process(
+            &c_cmd,
+            &c_args,
+            &c_env,
             RawStdio {
                 stdin: stdio.stdin.into_inner(),
                 stdout: stdio.stdout.into_inner(),
                 stderr: stdio.stderr.into_inner(),
             },
-            usr,
-        ) {
-            // todo: Send error to parent process.
-        }
-        process::exit(errno());
+            info.working_dir.as_ref().map(|s| s.as_str()),
+            info.filter.as_mut(),
+            usr.as_ref(),
+        );
+        process::exit(0);
     }
 }
 
@@ -466,7 +509,7 @@ impl User {
         }
     }
 
-    fn impersonate(&self) -> Result<()> {
+    fn impersonate(&self) -> nix::Result<()> {
         // Drop groups if we have root priveleges. Otherwise setgroups call will fail
         // with `Operation not permitted` error.
         if getuid().is_root() {
@@ -498,23 +541,19 @@ fn to_cstr<S: Into<Vec<u8>>>(s: S) -> Result<CString> {
     CString::new(s).map_err(|e| Error::from(e.to_string()))
 }
 
-fn close_stdio() -> Result<()> {
+fn init_stdio(stdio: RawStdio) -> nix::Result<()> {
     close(STDIN_FILENO)?;
     close(STDOUT_FILENO)?;
     close(STDERR_FILENO)?;
+    dup2(stdio.stdin.raw(), STDIN_FILENO)?;
+    dup2(stdio.stdout.raw(), STDOUT_FILENO)?;
+    dup2(stdio.stderr.raw(), STDERR_FILENO)?;
     Ok(())
 }
 
-fn seccomp_err() -> Error {
-    Error::from(format!(
-        "Failed to initialize seccomp: {}",
-        Error::last_os_error()
-    ))
-}
-
-fn init_seccomp(filter: &mut SyscallFilter) -> Result<()> {
+fn init_seccomp(filter: &mut SyscallFilter) -> nix::Result<()> {
     if unsafe { prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } == -1 {
-        return Err(seccomp_err());
+        return Err(nix::Error::last());
     }
     let inner = filter.as_inner_mut();
     let mut prog = sock_fprog {
@@ -522,41 +561,34 @@ fn init_seccomp(filter: &mut SyscallFilter) -> Result<()> {
         filter: inner.as_mut_ptr(),
     };
     if unsafe { prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &mut prog) } == -1 {
-        return Err(seccomp_err());
+        return Err(nix::Error::last());
     }
     Ok(())
 }
 
-fn init_child_process(info: &mut ProcessInfo, stdio: RawStdio, usr: Option<User>) -> Result<()> {
-    close_stdio()?;
-    dup2(stdio.stdin.raw(), STDIN_FILENO)?;
-    dup2(stdio.stdout.raw(), STDOUT_FILENO)?;
-    dup2(stdio.stderr.raw(), STDERR_FILENO)?;
+fn init_child_process(
+    filename: &CString,
+    args: &[CString],
+    env: &[CString],
+    stdio: RawStdio,
+    wd: Option<&str>,
+    filter: Option<&mut SyscallFilter>,
+    usr: Option<&User>,
+) -> InitError {
+    if let Err(e) = init_stdio(stdio).and_then(|_| wd.map(chdir).transpose()) {
+        return InitError::Other(e);
+    }
+    if let Err(e) = filter.map(init_seccomp).transpose() {
+        return InitError::Seccomp(e);
+    }
+    if let Err(e) = usr
+        .map(User::impersonate)
+        .transpose()
+        .and_then(|_| kill(getpid(), Signal::SIGSTOP))
+        .and_then(|_| execvpe(filename, args, env))
+    {
+        return InitError::Other(e);
+    }
 
-    info.working_dir
-        .as_ref()
-        .map(|s| chdir(s.as_str()))
-        .transpose()?;
-    info.filter.as_mut().map(init_seccomp).transpose()?;
-    usr.as_ref().map(User::impersonate).transpose()?;
-
-    let mut env = match info.env {
-        Env::Clear => HashMap::new(),
-        Env::Inherit => std::env::vars().collect(),
-    };
-    env.extend(info.envs.iter().map(|(k, v)| (k.clone(), v.clone())));
-
-    let c_cmd = to_cstr(info.app.as_str())?;
-    let c_args = iter::once(info.app.as_str())
-        .chain(info.args.iter().map(|s| s.as_str()))
-        .map(to_cstr)
-        .collect::<Result<Vec<_>>>()?;
-    let c_env = env
-        .into_iter()
-        .map(|(k, v)| to_cstr(format!("{}={}", k, v)))
-        .collect::<Result<Vec<_>>>()?;
-
-    kill(getpid(), Signal::SIGSTOP)?;
-    execvpe(&c_cmd, &c_args, &c_env)?;
-    Ok(())
+    InitError::None
 }
