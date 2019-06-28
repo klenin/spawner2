@@ -63,7 +63,7 @@ macro_rules! assert_approx_eq {
             (a_val, b_val, diff_val) => {
                 if (*a_val < (*b_val - *diff_val)) || (*a_val > (*b_val + *diff_val)) {
                     panic!(
-                        "assertion failed: (a > (b - diff)) && (a < (b + diff)) \
+                        "assertion failed: |a - b| < diff \
                          a: `{:?}`, b: `{:?}`, diff: `{:?}`",
                         a_val, b_val, diff_val
                     )
