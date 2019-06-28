@@ -31,7 +31,7 @@ use std::ffi::CString;
 use std::iter;
 use std::process;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 pub struct Stdio {
     pub stdin: ReadPipe,
@@ -83,7 +83,6 @@ struct DeadTasksInfo {
 struct ActiveTasks {
     wchar_by_pid: HashMap<Pid, u64>,
     pid_by_inode: HashMap<u32, Pid>,
-    last_update_time: Instant,
 }
 
 struct RawStdio {
@@ -376,7 +375,6 @@ impl ActiveTasks {
         Self {
             wchar_by_pid: HashMap::new(),
             pid_by_inode: HashMap::new(),
-            last_update_time: Instant::now() - Duration::from_secs(10),
         }
     }
 
@@ -406,15 +404,6 @@ impl ActiveTasks {
     }
 
     fn update(&mut self, freezer: &Cgroup) -> Result<DeadTasksInfo> {
-        let update_threshold = Duration::from_micros(300);
-        if self.last_update_time.elapsed() < update_threshold {
-            return Ok(DeadTasksInfo {
-                num_dead_tasks: 0,
-                total_bytes_written: 0,
-            });
-        }
-
-        self.last_update_time = Instant::now();
         self.pid_by_inode.clear();
         let new_wchar_by_pid = freezer
             .get_tasks()?
@@ -440,7 +429,7 @@ impl ActiveTasks {
             .iter_mut()
             .filter_map(|(pid, wchar)| match new_wchar_by_pid.get(pid) {
                 Some(new_wchar) => {
-                    *wchar += new_wchar.unwrap_or(0);
+                    *wchar = std::cmp::max(*wchar, new_wchar.unwrap_or(0));
                     None
                 }
                 None => Some(pid.clone()),
