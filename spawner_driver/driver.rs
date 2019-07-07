@@ -95,7 +95,7 @@ impl Driver {
                 })
                 .collect();
             for (program, role) in programs.iter_mut().zip(roles.iter()) {
-                init_handlers(&mut streams, program, *role, &controller, &agents);
+                init_protocol_handlers(&mut streams, program, *role, &controller, &agents);
             }
         }
 
@@ -194,7 +194,7 @@ fn check_cmds(cmds: &Vec<Command>, warnings: &Warnings) -> Result<()> {
     Ok(())
 }
 
-fn init_handlers(
+fn init_protocol_handlers(
     streams: &mut IoStreams,
     program: &mut SpawnedProgram,
     role: Role,
