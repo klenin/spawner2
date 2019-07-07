@@ -97,6 +97,9 @@ impl Driver {
             for (program, role) in programs.iter_mut().zip(roles.iter()) {
                 init_protocol_handlers(&mut streams, program, *role, &controller, &agents);
             }
+            for agent in agents.iter() {
+                agent.stop_time_accounting();
+            }
         }
 
         streams.optimize()?;

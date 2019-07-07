@@ -10,26 +10,6 @@ use spawner_driver::{run, Report, TerminateReason};
 use std::time::Instant;
 
 #[test]
-fn spawn_suspended() {
-    let r = run(&[
-        "--separator=@",
-        "-d=1",
-        "--@",
-        "--controller",
-        APP,
-        "sleep",
-        "2",
-        "--@",
-        "-y=0.5",
-        APP,
-        "loop",
-        "2",
-    ])
-    .unwrap();
-    ensure_idle_time_limit_exceeded(&r[1]);
-}
-
-#[test]
 fn resume_agent_on_controller_termination() {
     let r = run(&[
         "--separator=@",
@@ -220,6 +200,28 @@ fn controller_deadline() {
 fn controller_idle_time_limit() {
     let r = run(&["-y=1", "--controller", APP, "sleep", "2"]).unwrap();
     ensure_idle_time_limit_exceeded(&r[0]);
+}
+
+#[test]
+fn controller_idle_time_limit_2() {
+    let r = run(&[
+        "--separator=@",
+        "-d=2",
+        "--@",
+        "--controller",
+        "-y=0.7",
+        APP,
+        "sleep",
+        "2",
+        "--@",
+        "-y=0.3",
+        "--in=*0.stdout",
+        "--out=*0.stdin",
+        APP,
+    ])
+    .unwrap();
+    ensure_idle_time_limit_exceeded(&r[0]);
+    ensure_ok(&r[1]);
 }
 
 #[test]

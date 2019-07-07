@@ -1,7 +1,7 @@
 use crate::protocol_entities::{Agent, AgentIdx, Controller, Message, MessageKind};
 
 use spawner::dataflow::{Connection, DestinationId, OnRead};
-use spawner::{Error, OnTerminate, Result, RunnerMessage};
+use spawner::{Error, OnTerminate, Result};
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -49,7 +49,7 @@ impl ControllerStdout {
     }
 
     fn handle_msg(&self, connections: &mut [Connection]) -> Result<()> {
-        self.controller.send(RunnerMessage::ResetTime);
+        self.controller.reset_time();
 
         let msg = self.buf.as_msg()?;
         if let Some(agent_idx) = msg.agent_idx() {
@@ -62,14 +62,8 @@ impl ControllerStdout {
 
             let agent = &self.agents[agent_idx.0];
             match msg.kind() {
-                MessageKind::Terminate => {
-                    agent.send(RunnerMessage::Terminate);
-                }
-                MessageKind::Resume => {
-                    agent
-                        .send(RunnerMessage::Resume)
-                        .send(RunnerMessage::ResumeTimeAccounting);
-                }
+                MessageKind::Terminate => agent.terminate(),
+                MessageKind::Resume => agent.resume(),
                 _ => {}
             }
         }
@@ -129,12 +123,9 @@ impl OnRead for AgentStdout {
     fn on_read(&mut self, data: &[u8], connections: &mut [Connection]) -> Result<()> {
         let mut next_msg = self.buf.write(data)?;
         while self.buf.is_msg_ready() {
-            self.agent
-                .send(RunnerMessage::Suspend)
-                .send(RunnerMessage::StopTimeAccounting)
-                .send(RunnerMessage::ResetTime);
+            self.agent.suspend();
 
-            for mut connection in connections.iter_mut() {
+            for connection in connections.iter_mut() {
                 connection.send(self.buf.as_slice());
             }
 
@@ -170,7 +161,7 @@ impl ControllerTermination {
 impl OnTerminate for ControllerTermination {
     fn on_terminate(&mut self) {
         for agent in &self.agents {
-            agent.send(RunnerMessage::Resume);
+            agent.resume();
         }
     }
 }

@@ -46,9 +46,8 @@ impl Controller {
         }
     }
 
-    pub fn send(&self, msg: RunnerMessage) -> &Self {
-        let _ = self.sender.send(msg);
-        self
+    pub fn reset_time(&self) {
+        let _ = self.sender.send(RunnerMessage::ResetTime);
     }
 
     pub fn stdin(&mut self) -> MutexGuard<WritePipe> {
@@ -73,9 +72,28 @@ impl Agent {
         self.idx
     }
 
-    pub fn send(&self, msg: RunnerMessage) -> &Self {
+    fn send(&self, msg: RunnerMessage) -> &Self {
         let _ = self.sender.send(msg);
         self
+    }
+
+    pub fn terminate(&self) {
+        self.send(RunnerMessage::Terminate);
+    }
+
+    pub fn stop_time_accounting(&self) {
+        self.send(RunnerMessage::StopTimeAccounting);
+    }
+
+    pub fn suspend(&self) {
+        self.send(RunnerMessage::Suspend)
+            .send(RunnerMessage::StopTimeAccounting)
+            .send(RunnerMessage::ResetTime);
+    }
+
+    pub fn resume(&self) {
+        self.send(RunnerMessage::Resume)
+            .send(RunnerMessage::ResumeTimeAccounting);
     }
 
     pub fn stdio_mapping(&self) -> StdioMapping {
