@@ -13,7 +13,7 @@ pub struct TmpDir {
 }
 
 pub const MEM_ERR: u64 = 2 * 1024 * 1024; // 2MB
-pub const TIME_ERR: f64 = 0.1; // 100 ms
+pub const TIME_ERR: f64 = 0.15; // 150 ms
 
 #[cfg(windows)]
 pub const APP: &str = "../target/debug/app.exe";
