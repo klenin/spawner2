@@ -3,7 +3,7 @@ use crate::{Error, Result};
 
 use std::collections::HashMap;
 use std::fmt;
-use std::io::{BufWriter, Read, Write};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
@@ -13,8 +13,8 @@ pub struct SourceId(usize);
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct DestinationId(usize);
 
-pub trait OnRead: Send {
-    fn on_read(&mut self, data: &[u8], dsts: &mut [Connection]) -> Result<()>;
+pub trait SourceReader: Send {
+    fn read(&mut self, src: &mut ReadPipe, connections: &mut [Connection]) -> Result<()>;
 }
 
 #[derive(Debug)]
@@ -23,9 +23,13 @@ enum ConnectionKind {
     File(BufWriter<WritePipe>),
 }
 
+enum ConnectionState {
+    Alive(Arc<Mutex<ConnectionKind>>),
+    Dead,
+}
+
 pub struct Connection {
-    kind: Arc<Mutex<ConnectionKind>>,
-    is_dead: bool,
+    state: ConnectionState,
     src_id: SourceId,
     dst_id: DestinationId,
 }
@@ -39,7 +43,7 @@ pub struct Source {
     pipe: ReadPipe,
     connections: Vec<Connection>,
     edges: Vec<DestinationId>,
-    on_read: Option<Box<OnRead>>,
+    reader: Option<Box<SourceReader>>,
 }
 
 pub struct Graph {
@@ -78,20 +82,23 @@ impl Connection {
     }
 
     pub fn send(&mut self, data: &[u8]) {
-        if self.is_dead {
-            return;
-        }
-        let result = match *self.kind.lock().unwrap() {
-            ConnectionKind::Pipe(ref mut p) => p.write_all(data),
-            ConnectionKind::File(ref mut f) => f.write_all(data),
+        let result = match self.state {
+            ConnectionState::Alive(ref mut kind) => match *kind.lock().unwrap() {
+                ConnectionKind::Pipe(ref mut p) => p.write_all(data),
+                ConnectionKind::File(ref mut f) => f.write_all(data),
+            },
+            ConnectionState::Dead => return,
         };
         if result.is_err() {
-            self.is_dead = true;
+            self.state = ConnectionState::Dead;
         }
     }
 
     fn is_dead(&self) -> bool {
-        self.is_dead
+        match self.state {
+            ConnectionState::Dead => true,
+            _ => false,
+        }
     }
 }
 
@@ -100,15 +107,15 @@ impl Source {
         &self.edges
     }
 
-    pub fn has_handler(&self) -> bool {
-        self.on_read.is_some()
+    pub fn has_reader(&self) -> bool {
+        self.reader.is_some()
     }
 
-    pub fn set_handler<T>(&mut self, on_read: T)
+    pub fn set_reader<T>(&mut self, reader: T)
     where
-        T: OnRead + 'static,
+        T: SourceReader + 'static,
     {
-        self.on_read = Some(Box::new(on_read));
+        self.reader = Some(Box::new(reader));
     }
 }
 
@@ -136,7 +143,7 @@ impl Graph {
                 pipe: src,
                 connections: Vec::new(),
                 edges: Vec::new(),
-                on_read: None,
+                reader: None,
             },
         );
         id
@@ -216,10 +223,9 @@ impl Graph {
         dst.edges.push(src_id);
         src.edges.push(dst_id);
         src.connections.push(Connection {
-            kind: dst.connection_kind.clone(),
+            state: ConnectionState::Alive(dst.connection_kind.clone()),
             src_id: src_id,
             dst_id: dst_id,
-            is_dead: false,
         })
     }
 
@@ -295,30 +301,33 @@ impl Transmitter {
     }
 }
 
-fn read_source(mut src: Source) -> Result<ReadPipe> {
-    let mut buffer: Vec<u8> = Vec::new();
-    buffer.resize(8192, 0);
+fn read_source(src: Source) -> Result<ReadPipe> {
+    let reader = src.reader;
+    let mut pipe = src.pipe;
+    let mut connections = src.connections;
 
+    if let Some(mut reader) = reader {
+        return reader.read(&mut pipe, &mut connections).map(|_| pipe);
+    }
+
+    let mut reader = BufReader::new(pipe);
     loop {
-        let data = match src.pipe.read(buffer.as_mut_slice()) {
-            Ok(bytes_read) => &buffer[..bytes_read],
-            Err(_) => break,
+        let data_len = {
+            let data = reader.fill_buf().unwrap_or(&[]);
+            if data.is_empty() {
+                break;
+            }
+            for c in connections.iter_mut() {
+                c.send(data);
+            }
+            data.len()
         };
-        if data.is_empty() {
-            break;
-        }
+        reader.consume(data_len);
 
-        match src.on_read {
-            Some(ref mut handler) => handler.on_read(data, &mut src.connections)?,
-            None => src
-                .connections
-                .iter_mut()
-                .for_each(|connection| connection.send(data)),
-        }
-        if src.connections.iter().all(Connection::is_dead) {
+        if connections.iter().all(Connection::is_dead) {
             break;
         }
     }
 
-    Ok(src.pipe)
+    Ok(reader.into_inner())
 }

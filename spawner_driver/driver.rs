@@ -8,7 +8,6 @@ use crate::protocol_handlers::{
 use crate::sys::init_os_specific_process_extensions;
 
 use spawner::dataflow::Graph;
-use spawner::pipe;
 use spawner::process::{Group, ProcessInfo};
 use spawner::{
     Error, IdleTimeLimit, MessageChannel, Report, ResourceLimits, Result, SpawnedProgram, Spawner,
@@ -79,12 +78,8 @@ impl Driver {
             .collect::<Result<Vec<_>>>()?;
 
         if let Some(controller) = cmds.iter().position(|cmd| cmd.controller) {
-            let (r, w) = pipe::create()?;
-            let id = streams.graph.add_source(r);
-            let controller_mapping = streams.mappings[controller];
-            streams.graph.connect(id, controller_mapping.stdin);
-
-            let controller = Controller::new(senders[controller].clone(), w, controller_mapping);
+            let controller =
+                Controller::new(senders[controller].clone(), streams.mappings[controller]);
             let agents = roles
                 .iter()
                 .zip(streams.mappings.iter())
@@ -206,13 +201,13 @@ fn init_protocol_handlers(
 ) {
     match role {
         Role::Agent(idx) => {
-            let agent = agents[idx.0].clone();
-            program.on_terminate(AgentTermination::new(&agent, controller.clone()));
+            let agent = &agents[idx.0];
+            program.on_terminate(AgentTermination::new(agent.clone()));
             streams
                 .graph
                 .source_mut(agent.stdio_mapping().stdout)
                 .unwrap()
-                .set_handler(AgentStdout::new(agent));
+                .set_reader(AgentStdout::new(agent.clone()));
         }
         Role::Controller => {
             program.on_terminate(ControllerTermination::new(agents.clone()));
@@ -220,7 +215,7 @@ fn init_protocol_handlers(
                 .graph
                 .source_mut(controller.stdio_mapping().stdout)
                 .unwrap()
-                .set_handler(ControllerStdout::new(controller.clone(), agents.clone()));
+                .set_reader(ControllerStdout::new(controller.clone(), agents.clone()));
         }
         _ => {}
     }

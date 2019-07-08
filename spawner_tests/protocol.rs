@@ -30,7 +30,7 @@ fn resume_agent_on_controller_termination() {
 fn agent_termination_message() {
     let tmp = TmpDir::new();
     let stderr = tmp.file("stderr.txt");
-
+    let stdout = tmp.file("stdout.txt");
     run(&[
         "--separator=@",
         "-d=1",
@@ -42,9 +42,12 @@ fn agent_termination_message() {
         "wake_controller",
         "--@",
         "--in=*0.stdout",
+        "--out=*0.stdin",
+        format!("--out={}", stdout).as_str(),
         APP,
     ])
     .unwrap();
+    assert_eq!(b"1T#\n", read_all(stdout).as_bytes());
     assert_eq!(b"1T#\n", read_all(stderr).as_bytes());
 }
 

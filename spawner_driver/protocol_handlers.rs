@@ -1,28 +1,23 @@
 use crate::protocol_entities::{Agent, AgentIdx, Controller, Message, MessageKind};
 
-use spawner::dataflow::{Connection, DestinationId, OnRead};
+use spawner::dataflow::{Connection, DestinationId, SourceReader};
+use spawner::pipe::ReadPipe;
 use spawner::{Error, OnTerminate, Result};
 
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{BufRead, BufReader};
+use std::thread;
+use std::time::Duration;
 
 pub struct ControllerStdout {
     controller: Controller,
     agents: Vec<Agent>,
     agent_by_stdin_id: HashMap<DestinationId, AgentIdx>,
-    buf: MessageBuf,
 }
 
-pub struct AgentStdout {
-    agent: Agent,
-    msg_prefix: String,
-    buf: MessageBuf,
-}
+pub struct AgentStdout(Agent);
 
-pub struct AgentTermination {
-    msg: String,
-    controller: Controller,
-}
+pub struct AgentTermination(Agent);
 
 pub struct ControllerTermination {
     agents: Vec<Agent>,
@@ -44,14 +39,12 @@ impl ControllerStdout {
             controller: controller,
             agents: agents,
             agent_by_stdin_id: agent_by_stdin_id,
-            buf: MessageBuf::new(),
         }
     }
 
-    fn handle_msg(&self, connections: &mut [Connection]) -> Result<()> {
+    fn handle_msg(&self, msg: Message, connections: &mut [Connection]) -> Result<()> {
         self.controller.reset_time();
 
-        let msg = self.buf.as_msg()?;
         if let Some(agent_idx) = msg.agent_idx() {
             if agent_idx.0 >= self.agents.len() {
                 return Err(Error::from(format!(
@@ -73,82 +66,111 @@ impl ControllerStdout {
     }
 
     fn transmit_msg(&self, msg: Message, connections: &mut [Connection]) {
-        for connection in connections {
-            let agent_idx = self
-                .agent_by_stdin_id
-                .get(&connection.destination_id())
-                .map(|&i| i);
+        for c in connections {
+            let agent_idx = self.agent_by_stdin_id.get(&c.destination_id()).map(|&i| i);
 
             match (agent_idx, msg.kind()) {
                 (Some(_), MessageKind::Data(data)) => {
                     if agent_idx == msg.agent_idx() {
-                        connection.send(data);
+                        c.send(data);
                     }
                 }
                 (Some(_), _) => {}
                 (None, _) => {
-                    connection.send(self.buf.as_slice());
+                    c.send(msg.as_raw());
                 }
             }
         }
     }
 }
 
-impl OnRead for ControllerStdout {
-    fn on_read(&mut self, data: &[u8], connections: &mut [Connection]) -> Result<()> {
-        let mut next_msg = self.buf.write(data)?;
-        while self.buf.is_msg_ready() {
-            self.handle_msg(connections)?;
-            self.buf.clear();
-            next_msg = self.buf.write(next_msg)?;
+impl SourceReader for ControllerStdout {
+    fn read(&mut self, stdout: &mut ReadPipe, connections: &mut [Connection]) -> Result<()> {
+        let mut stdout_reader = BufReader::new(stdout);
+        let mut msg_buf = MessageBuf::new();
+        let mut data_len = 0;
+        loop {
+            stdout_reader.consume(data_len);
+            let data = stdout_reader.fill_buf().unwrap_or(&[]);
+            data_len = data.len();
+            if data_len == 0 {
+                return Ok(());
+            }
+
+            let mut next_msg_data = msg_buf.write(data)?;
+            while msg_buf.is_msg_ready() {
+                self.handle_msg(msg_buf.as_msg()?, connections)?;
+                msg_buf.clear();
+                next_msg_data = msg_buf.write(next_msg_data)?;
+            }
         }
-        Ok(())
     }
 }
 
 impl AgentStdout {
     pub fn new(agent: Agent) -> Self {
-        let mut buf = MessageBuf::new();
-        let msg_prefix = format!("{}#", agent.idx().0 + 1);
-        buf.write(msg_prefix.as_bytes()).unwrap();
-        Self {
-            agent: agent,
-            msg_prefix: msg_prefix,
-            buf: buf,
-        }
+        Self(agent)
     }
 }
 
-impl OnRead for AgentStdout {
-    fn on_read(&mut self, data: &[u8], connections: &mut [Connection]) -> Result<()> {
-        let mut next_msg = self.buf.write(data)?;
-        while self.buf.is_msg_ready() {
-            self.agent.suspend();
+impl SourceReader for AgentStdout {
+    fn read(&mut self, stdout: &mut ReadPipe, connections: &mut [Connection]) -> Result<()> {
+        let mut stdout_reader = BufReader::new(stdout);
+        let mut msg_buf = MessageBuf::new();
+        let msg_prefix = format!("{}#", self.0.idx().0 + 1);
+        msg_buf.write(msg_prefix.as_bytes()).unwrap();
+        let mut data_len = 0;
 
-            for connection in connections.iter_mut() {
-                connection.send(self.buf.as_slice());
+        loop {
+            stdout_reader.consume(data_len);
+            let data = stdout_reader.fill_buf().unwrap_or(&[]);
+            data_len = data.len();
+            if data_len == 0 {
+                break;
             }
 
-            self.buf.clear();
-            self.buf.write(self.msg_prefix.as_bytes()).unwrap();
-            next_msg = self.buf.write(next_msg)?;
+            let mut next_msg_data = msg_buf.write(data)?;
+            while msg_buf.is_msg_ready() {
+                self.0.suspend();
+
+                for c in connections.iter_mut() {
+                    c.send(msg_buf.as_slice());
+                }
+
+                msg_buf.clear();
+                msg_buf.write(msg_prefix.as_bytes()).unwrap();
+                next_msg_data = msg_buf.write(next_msg_data)?;
+            }
         }
+
+        while !self.0.is_terminated() {
+            thread::sleep(Duration::from_millis(1));
+        }
+
+        let term_message = format!("{}T#\n", self.0.idx().0 + 1);
+        for c in connections.iter_mut() {
+            c.send(term_message.as_bytes());
+        }
+
         Ok(())
     }
 }
 
 impl AgentTermination {
-    pub fn new(agent: &Agent, controller: Controller) -> Self {
-        Self {
-            msg: format!("{}T#\n", agent.idx().0 + 1),
-            controller: controller,
-        }
+    pub fn new(agent: Agent) -> Self {
+        Self(agent)
     }
 }
 
 impl OnTerminate for AgentTermination {
     fn on_terminate(&mut self) {
-        let _ = self.controller.stdin().write_all(self.msg.as_bytes());
+        self.0.set_terminated();
+    }
+}
+
+impl Drop for AgentTermination {
+    fn drop(&mut self) {
+        self.0.set_terminated();
     }
 }
 

@@ -158,7 +158,7 @@ fn optimize_ostream(graph: &mut Graph, src_id: SourceId, pipe: &mut WritePipe) -
     let num_edges = match graph.source(src_id) {
         Some(src) => {
             let num_edges = src.edges().len();
-            if num_edges > 1 || src.has_handler() {
+            if num_edges > 1 || src.has_reader() {
                 return Ok(());
             }
             num_edges
@@ -199,7 +199,7 @@ fn optimize_istream(graph: &mut Graph, dst_id: DestinationId, pipe: &mut ReadPip
     let src_id = graph.destination(dst_id).map(|dst| dst.edges()[0]).unwrap();
     if graph
         .source(src_id)
-        .map(|src| src.edges().len() != 1 || src.has_handler())
+        .map(|src| src.edges().len() != 1 || src.has_reader())
         .unwrap()
     {
         return Ok(());

@@ -1,20 +1,19 @@
 use crate::io::StdioMapping;
 
-use spawner::pipe::WritePipe;
 use spawner::RunnerMessage;
 use spawner::{Error, Result};
 
 use std::char;
 use std::str;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
 
 #[derive(Copy, Clone, PartialEq)]
 pub struct AgentIdx(pub usize);
 
 #[derive(Clone)]
 pub struct Controller {
-    stdin: Arc<Mutex<WritePipe>>,
     sender: Sender<RunnerMessage>,
     mapping: StdioMapping,
 }
@@ -24,6 +23,7 @@ pub struct Agent {
     idx: AgentIdx,
     sender: Sender<RunnerMessage>,
     mapping: StdioMapping,
+    is_terminated: Arc<AtomicBool>,
 }
 
 pub enum MessageKind<'a> {
@@ -35,23 +35,19 @@ pub enum MessageKind<'a> {
 pub struct Message<'a> {
     agent_idx: Option<AgentIdx>,
     kind: MessageKind<'a>,
+    raw: &'a [u8],
 }
 
 impl Controller {
-    pub fn new(sender: Sender<RunnerMessage>, stdin_w: WritePipe, mapping: StdioMapping) -> Self {
+    pub fn new(sender: Sender<RunnerMessage>, mapping: StdioMapping) -> Self {
         Self {
             sender: sender,
-            stdin: Arc::new(Mutex::new(stdin_w)),
             mapping: mapping,
         }
     }
 
     pub fn reset_time(&self) {
         let _ = self.sender.send(RunnerMessage::ResetTime);
-    }
-
-    pub fn stdin(&mut self) -> MutexGuard<WritePipe> {
-        self.stdin.lock().unwrap()
     }
 
     pub fn stdio_mapping(&self) -> StdioMapping {
@@ -65,6 +61,7 @@ impl Agent {
             idx: idx,
             sender: sender,
             mapping: mapping,
+            is_terminated: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -98,6 +95,14 @@ impl Agent {
 
     pub fn stdio_mapping(&self) -> StdioMapping {
         self.mapping
+    }
+
+    pub fn is_terminated(&self) -> bool {
+        self.is_terminated.load(Ordering::SeqCst)
+    }
+
+    pub fn set_terminated(&self) {
+        self.is_terminated.store(true, Ordering::SeqCst)
     }
 }
 
@@ -157,6 +162,7 @@ impl<'a> Message<'a> {
                 x => Some(AgentIdx(x - 1)),
             },
             kind: kind,
+            raw: data,
         })
     }
 
@@ -166,5 +172,9 @@ impl<'a> Message<'a> {
 
     pub fn agent_idx(&self) -> Option<AgentIdx> {
         self.agent_idx
+    }
+
+    pub fn as_raw(&self) -> &[u8] {
+        self.raw
     }
 }
