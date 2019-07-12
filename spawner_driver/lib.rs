@@ -78,7 +78,7 @@ impl Commands {
 
     fn run(self) -> Result<Vec<Report>> {
         let driver = Driver::new(&self.0)?;
-        eprintln!("{}", driver.warnings());
+        eprint!("{}", driver.warnings());
 
         let reports = driver
             .run()

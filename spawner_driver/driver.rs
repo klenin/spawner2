@@ -54,7 +54,7 @@ impl Warnings {
 impl fmt::Display for Warnings {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for w in self.0.borrow().iter() {
-            write!(f, "warning: {}", w)?;
+            writeln!(f, "warning: {}", w)?;
         }
         Ok(())
     }
