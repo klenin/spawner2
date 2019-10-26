@@ -85,7 +85,7 @@ pub struct SpawnedProgram {
     stdio: Option<Stdio>,
     resource_limits: Option<ResourceLimits>,
     monitor_interval: Duration,
-    on_terminate: Option<Box<OnTerminate>>,
+    on_terminate: Option<Box<dyn OnTerminate>>,
     wait_for_children: bool,
     msg_channel: MessageChannel,
 }
@@ -105,7 +105,7 @@ struct ProcessMonitor {
     msg_receiver: Receiver<RunnerMessage>,
     monitor_interval: Duration,
     wait_for_children: bool,
-    on_terminate: Option<Box<OnTerminate>>,
+    on_terminate: Option<Box<dyn OnTerminate>>,
 }
 
 impl Default for ResourceLimits {

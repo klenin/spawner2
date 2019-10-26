@@ -43,7 +43,7 @@ pub struct Source {
     pipe: ReadPipe,
     connections: Vec<Connection>,
     edges: Vec<DestinationId>,
-    reader: Option<Box<SourceReader>>,
+    reader: Option<Box<dyn SourceReader>>,
 }
 
 pub struct Graph {
