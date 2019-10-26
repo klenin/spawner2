@@ -42,6 +42,7 @@ use winapi::um::winuser::{
 use std::alloc::{alloc_zeroed, dealloc, Layout};
 use std::ffi::OsStr;
 use std::mem;
+use std::marker::PhantomData;
 use std::os::windows::ffi::OsStrExt;
 use std::ptr;
 use std::slice;
@@ -72,9 +73,12 @@ pub struct EnvBlock {
     len: usize,
 }
 
-pub struct StartupInfo {
+pub struct StartupInfo<'a, 'b, 'c> {
     base: STARTUPINFOEXW,
     _att_list: AttList,
+    stdio: PhantomData<&'a RawStdio>,
+    inherited_handles: PhantomData<&'b mut [HANDLE]>,
+    user: PhantomData<&'c mut User>,
 }
 
 struct AttList {
@@ -323,11 +327,11 @@ impl Drop for EnvBlock {
     }
 }
 
-impl StartupInfo {
+impl<'a, 'b, 'c> StartupInfo<'a, 'b, 'c> {
     pub fn create(
-        stdio: &RawStdio,
-        inherited_handles: &mut [HANDLE],
-        user: Option<&mut User>,
+        stdio: &'a RawStdio,
+        inherited_handles: &'b mut [HANDLE],
+        user: Option<&'c mut User>,
         show_window: bool,
     ) -> Result<Self> {
         let mut att_list = AttList::allocate(1)?;
@@ -354,6 +358,9 @@ impl StartupInfo {
         Ok(StartupInfo {
             base: info,
             _att_list: att_list,
+            stdio: PhantomData,
+            inherited_handles: PhantomData,
+            user: PhantomData,
         })
     }
 
