@@ -1,6 +1,6 @@
 use crate::cmd::{Command, RedirectList};
 use crate::driver::DriverResult;
-use crate::misc::{b2mb, dur2sec, mb2b};
+use crate::misc::{b2mb, mb2b};
 
 use spawner::process::ExitStatus;
 use spawner::{self, Error, TerminationReason};
@@ -264,14 +264,14 @@ impl From<&spawner::Report> for ReportResult {
         let io = report.io.unwrap_or_default();
         let pid_counters = report.pid_counters.unwrap_or_default();
 
-        let time = dur2sec(&timers.total_user_time);
-        let wc_time = dur2sec(&report.wall_clock_time);
+        let time = timers.total_user_time.as_secs_f64();
+        let wc_time = report.wall_clock_time.as_secs_f64();
         Self {
             time: time,
             wall_clock_time: wc_time,
             memory: memory.max_usage,
             bytes_written: io.total_bytes_written,
-            kernel_time: dur2sec(&timers.total_kernel_time),
+            kernel_time: timers.total_kernel_time.as_secs_f64(),
             processor_load: if wc_time <= 1e-8 { 0.0 } else { time / wc_time },
             processes_created: pid_counters.total_processes as u64,
         }
@@ -309,15 +309,15 @@ impl ReportLimit {
 impl From<&Command> for ReportLimit {
     fn from(cmd: &Command) -> Self {
         Self {
-            time: cmd.time_limit.map(|ref d| dur2sec(d)),
-            wall_clock_time: cmd.wall_clock_time_limit.map(|ref d| dur2sec(d)),
+            time: cmd.time_limit.map(|d| d.as_secs_f64()),
+            wall_clock_time: cmd.wall_clock_time_limit.map(|d| d.as_secs_f64()),
             memory: cmd.memory_limit.map(|x| mb2b(x)),
             security_level: match cmd.secure {
                 true => Some(1),
                 false => None,
             },
             io_bytes: cmd.write_limit.map(|x| mb2b(x)),
-            idleness_time: cmd.idle_time_limit.map(|ref d| dur2sec(d)),
+            idleness_time: cmd.idle_time_limit.map(|d| d.as_secs_f64()),
             idleness_processor_load: Some(cmd.load_ratio),
         }
     }
