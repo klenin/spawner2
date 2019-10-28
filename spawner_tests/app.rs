@@ -134,7 +134,7 @@ fn main() {
             }
             "exec_rest_and_sleep" => {
                 let _ = process::Command::new(p.next()).args(p.0).spawn();
-                thread::sleep(Duration::from_secs(1));
+                thread::sleep(Duration::from_secs(3));
                 return;
             }
             "create_tcpv4_sockets" => create_tcp_sockets(p.parse(), "127.0.0.1"),
