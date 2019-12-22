@@ -326,7 +326,7 @@ fn parse_pipe_redirect(s: &str, flags: RedirectFlags) -> Result<Redirect, String
                     "stderr" => RedirectKind::Stderr(v),
                     _ => return Err(format!("Invalid suffix '{}' in '{}'", pipe_kind, s)),
                 },
-                flags: flags,
+                flags,
             }),
             None => Err(format!("Invalid pipe index '{}'", num_str)),
         }
@@ -337,7 +337,7 @@ fn parse_pipe_redirect(s: &str, flags: RedirectFlags) -> Result<Redirect, String
                 "null" => RedirectKind::Null,
                 _ => return Err(format!("Invalid pipe redirect '{}'", s)),
             },
-            flags: flags,
+            flags,
         })
     }
 }
@@ -345,7 +345,7 @@ fn parse_pipe_redirect(s: &str, flags: RedirectFlags) -> Result<Redirect, String
 fn parse_file_redirect(s: &str, flags: RedirectFlags) -> Redirect {
     Redirect {
         kind: RedirectKind::File(s.to_string()),
-        flags: flags,
+        flags,
     }
 }
 

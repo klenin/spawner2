@@ -26,7 +26,7 @@ where
             pos: argv.into_iter().peekable(),
             entries: Vec::new(),
             optmap: HashMap::new(),
-            delims: delims,
+            delims,
         }
     }
 

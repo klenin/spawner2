@@ -105,7 +105,7 @@ impl Driver {
 
         Ok(Driver {
             graph: streams.graph,
-            programs: programs,
+            programs,
             warnings: streams.warnings,
             mappings: streams.mappings,
         })

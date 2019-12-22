@@ -109,11 +109,11 @@ impl<'a> OptAttribute<'a> {
 impl<'a> Opt<'a> {
     fn new(kind: OptKind, field: &'a Field) -> Self {
         Opt {
-            kind: kind,
+            kind,
             names: Vec::new(),
             desc: None,
             env: None,
-            field: field,
+            field,
         }
     }
 
@@ -317,7 +317,7 @@ impl<'a> OptContainer<'a> {
             usage: None,
             default_parser: None,
             opts: Vec::new(),
-            ast: ast,
+            ast,
         };
         cont.init_opts()?;
         cont.init_attrs()?;

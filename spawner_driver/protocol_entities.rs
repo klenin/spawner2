@@ -40,10 +40,7 @@ pub struct Message<'a> {
 
 impl Controller {
     pub fn new(sender: Sender<RunnerMessage>, mapping: StdioMapping) -> Self {
-        Self {
-            sender: sender,
-            mapping: mapping,
-        }
+        Self { sender, mapping }
     }
 
     pub fn reset_time(&self) {
@@ -58,9 +55,9 @@ impl Controller {
 impl Agent {
     pub fn new(idx: AgentIdx, sender: Sender<RunnerMessage>, mapping: StdioMapping) -> Self {
         Self {
-            idx: idx,
-            sender: sender,
-            mapping: mapping,
+            idx,
+            sender,
+            mapping,
             is_terminated: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -161,7 +158,7 @@ impl<'a> Message<'a> {
                 0 => None,
                 x => Some(AgentIdx(x - 1)),
             },
-            kind: kind,
+            kind,
             raw: data,
         })
     }

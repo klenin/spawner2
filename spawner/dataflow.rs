@@ -224,8 +224,8 @@ impl Graph {
         src.edges.push(dst_id);
         src.connections.push(Connection {
             state: ConnectionState::Alive(dst.connection_kind.clone()),
-            src_id: src_id,
-            dst_id: dst_id,
+            src_id,
+            dst_id,
         })
     }
 
@@ -296,7 +296,7 @@ impl Transmitter {
         if errors.is_empty() {
             Ok(())
         } else {
-            Err(Errors { errors: errors })
+            Err(Errors { errors })
         }
     }
 }

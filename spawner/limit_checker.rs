@@ -26,7 +26,7 @@ const CPU_LOAD_SMOOTHING_FACTOR: f64 = 1.0 - 1.0 / CPU_LOAD_WINDOW_LENGTH as f64
 impl LimitChecker {
     pub fn new(limits: ResourceLimits) -> Self {
         Self {
-            limits: limits,
+            limits,
             prev_check: None,
             wall_clock_time: Duration::from_millis(0),
             total_user_time: Duration::from_millis(0),

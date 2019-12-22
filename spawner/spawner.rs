@@ -126,7 +126,7 @@ impl Default for ResourceLimits {
 impl SpawnedProgram {
     pub fn new(info: ProcessInfo) -> Self {
         Self {
-            info: info,
+            info,
             group: None,
             stdio: None,
             resource_limits: None,
@@ -251,10 +251,10 @@ impl ProcessMonitor {
             process: ps,
             creation_time: Instant::now(),
             term_reason: None,
-            msg_receiver: msg_receiver,
-            monitor_interval: monitor_interval,
-            wait_for_children: wait_for_children,
-            on_terminate: on_terminate,
+            msg_receiver,
+            monitor_interval,
+            wait_for_children,
+            on_terminate,
         })
         .and_then(|pm| pm.monitoring_loop(group))
     }
@@ -318,9 +318,9 @@ impl ProcessMonitor {
             memory: usage.memory()?,
             io: usage.io()?,
             timers: usage.timers()?,
-            pid_counters: pid_counters,
+            pid_counters,
             network: usage.network()?,
-            exit_status: exit_status,
+            exit_status,
             termination_reason: self.term_reason,
         }))
     }

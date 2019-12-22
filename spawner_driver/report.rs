@@ -228,7 +228,7 @@ impl From<&Command> for Report {
             } else {
                 ReportKind::Legacy
             },
-            limit: limit,
+            limit,
             options: ReportOptions {
                 search_in_path: cmd.use_syspath,
                 debug: cmd.debug,
@@ -267,7 +267,7 @@ impl From<&spawner::Report> for ReportResult {
         let time = timers.total_user_time.as_secs_f64();
         let wc_time = report.wall_clock_time.as_secs_f64();
         Self {
-            time: time,
+            time,
             wall_clock_time: wc_time,
             memory: memory.max_usage,
             bytes_written: io.total_bytes_written,

@@ -36,9 +36,9 @@ impl ControllerStdout {
             .map(|(idx, agent)| (agent.stdio_mapping().stdin, AgentIdx(idx)))
             .collect();
         Self {
-            controller: controller,
-            agents: agents,
-            agent_by_stdin_id: agent_by_stdin_id,
+            controller,
+            agents,
+            agent_by_stdin_id,
         }
     }
 
@@ -176,7 +176,7 @@ impl Drop for AgentTermination {
 
 impl ControllerTermination {
     pub fn new(agents: Vec<Agent>) -> Self {
-        Self { agents: agents }
+        Self { agents }
     }
 }
 
