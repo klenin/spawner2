@@ -95,7 +95,7 @@ impl Commands {
         Ok(reports)
     }
 
-    fn print_reports(&self, reports: &Vec<Report>) -> std::io::Result<()> {
+    fn print_reports(&self, reports: &[Report]) -> std::io::Result<()> {
         let mut output_files: HashMap<&String, Vec<&Report>> = HashMap::new();
         for (i, cmd) in self.0.iter().enumerate() {
             if !cmd.hide_report && reports.len() == 1 {

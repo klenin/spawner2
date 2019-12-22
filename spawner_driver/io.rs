@@ -29,7 +29,7 @@ pub struct IoStreams {
 }
 
 impl IoStreams {
-    pub fn new(cmds: &Vec<Command>) -> Result<Self> {
+    pub fn new(cmds: &[Command]) -> Result<Self> {
         let mut data = Self {
             graph: Graph::new(),
             stdio_list: Vec::new(),

@@ -249,7 +249,7 @@ impl<'a> OptContainer<'a> {
         ))
     }
 
-    fn parse_attrs(attrs: &Vec<Attribute>) -> Result<Vec<OptContainerAttribute>, Vec<Error>> {
+    fn parse_attrs(attrs: &[Attribute]) -> Result<Vec<OptContainerAttribute>, Vec<Error>> {
         let mut errors: Vec<Error> = Vec::new();
         let mut result: Vec<OptContainerAttribute> = Vec::new();
         for attr in attrs.iter() {

@@ -61,7 +61,7 @@ impl fmt::Display for Warnings {
 }
 
 impl Driver {
-    pub fn new(cmds: &Vec<Command>) -> Result<Self> {
+    pub fn new(cmds: &[Command]) -> Result<Self> {
         let mut streams = IoStreams::new(cmds)?;
         check_cmds(cmds, &streams.warnings)?;
 
@@ -88,7 +88,7 @@ impl Driver {
                     Role::Agent(idx) => Some(Agent::new(*idx, sender.clone(), *mapping)),
                     _ => None,
                 })
-                .collect();
+                .collect::<Vec<_>>();
             for (program, role) in programs.iter_mut().zip(roles.iter()) {
                 init_protocol_handlers(&mut streams, program, *role, &controller, &agents);
             }
@@ -173,7 +173,7 @@ impl fmt::Display for Errors {
     }
 }
 
-fn check_cmds(cmds: &Vec<Command>, warnings: &Warnings) -> Result<()> {
+fn check_cmds(cmds: &[Command], warnings: &Warnings) -> Result<()> {
     if cmds.iter().filter(|cmd| cmd.controller).count() > 1 {
         return Err(Error::from("There can be at most one controller"));
     }
@@ -197,7 +197,7 @@ fn init_protocol_handlers(
     program: &mut SpawnedProgram,
     role: Role,
     controller: &Controller,
-    agents: &Vec<Agent>,
+    agents: &[Agent],
 ) {
     match role {
         Role::Agent(idx) => {
@@ -210,12 +210,12 @@ fn init_protocol_handlers(
                 .set_reader(AgentStdout::new(agent.clone()));
         }
         Role::Controller => {
-            program.on_terminate(ControllerTermination::new(agents.clone()));
+            program.on_terminate(ControllerTermination::new(agents.to_vec()));
             streams
                 .graph
                 .source_mut(controller.stdio_mapping().stdout)
                 .unwrap()
-                .set_reader(ControllerStdout::new(controller.clone(), agents.clone()));
+                .set_reader(ControllerStdout::new(controller.clone(), agents.to_vec()));
         }
         _ => {}
     }
@@ -276,7 +276,7 @@ fn create_process_info(cmd: &Command, role: Role) -> ProcessInfo {
     info
 }
 
-fn create_roles(cmds: &Vec<Command>) -> Vec<Role> {
+fn create_roles(cmds: &[Command]) -> Vec<Role> {
     if let Some(ctl_pos) = cmds.iter().position(|cmd| cmd.controller) {
         let mut agent_idx = 0;
         cmds.iter()
