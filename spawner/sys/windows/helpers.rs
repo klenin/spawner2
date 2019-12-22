@@ -41,8 +41,8 @@ use winapi::um::winuser::{
 
 use std::alloc::{alloc_zeroed, dealloc, Layout};
 use std::ffi::OsStr;
-use std::mem;
 use std::marker::PhantomData;
+use std::mem;
 use std::os::windows::ffi::OsStrExt;
 use std::ptr;
 use std::slice;
