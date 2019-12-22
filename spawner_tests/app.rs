@@ -46,7 +46,7 @@ fn alloc_(bytes: usize) {
             return;
         }
         for i in 0..bytes {
-            *ptr.offset(i as isize) = 101;
+            *ptr.add(i) = 101;
         }
     }
 }
