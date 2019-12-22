@@ -395,7 +395,7 @@ impl Command {
             let spaces = 30 - (sample.len() + indent.len());
             println!("{}{}{:4$}{}", indent, sample, " ", desc, spaces);
         }
-        println!("");
+        println!();
     }
 }
 

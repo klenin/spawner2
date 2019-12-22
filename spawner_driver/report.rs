@@ -372,7 +372,8 @@ macro_rules! line {
 
 impl<'a> Display for LegacyReport<'a> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "\n--------------- Spawner report ---------------\n")?;
+        writeln!(f)?;
+        writeln!(f, "--------------- Spawner report ---------------")?;
         line!(f, "Application:", self.application)?;
         line!(f, "Parameters:", NoneOrJoin(self.parameters.iter()))?;
         line!(f, "SecurityLevel:", self.security_level.unwrap_or(0))?;
@@ -386,14 +387,14 @@ impl<'a> Display for LegacyReport<'a> {
         line!(f, "DeadLine:", FltSecsOrInf(self.deadline))?;
         line!(f, "MemoryLimit:", MbOrInf(self.memory_limit))?;
         line!(f, "WriteLimit:", MbOrInf(self.write_limit))?;
-        write!(f, "----------------------------------------------\n")?;
+        writeln!(f, "----------------------------------------------")?;
         line!(f, "UserTime:", FltSecs(self.user_time))?;
         line!(f, "PeakMemoryUsed:", Mb(self.peak_memory_used))?;
         line!(f, "Written:", Mb(self.written))?;
         line!(f, "TerminateReason:", self.terminate_reason)?;
         line!(f, "ExitCode:", self.exit_code)?;
         line!(f, "ExitStatus:", self.exit_status)?;
-        write!(f, "----------------------------------------------\n")?;
+        writeln!(f, "----------------------------------------------")?;
         line!(
             f,
             "SpawnerError:",

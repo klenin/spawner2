@@ -84,7 +84,7 @@ fn wake_controller() {
         eprint!("{}", line);
         let num_digits = line.chars().take_while(|c| c.is_digit(10)).count();
         let agent = line[..num_digits].parse::<u64>().unwrap();
-        print!("{}W#\n", agent);
+        println!("{}W#", agent);
         line.clear();
     }
 }
