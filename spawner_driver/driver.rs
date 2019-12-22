@@ -178,7 +178,7 @@ fn check_cmds(cmds: &Vec<Command>, warnings: &Warnings) -> Result<()> {
         return Err(Error::from("There can be at most one controller"));
     }
     for cmd in cmds.iter() {
-        assert!(cmd.argv.len() > 0);
+        assert!(!cmd.argv.is_empty());
         if cmd.delegated {
             warnings.emit("'-runas', '--delegated' options have no effect");
         }

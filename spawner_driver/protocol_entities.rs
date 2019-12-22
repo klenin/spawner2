@@ -105,7 +105,7 @@ impl Agent {
 
 impl<'a> Message<'a> {
     fn parse_header(header: &'a [u8], msg: &'a [u8]) -> Result<(usize, MessageKind<'a>)> {
-        if header.len() == 0 {
+        if header.is_empty() {
             return Err(Error::from("Missing header in controller message"));
         }
 

@@ -160,7 +160,7 @@ impl<'a> Opt<'a> {
             }
         }
 
-        if opt.names.len() == 0 {
+        if opt.names.is_empty() {
             return Err(Error::new_spanned(list, "Unnamed options are not allowed"));
         }
 
@@ -189,7 +189,7 @@ impl<'a> Opt<'a> {
                 }
             }
         }
-        if opts.len() == 0 {
+        if opts.is_empty() {
             opts.push(Opt::new(OptKind::Invalid, field));
         }
         Ok(opts)

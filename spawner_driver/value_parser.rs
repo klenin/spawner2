@@ -375,7 +375,7 @@ fn parse_stdio_redirect(s: &str, list: &mut RedirectList) -> Result<Option<Redir
         // *flags:file or *flags:n.stdio or *flags:
         let flags = parse_redirect_flags(&s[1..pos], list.default_flags)?;
         let redirect = &s[pos + 1..];
-        if redirect.len() == 0 {
+        if redirect.is_empty() {
             list.default_flags = flags;
             Ok(None)
         } else {

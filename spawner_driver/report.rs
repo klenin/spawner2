@@ -216,7 +216,7 @@ impl Display for Report {
 
 impl From<&Command> for Report {
     fn from(cmd: &Command) -> Self {
-        assert!(cmd.argv.len() > 0);
+        assert!(!cmd.argv.is_empty());
 
         let limit = ReportLimit::from(cmd);
         let mut argv = cmd.argv.iter();

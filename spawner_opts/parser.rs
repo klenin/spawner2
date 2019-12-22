@@ -52,7 +52,7 @@ where
     pub fn has_flag(&self, flag: &str) -> bool {
         self.optmap.get(flag).map_or(false, |i| {
             if let Entries::Flag(ref e) = self.entries[*i] {
-                e.len() != 0
+                !e.is_empty()
             } else {
                 false
             }
