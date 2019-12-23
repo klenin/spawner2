@@ -67,7 +67,7 @@ impl ControllerStdout {
 
     fn transmit_msg(&self, msg: Message, connections: &mut [Connection]) {
         for c in connections {
-            let agent_idx = self.agent_by_stdin_id.get(&c.destination_id()).map(|&i| i);
+            let agent_idx = self.agent_by_stdin_id.get(&c.destination_id()).copied();
 
             match (agent_idx, msg.kind()) {
                 (Some(_), MessageKind::Data(data)) => {

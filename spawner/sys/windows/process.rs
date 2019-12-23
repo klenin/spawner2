@@ -270,17 +270,13 @@ impl Process {
         let mut env = match info.env {
             Env::Clear => HashMap::new(),
             Env::Inherit => std::env::vars().collect(),
-            Env::User => {
-                let block = EnvBlock::create(&user)?;
-                let x = block
-                    .iter()
-                    .map(|var| {
-                        let idx = var.find('=').unwrap();
-                        (var[0..idx].to_string(), var[idx + 1..].to_string())
-                    })
-                    .collect();
-                x
-            }
+            Env::User => EnvBlock::create(&user)?
+                .iter()
+                .map(|var| {
+                    let idx = var.find('=').unwrap();
+                    (var[0..idx].to_string(), var[idx + 1..].to_string())
+                })
+                .collect(),
         };
         env.extend(info.envs.iter().map(|(k, v)| (k.clone(), v.clone())));
 

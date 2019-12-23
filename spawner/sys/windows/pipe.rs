@@ -136,9 +136,10 @@ fn open<P: AsRef<Path>>(
             /*lpFileName=*/ to_utf16(path.as_ref()).as_mut_ptr(),
             /*dwDesiredAccess=*/ access,
             /*dwShareMode=*/
-            match exclusive {
-                true => 0,
-                false => FILE_SHARE_READ | FILE_SHARE_WRITE,
+            if exclusive {
+                0
+            } else {
+                FILE_SHARE_READ | FILE_SHARE_WRITE
             },
             /*lpSecurityAttributes=*/ ptr::null_mut(),
             /*dwCreationDisposition=*/ creation_disposition,

@@ -413,14 +413,8 @@ impl Display for RedirectFlags {
         write!(
             f,
             "{}{}",
-            match self.flush {
-                true => "f",
-                false => "-f",
-            },
-            match self.exclusive {
-                true => "e",
-                false => "-e",
-            }
+            if self.flush { "f" } else { "-f" },
+            if self.exclusive { "e" } else { "-e" }
         )
     }
 }

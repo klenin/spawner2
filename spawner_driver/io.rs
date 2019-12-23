@@ -107,9 +107,9 @@ impl IoStreams {
         Ok(())
     }
 
-    fn open_input_file(&mut self, path: &String, flags: RedirectFlags) -> Result<SourceId> {
+    fn open_input_file(&mut self, path: &str, flags: RedirectFlags) -> Result<SourceId> {
         let path = canonicalize(path)?;
-        match self.exclusive_input_files.get(&path).map(|&id| id) {
+        match self.exclusive_input_files.get(&path).copied() {
             Some(id) => Ok(id),
             None => {
                 let pipe = open_input_file(&path, flags, &self.warnings)?;
@@ -122,9 +122,9 @@ impl IoStreams {
         }
     }
 
-    fn open_output_file(&mut self, path: &String, flags: RedirectFlags) -> Result<DestinationId> {
+    fn open_output_file(&mut self, path: &str, flags: RedirectFlags) -> Result<DestinationId> {
         let path = canonicalize(path)?;
-        match self.output_files.get(&path).map(|&id| id) {
+        match self.output_files.get(&path).copied() {
             Some(id) => Ok(id),
             None => {
                 let pipe = open_output_file(&path, flags, &self.warnings)?;
@@ -147,7 +147,7 @@ impl IoStreams {
     }
 }
 
-fn canonicalize(path: &String) -> Result<PathBuf> {
+fn canonicalize(path: &str) -> Result<PathBuf> {
     if !Path::exists(path.as_ref()) {
         fs::File::create(path).map_err(|_| Error::from(format!("Unable to create '{}'", path)))?;
     }

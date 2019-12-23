@@ -150,7 +150,7 @@ fn write_opt(f: &mut fmt::Formatter, opt: &OptionHelp, delim: char) -> fmt::Resu
         .desc
         .as_ref()
         .unwrap_or(empty)
-        .split("\n")
+        .split('\n')
         .filter(|line| !line.is_empty())
         .enumerate()
     {

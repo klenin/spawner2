@@ -121,7 +121,7 @@ impl Report {
                     }
                     ExitStatus::Crashed(cause) => {
                         report.terminate_reason = TerminateReason::AbnormalExitProcess;
-                        report.exit_status = cause.to_string();
+                        report.exit_status = cause;
                     }
                 }
                 if let Some(tr) = runner_report.termination_reason {
@@ -191,8 +191,8 @@ impl Report {
             username: &self.username,
             user_time_limit: self.limit.time,
             deadline: self.limit.wall_clock_time,
-            memory_limit: self.limit.memory.map(|b| b2mb(b)),
-            write_limit: self.limit.io_bytes.map(|b| b2mb(b)),
+            memory_limit: self.limit.memory.map(b2mb),
+            write_limit: self.limit.io_bytes.map(b2mb),
             user_time: self.result.time,
             peak_memory_used: b2mb(self.result.memory),
             written: b2mb(self.result.bytes_written),
@@ -222,7 +222,7 @@ impl From<&Command> for Report {
         let mut argv = cmd.argv.iter();
         Self {
             application: argv.next().unwrap().clone(),
-            arguments: argv.map(|a| a.clone()).collect(),
+            arguments: argv.cloned().collect(),
             kind: if cmd.use_json {
                 ReportKind::Json
             } else {
@@ -311,12 +311,9 @@ impl From<&Command> for ReportLimit {
         Self {
             time: cmd.time_limit.map(|d| d.as_secs_f64()),
             wall_clock_time: cmd.wall_clock_time_limit.map(|d| d.as_secs_f64()),
-            memory: cmd.memory_limit.map(|x| mb2b(x)),
-            security_level: match cmd.secure {
-                true => Some(1),
-                false => None,
-            },
-            io_bytes: cmd.write_limit.map(|x| mb2b(x)),
+            memory: cmd.memory_limit.map(mb2b),
+            security_level: if cmd.secure { Some(1) } else { None },
+            io_bytes: cmd.write_limit.map(mb2b),
             idleness_time: cmd.idle_time_limit.map(|d| d.as_secs_f64()),
             idleness_processor_load: Some(cmd.load_ratio),
         }

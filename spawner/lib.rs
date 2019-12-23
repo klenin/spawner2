@@ -37,4 +37,4 @@ pub use spawner::*;
 
 pub type Result<T> = std::result::Result<T, self::Error>;
 
-pub const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");

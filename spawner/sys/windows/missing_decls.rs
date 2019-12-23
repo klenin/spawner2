@@ -3,7 +3,7 @@ use winapi::shared::minwindef::{BOOL, DWORD, PDWORD, UCHAR, ULONG};
 use winapi::um::winnt::PVOID;
 use winapi::{ENUM, STRUCT};
 
-pub const PROC_THREAD_ATTRIBUTE_HANDLE_LIST: DWORD_PTR = 131074;
+pub const PROC_THREAD_ATTRIBUTE_HANDLE_LIST: DWORD_PTR = 131_074;
 
 ENUM! {
     enum TCP_TABLE_CLASS {

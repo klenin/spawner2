@@ -244,7 +244,11 @@ impl Process {
     }
 
     fn suspended(info: &mut ProcessInfo, stdio: Stdio) -> Result<Self> {
-        let usr = info.username.as_ref().map(User::new).transpose()?;
+        let usr = info
+            .username
+            .as_ref()
+            .map(|s| User::new(s.as_str()))
+            .transpose()?;
         let init_error = SharedMem::alloc(InitError::None)?;
 
         let mut env = match info.env {
@@ -455,7 +459,7 @@ impl ActiveTasks {
             .map(|ps| {
                 let pid = Pid::from_raw(ps.pid());
 
-                if let Some(fds) = ps.fd().ok() {
+                if let Ok(fds) = ps.fd() {
                     self.pid_by_inode
                         .extend(fds.into_iter().filter_map(|fd| match fd.target {
                             FDTarget::Socket(inode) => Some((inode, pid)),
@@ -475,7 +479,7 @@ impl ActiveTasks {
                     *wchar = std::cmp::max(*wchar, new_wchar.unwrap_or(0));
                     None
                 }
-                None => Some(pid.clone()),
+                None => Some(*pid),
             })
             .collect::<Vec<Pid>>();
 
@@ -496,9 +500,9 @@ impl ActiveTasks {
 }
 
 impl User {
-    fn new(login: &String) -> Result<Self> {
+    fn new(login: &str) -> Result<Self> {
         // todo: Check password?
-        let pwd = unsafe { getpwnam(to_cstr(login.as_str())?.as_ptr()) };
+        let pwd = unsafe { getpwnam(to_cstr(login)?.as_ptr()) };
         if pwd.is_null() {
             Err(Error::from(format!("Incorrect username '{}'", login)))
         } else {

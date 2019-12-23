@@ -46,6 +46,7 @@ pub struct Source {
     reader: Option<Box<dyn SourceReader>>,
 }
 
+#[derive(Default)]
 pub struct Graph {
     srcs: HashMap<SourceId, Source>,
     dsts: HashMap<DestinationId, Destination>,
@@ -127,12 +128,7 @@ impl Destination {
 
 impl Graph {
     pub fn new() -> Self {
-        Self {
-            srcs: HashMap::new(),
-            dsts: HashMap::new(),
-            src_id_generator: 0,
-            dst_id_generator: 0,
-        }
+        Self::default()
     }
 
     pub fn add_source(&mut self, src: ReadPipe) -> SourceId {

@@ -10,6 +10,7 @@ use winapi::um::winnt::{
 };
 
 /// https://docs.microsoft.com/en-us/windows/desktop/api/winnt/ns-winnt-_jobobject_basic_ui_restrictions
+#[derive(Default)]
 pub struct UiRestrictions(DWORD);
 
 pub trait GroupExt {
@@ -25,7 +26,7 @@ pub trait ProcessInfoExt {
 
 impl UiRestrictions {
     pub fn new() -> Self {
-        Self(0)
+        Self::default()
     }
 
     pub fn limit_desktop(mut self) -> Self {

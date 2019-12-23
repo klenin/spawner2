@@ -184,7 +184,7 @@ impl OptionValueParser<StdoutRedirectList> for FileFlagsParser {
     }
 }
 
-fn split_number<'a>(num: &'a str) -> (&'a str, &'a str) {
+fn split_number(num: &str) -> (&str, &str) {
     let len = num.len();
     let num_len = num.len()
         - num
@@ -266,7 +266,7 @@ where
             suffix_chars.next().map_or(
                 parse_degree(a)
                     .or(parse_unit(a))
-                    .and_then(|mult| Some((v, Some(mult)))),
+                    .map(|mult| (v, Some(mult))),
                 |b| {
                     parse_degree(a).and_then(|degree| {
                         parse_unit(b).map_or(Some((v, Some(degree))), |unit| {
@@ -293,9 +293,8 @@ fn parse_redirect_flags(
     s: &str,
     mut default_flags: RedirectFlags,
 ) -> Result<RedirectFlags, String> {
-    let mut chars = s.chars();
     let mut value = true;
-    while let Some(c) = chars.next() {
+    for c in s.chars() {
         match c {
             '-' => {
                 value = false;
@@ -357,7 +356,7 @@ fn parse_pipe_or_file_redirect(s: &str, flags: RedirectFlags) -> Redirect {
 
 fn parse_stdio_redirect(s: &str, list: &mut RedirectList) -> Result<Option<Redirect>, String> {
     let len = s.len();
-    if !s.starts_with("*") {
+    if !s.starts_with('*') {
         // file
         Ok(Some(parse_file_redirect(s, Command::DEFAULT_FILE_FLAGS)))
     } else if s.starts_with("*:") {
