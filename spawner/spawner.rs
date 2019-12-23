@@ -209,7 +209,7 @@ impl Spawner {
                 runner
                     .handle
                     .join()
-                    .unwrap_or(Err(Error::from("Runner thread panicked")))
+                    .unwrap_or_else(|_| Err(Error::from("Runner thread panicked")))
             })
             .collect()
     }

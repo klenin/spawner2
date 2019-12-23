@@ -402,7 +402,7 @@ impl<'a> OptContainer<'a> {
 
     fn opt_parser<'b>(&'b self, opt: &'b Opt) -> Result<&'b TokenStream, Error> {
         if let OptKind::Opt(ref v) = opt.kind {
-            if let Some(parser) = v.parser.as_ref().or(self.default_parser.as_ref()) {
+            if let Some(parser) = v.parser.as_ref().or_else(|| self.default_parser.as_ref()) {
                 return Ok(parser);
             }
         }

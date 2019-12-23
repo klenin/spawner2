@@ -265,7 +265,7 @@ where
         suffix_chars.next().map_or(Some((v, None)), |a| {
             suffix_chars.next().map_or(
                 parse_degree(a)
-                    .or(parse_unit(a))
+                    .or_else(|| parse_unit(a))
                     .map(|mult| (v, Some(mult))),
                 |b| {
                     parse_degree(a).and_then(|degree| {
@@ -351,7 +351,7 @@ fn parse_file_redirect(s: &str, flags: RedirectFlags) -> Redirect {
 fn parse_pipe_or_file_redirect(s: &str, flags: RedirectFlags) -> Redirect {
     parse_pipe_redirect(s, flags)
         .ok()
-        .unwrap_or(parse_file_redirect(s, flags))
+        .unwrap_or_else(|| parse_file_redirect(s, flags))
 }
 
 fn parse_stdio_redirect(s: &str, list: &mut RedirectList) -> Result<Option<Redirect>, String> {

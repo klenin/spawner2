@@ -104,7 +104,7 @@ impl Commands {
             if let Some(filename) = &cmd.output_file {
                 output_files
                     .entry(filename)
-                    .or_insert(Vec::new())
+                    .or_insert_with(Vec::new)
                     .push(&reports[i]);
             }
         }

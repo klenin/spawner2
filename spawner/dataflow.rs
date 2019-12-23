@@ -281,7 +281,7 @@ impl Transmitter {
             .filter_map(|(id, reader)| {
                 match reader
                     .join()
-                    .unwrap_or(Err(Error::from("Source reader panicked")))
+                    .unwrap_or_else(|_| Err(Error::from("Source reader panicked")))
                 {
                     Ok(_) => None,
                     Err(e) => Some((id, e)),
