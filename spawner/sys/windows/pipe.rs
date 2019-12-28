@@ -2,7 +2,7 @@ use crate::sys::windows::helpers::{cvt, to_utf16, Handle};
 use crate::sys::IntoInner;
 use crate::{Error, Result};
 
-use winapi::shared::minwindef::{DWORD, TRUE};
+use winapi::shared::minwindef::{DWORD, LPVOID, TRUE};
 use winapi::um::fileapi::{CreateFileW, ReadFile, WriteFile, CREATE_ALWAYS, OPEN_EXISTING};
 use winapi::um::handleapi::{SetHandleInformation, INVALID_HANDLE_VALUE};
 use winapi::um::minwinbase::SECURITY_ATTRIBUTES;
@@ -13,7 +13,7 @@ use winapi::um::winnt::{
 };
 
 use std::io::{self, Read, Write};
-use std::mem;
+use std::mem::size_of;
 use std::path::Path;
 use std::ptr;
 
@@ -25,7 +25,7 @@ pub struct WritePipe(Handle);
 
 pub fn create() -> Result<(ReadPipe, WritePipe)> {
     let mut attrs = SECURITY_ATTRIBUTES {
-        nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as DWORD,
+        nLength: size_of::<SECURITY_ATTRIBUTES>() as DWORD,
         bInheritHandle: TRUE,
         lpSecurityDescriptor: ptr::null_mut(),
     };
@@ -73,7 +73,7 @@ impl Read for ReadPipe {
         unsafe {
             cvt(ReadFile(
                 self.0.raw(),
-                mem::transmute(buf.as_mut_ptr()),
+                buf.as_mut_ptr() as LPVOID,
                 buf.len() as DWORD,
                 &mut bytes_read,
                 ptr::null_mut(),
@@ -110,7 +110,7 @@ impl Write for WritePipe {
         unsafe {
             cvt(WriteFile(
                 self.0.raw(),
-                mem::transmute(buf.as_ptr()),
+                buf.as_ptr() as LPVOID,
                 buf.len() as DWORD,
                 &mut bytes_written,
                 ptr::null_mut(),

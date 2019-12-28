@@ -10,7 +10,7 @@ use crate::sys::windows::process_ext::UiRestrictions;
 use crate::sys::IntoInner;
 use crate::{Error, Result};
 
-use winapi::shared::minwindef::{DWORD, TRUE};
+use winapi::shared::minwindef::{DWORD, LPVOID, TRUE};
 use winapi::um::errhandlingapi::SetErrorMode;
 use winapi::um::jobapi2::{
     AssignProcessToJobObject, CreateJobObjectW, QueryInformationJobObject, SetInformationJobObject,
@@ -27,7 +27,7 @@ use winapi::um::winbase::{
 };
 use winapi::um::winnt::{
     JobObjectBasicAccountingInformation, JobObjectBasicAndIoAccountingInformation,
-    JobObjectBasicUIRestrictions, JobObjectExtendedLimitInformation,
+    JobObjectBasicUIRestrictions, JobObjectExtendedLimitInformation, JOBOBJECTINFOCLASS,
     JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION,
     JOBOBJECT_BASIC_UI_RESTRICTIONS, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
     JOB_OBJECT_LIMIT_ACTIVE_PROCESS, JOB_OBJECT_LIMIT_JOB_MEMORY, STATUS_ACCESS_VIOLATION,
@@ -44,7 +44,7 @@ use winapi::um::winnt::{
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{self, Write};
-use std::mem;
+use std::mem::{size_of_val, zeroed};
 use std::ptr;
 use std::time::Duration;
 use std::u32;
@@ -404,9 +404,9 @@ impl Group {
             cvt(SetInformationJobObject(
                 /*hJob=*/ self.job.raw(),
                 /*JobObjectInformationClass=*/ JobObjectBasicUIRestrictions,
-                /*lpJobObjectInformation=*/ mem::transmute(&mut ui_restrictions),
+                /*lpJobObjectInformation=*/ &mut ui_restrictions as *mut _ as LPVOID,
                 /*cbJobObjectInformationLength=*/
-                mem::size_of_val(&ui_restrictions) as DWORD,
+                size_of_val(&ui_restrictions) as DWORD,
             ))?;
         }
         Ok(())
@@ -418,7 +418,7 @@ impl Group {
     }
 
     pub fn set_os_limit(&mut self, limit: OsLimit, value: u64) -> Result<bool> {
-        let mut ext_limit_info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { mem::zeroed() };
+        let mut ext_limit_info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { zeroed() };
 
         match limit {
             OsLimit::Memory => {
@@ -435,8 +435,8 @@ impl Group {
             cvt(SetInformationJobObject(
                 /*hJob=*/ self.job.raw(),
                 /*JobObjectInformationClass=*/ JobObjectExtendedLimitInformation,
-                /*lpJobObjectInformation=*/ mem::transmute(&mut ext_limit_info),
-                /*cbJobObjectInformationLength=*/ mem::size_of_val(&ext_limit_info) as DWORD,
+                /*lpJobObjectInformation=*/ &mut ext_limit_info as *mut _ as LPVOID,
+                /*cbJobObjectInformationLength=*/ size_of_val(&ext_limit_info) as DWORD,
             ))?;
         }
 
@@ -456,52 +456,31 @@ impl Group {
         Ok(())
     }
 
-    fn basic_info(&self) -> Result<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION> {
+    fn query_info<T>(&self, class: JOBOBJECTINFOCLASS) -> Result<T> {
         unsafe {
-            let mut basic_info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = mem::zeroed();
-
+            let mut info = zeroed::<T>();
             cvt(QueryInformationJobObject(
                 /*hJob=*/ self.job.raw(),
-                /*JobObjectInfoClass=*/ JobObjectBasicAccountingInformation,
-                /*lpJobObjectInfo=*/ mem::transmute(&mut basic_info),
-                /*cbJobObjectInfoLength=*/ mem::size_of_val(&basic_info) as DWORD,
+                /*JobObjectInfoClass=*/ class,
+                /*lpJobObjectInfo=*/ &mut info as *mut _ as LPVOID,
+                /*cbJobObjectInfoLength=*/ size_of_val(&info) as DWORD,
                 /*lpReturnLength=*/ ptr::null_mut(),
             ))
             .map_err(Error::from)
-            .map(|_| basic_info)
+            .map(|_| info)
         }
+    }
+
+    fn basic_info(&self) -> Result<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION> {
+        self.query_info(JobObjectBasicAccountingInformation)
     }
 
     fn basic_and_io_info(&self) -> Result<JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION> {
-        unsafe {
-            let mut basic_and_io_info: JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION =
-                mem::zeroed();
-
-            cvt(QueryInformationJobObject(
-                /*hJob=*/ self.job.raw(),
-                /*JobObjectInfoClass=*/ JobObjectBasicAndIoAccountingInformation,
-                /*lpJobObjectInfo=*/ mem::transmute(&mut basic_and_io_info),
-                /*cbJobObjectInfoLength=*/ mem::size_of_val(&basic_and_io_info) as DWORD,
-                /*lpReturnLength=*/ ptr::null_mut(),
-            ))
-            .map_err(Error::from)
-            .map(|_| basic_and_io_info)
-        }
+        self.query_info(JobObjectBasicAndIoAccountingInformation)
     }
 
     fn ext_limit_info(&self) -> Result<JOBOBJECT_EXTENDED_LIMIT_INFORMATION> {
-        unsafe {
-            let mut ext_info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = mem::zeroed();
-            cvt(QueryInformationJobObject(
-                /*hJob=*/ self.job.raw(),
-                /*JobObjectInfoClass=*/ JobObjectExtendedLimitInformation,
-                /*lpJobObjectInfo=*/ mem::transmute(&mut ext_info),
-                /*cbJobObjectInfoLength=*/ mem::size_of_val(&ext_info) as DWORD,
-                /*lpReturnLength=*/ ptr::null_mut(),
-            ))
-            .map_err(Error::from)
-            .map(|_| ext_info)
-        }
+        self.query_info(JobObjectExtendedLimitInformation)
     }
 }
 
@@ -531,7 +510,7 @@ where
     let mut inherited_handles = [stdio.stdin.raw(), stdio.stdout.raw(), stdio.stderr.raw()];
     let mut startup_info = StartupInfo::create(&stdio, &mut inherited_handles, user, show_window)?;
 
-    let mut process_info: PROCESS_INFORMATION = unsafe { mem::zeroed() };
+    let mut process_info: PROCESS_INFORMATION = unsafe { zeroed() };
 
     unsafe {
         SetErrorMode(SEM_NOGPFAULTERRORBOX | SEM_FAILCRITICALERRORS);
@@ -544,7 +523,7 @@ where
                 /*lpThreadAttributes=*/ ptr::null_mut(),
                 /*bInheritHandles=*/ TRUE,
                 /*dwCreationFlags=*/ creation_flags,
-                /*lpEnvironment=*/ mem::transmute(env.as_mut_ptr()),
+                /*lpEnvironment=*/ env.as_mut_ptr() as LPVOID,
                 /*lpCurrentDirectory=*/ working_dir,
                 /*lpStartupInfo=*/ startup_info.as_mut_ptr(),
                 /*lpProcessInformation=*/ &mut process_info,
@@ -557,7 +536,7 @@ where
                 /*lpThreadAttributes=*/ ptr::null_mut(),
                 /*bInheritHandles=*/ TRUE,
                 /*dwCreationFlags=*/ creation_flags,
-                /*lpEnvironment=*/ mem::transmute(env.as_mut_ptr()),
+                /*lpEnvironment=*/ env.as_mut_ptr() as LPVOID,
                 /*lpCurrentDirectory=*/ working_dir,
                 /*lpStartupInfo=*/ startup_info.as_mut_ptr(),
                 /*lpProcessInformation=*/ &mut process_info,

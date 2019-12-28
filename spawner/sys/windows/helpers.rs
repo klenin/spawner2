@@ -8,7 +8,7 @@ use crate::sys::windows::missing_decls::{
 use crate::{Error, Result};
 
 use winapi::shared::basetsd::{DWORD_PTR, SIZE_T, ULONG_PTR};
-use winapi::shared::minwindef::{DWORD, FALSE, HWINSTA, TRUE, ULONG, WORD};
+use winapi::shared::minwindef::{DWORD, FALSE, HWINSTA, LPVOID, TRUE, ULONG, WORD};
 use winapi::shared::windef::HDESK;
 use winapi::shared::winerror::{ERROR_INSUFFICIENT_BUFFER, ERROR_MORE_DATA, NO_ERROR};
 use winapi::shared::ws2def::{AF_INET, AF_INET6};
@@ -42,7 +42,8 @@ use winapi::um::winuser::{
 use std::alloc::{alloc_zeroed, dealloc, Layout};
 use std::ffi::OsStr;
 use std::marker::PhantomData;
-use std::mem;
+use std::mem::{size_of, size_of_val, zeroed};
+use std::os::raw::c_int;
 use std::os::windows::ffi::OsStrExt;
 use std::ptr;
 use std::slice;
@@ -217,14 +218,14 @@ impl User {
             let mut winsta_name_bytes = 0;
             let mut winsta_name_buf = [0 as WCHAR; 128];
             cvt(GetUserObjectInformationW(
-                /*hObj=*/ mem::transmute(new_winsta),
-                /*nIndex=*/ UOI_NAME as i32,
-                /*pvInfo=*/ mem::transmute(winsta_name_buf.as_mut_ptr()),
-                /*nLength=*/ (mem::size_of::<WCHAR>() * winsta_name_buf.len()) as DWORD,
+                /*hObj=*/ new_winsta as HANDLE,
+                /*nIndex=*/ UOI_NAME as c_int,
+                /*pvInfo=*/ winsta_name_buf.as_mut_ptr() as PVOID,
+                /*nLength=*/ (size_of::<WCHAR>() * winsta_name_buf.len()) as DWORD,
                 /*lpnLengthNeeded=*/ &mut winsta_name_bytes,
             ))?;
 
-            let winsta_name_len = winsta_name_bytes as usize / mem::size_of::<WCHAR>() - 1;
+            let winsta_name_len = winsta_name_bytes as usize / size_of::<WCHAR>() - 1;
             let winsta_name = &winsta_name_buf[..winsta_name_len];
 
             Ok(Self {
@@ -285,11 +286,11 @@ impl EnvBlock {
         //
         // A Unicode environment block is terminated by four zero bytes: two for the last string,
         // two more to terminate the block.
-        let mut block: *mut u16 = ptr::null_mut();
+        let block: *mut u16 = ptr::null_mut();
         let mut len = 0;
         unsafe {
             cvt(CreateEnvironmentBlock(
-                mem::transmute(&mut block),
+                &mut (block as LPVOID) as *mut LPVOID,
                 match user {
                     Some(u) => u.token.0,
                     None => ptr::null_mut(),
@@ -322,7 +323,7 @@ impl EnvBlock {
 impl Drop for EnvBlock {
     fn drop(&mut self) {
         unsafe {
-            DestroyEnvironmentBlock(mem::transmute(self.block));
+            DestroyEnvironmentBlock(self.block as LPVOID);
         }
     }
 }
@@ -335,17 +336,15 @@ impl<'a, 'b, 'c> StartupInfo<'a, 'b, 'c> {
         show_window: bool,
     ) -> Result<Self> {
         let mut att_list = AttList::allocate(1)?;
-        unsafe {
-            att_list.update(
-                PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-                mem::transmute(inherited_handles.as_mut_ptr()),
-                inherited_handles.len() * mem::size_of::<HANDLE>(),
-            )?;
-        }
+        att_list.update(
+            PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+            inherited_handles.as_mut_ptr() as PVOID,
+            inherited_handles.len() * size_of::<HANDLE>(),
+        )?;
 
-        let mut info: STARTUPINFOEXW = unsafe { mem::zeroed() };
+        let mut info: STARTUPINFOEXW = unsafe { zeroed() };
         info.lpAttributeList = att_list.ptr;
-        info.StartupInfo.cb = mem::size_of_val(&info) as DWORD;
+        info.StartupInfo.cb = size_of_val(&info) as DWORD;
         info.StartupInfo.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
         info.StartupInfo.wShowWindow = if show_window { SW_SHOW } else { SW_HIDE } as WORD;
         info.StartupInfo.hStdInput = stdio.stdin.0;
@@ -365,7 +364,7 @@ impl<'a, 'b, 'c> StartupInfo<'a, 'b, 'c> {
     }
 
     pub fn as_mut_ptr(&mut self) -> LPSTARTUPINFOW {
-        unsafe { mem::transmute(&mut self.base) }
+        &mut self.base as *mut _ as LPSTARTUPINFOW
     }
 }
 
@@ -374,8 +373,8 @@ impl AttList {
         unsafe {
             let mut len: SIZE_T = 0;
             InitializeProcThreadAttributeList(ptr::null_mut(), attribs_count, 0, &mut len);
-            let ptr: *mut PROC_THREAD_ATTRIBUTE_LIST =
-                mem::transmute(alloc_zeroed(Layout::from_size_align_unchecked(len, 4)));
+            let layout = Layout::from_size_align_unchecked(len, 4);
+            let ptr = alloc_zeroed(layout) as *mut PROC_THREAD_ATTRIBUTE_LIST;
 
             if ptr.is_null() {
                 return Err(Error::from(
@@ -415,7 +414,7 @@ impl Drop for AttList {
         unsafe {
             DeleteProcThreadAttributeList(self.ptr);
             dealloc(
-                mem::transmute(self.ptr),
+                self.ptr as *mut u8,
                 Layout::from_size_align_unchecked(self.len, 4),
             );
         }
@@ -437,7 +436,7 @@ impl PidList {
                 cvt(QueryInformationJobObject(
                     /*hJob=*/ job.0,
                     /*JobObjectInfoClass=*/ JobObjectBasicProcessIdList,
-                    /*lpJobObjectInfo=*/ mem::transmute(self.0.as_mut_ptr()),
+                    /*lpJobObjectInfo=*/ self.0.as_mut_ptr() as LPVOID,
                     /*cbJobObjectInfoLength=*/ self.0.len() as DWORD,
                     /*lpReturnLength=*/ ptr::null_mut(),
                 ))
@@ -468,7 +467,7 @@ impl PidList {
     }
 
     fn as_ref(&self) -> &JOBOBJECT_BASIC_PROCESS_ID_LIST {
-        unsafe { mem::transmute(self.0.as_ptr()) }
+        unsafe { &*(self.0.as_ptr() as *const _) }
     }
 }
 
@@ -509,7 +508,7 @@ impl Endpoints {
         self.load(|buf| unsafe {
             let mut size = buf.len() as DWORD;
             GetExtendedUdpTable(
-                /*pUdpTable=*/ mem::transmute(buf.as_mut_ptr()),
+                /*pUdpTable=*/ buf.as_mut_ptr() as PVOID,
                 /*pdwSize=*/ &mut size,
                 /*bOrder=*/ FALSE,
                 /*ulAf=*/ af,
@@ -523,7 +522,7 @@ impl Endpoints {
         self.load(|buf| unsafe {
             let mut size = buf.len() as DWORD;
             GetExtendedTcpTable(
-                /*pTcpTable=*/ mem::transmute(buf.as_mut_ptr()),
+                /*pTcpTable=*/ buf.as_mut_ptr() as PVOID,
                 /*pdwSize=*/ &mut size,
                 /*bOrder=*/ FALSE,
                 /*ulAf=*/ af,
@@ -548,7 +547,7 @@ impl Endpoints {
                     self.0.resize(new_len, 0);
                 }
                 NO_ERROR => {
-                    return Ok(unsafe { mem::transmute(self.0.as_ptr()) });
+                    return Ok(unsafe { &*(self.0.as_ptr() as *const T) });
                 }
                 _ => {
                     return Err(Error::from("Unable to retrieve TCP/UDP endpoints"));
@@ -576,8 +575,8 @@ impl JobNotifications {
             cvt(SetInformationJobObject(
                 /*hJob=*/ job.raw(),
                 /*JobObjectInformationClass=*/ JobObjectAssociateCompletionPortInformation,
-                /*lpJobObjectInformation=*/ mem::transmute(&mut port_info),
-                /*cbJobObjectInformationLength=*/ mem::size_of_val(&port_info) as DWORD,
+                /*lpJobObjectInformation=*/ &mut port_info as *mut _ as LPVOID,
+                /*cbJobObjectInformationLength=*/ size_of_val(&port_info) as DWORD,
             ))?;
 
             Ok(Self {

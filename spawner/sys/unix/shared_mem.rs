@@ -26,8 +26,8 @@ where
                 /*offset=*/ 0,
             )
             .map(|ptr| {
-                mem::forget(mem::replace(mem::transmute(ptr), Mutex::new(v)));
-                Self(mem::transmute(ptr))
+                mem::forget(mem::replace(&mut *(ptr as *mut _), Mutex::new(v)));
+                Self(ptr as *mut _)
             })
             .map_err(Error::from)
         }
@@ -40,7 +40,7 @@ where
 {
     fn drop(&mut self) {
         unsafe {
-            let _ = munmap(mem::transmute(self.0), mem::size_of::<Mutex<T>>());
+            let _ = munmap(self.0 as *mut _, mem::size_of::<Mutex<T>>());
         }
     }
 }
@@ -52,7 +52,7 @@ where
     type Target = Mutex<T>;
 
     fn deref(&self) -> &Self::Target {
-        unsafe { mem::transmute(self.0) }
+        unsafe { &*self.0 }
     }
 }
 
@@ -61,6 +61,6 @@ where
     T: Copy + Send,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { mem::transmute(self.0) }
+        unsafe { &mut *self.0 }
     }
 }
