@@ -44,6 +44,7 @@ use winapi::um::winnt::{
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{self, Write};
+use std::fs::canonicalize;
 use std::mem::{size_of_val, zeroed};
 use std::ptr;
 use std::time::Duration;
@@ -67,6 +68,7 @@ pub struct ProcessInfo {
     working_dir: Option<String>,
     show_window: bool,
     suspended: bool,
+    search_in_path: bool,
     env: Env,
     envs: HashMap<String, String>,
     user_creds: Option<(String, Option<String>)>,
@@ -98,6 +100,7 @@ impl ProcessInfo {
             args: Vec::new(),
             working_dir: None,
             show_window: true,
+            search_in_path: true,
             suspended: false,
             env: Env::Inherit,
             envs: HashMap::new(),
@@ -135,6 +138,11 @@ impl ProcessInfo {
 
     pub fn suspended(&mut self, v: bool) -> &mut Self {
         self.suspended = v;
+        self
+    }
+
+    pub fn search_in_path(&mut self, v: bool) -> &mut Self {
+        self.search_in_path = v;
         self
     }
 
@@ -261,40 +269,90 @@ impl Process {
     }
 
     fn suspended(info: &mut ProcessInfo, stdio: Stdio) -> Result<Self> {
+        let stdio = RawStdio {
+            stdin: stdio.stdin.into_inner(),
+            stdout: stdio.stdout.into_inner(),
+            stderr: stdio.stderr.into_inner(),
+        };
         let mut user = info
             .user_creds
             .as_ref()
             .map(|(name, password)| User::create(name, password.as_ref()))
             .transpose()?;
+        let user_token = user.as_ref().map(|u| u.token().raw());
 
-        let mut env = match info.env {
-            Env::Clear => HashMap::new(),
-            Env::Inherit => std::env::vars().collect(),
-            Env::User => EnvBlock::create(&user)?
-                .iter()
-                .map(|var| {
-                    let idx = var.find('=').unwrap();
-                    (var[0..idx].to_string(), var[idx + 1..].to_string())
-                })
-                .collect(),
+        let app = if info.search_in_path {
+            None
+        } else {
+            Some(
+                canonicalize(&info.app)
+                    .map_err(|_| Error::last_os_error())
+                    .map(to_utf16)?,
+            )
         };
-        env.extend(info.envs.iter().map(|(k, v)| (k.clone(), v.clone())));
+        let app_ptr = app.as_ref().map_or(ptr::null(), |v| v.as_ptr());
 
-        create_suspended_process(
-            std::iter::once(&info.app).chain(info.args.iter()),
-            env,
-            RawStdio {
-                stdin: stdio.stdin.into_inner(),
-                stdout: stdio.stdout.into_inner(),
-                stderr: stdio.stderr.into_inner(),
-            },
-            info.working_dir.as_ref(),
+        let mut cmd = argv_to_cmd(std::iter::once(&info.app).chain(info.args.iter()));
+        let mut env = create_env(info, user.as_ref())?;
+        let creation_flags =
+            CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED;
+        let working_dir = info
+            .working_dir
+            .as_ref()
+            .map_or(ptr::null(), |dir| to_utf16(dir).as_ptr());
+
+        // Allow child process to inherit only stdio handles.
+        let mut inherited_handles = [stdio.stdin.raw(), stdio.stdout.raw(), stdio.stderr.raw()];
+        let mut startup_info = StartupInfo::create(
+            &stdio,
+            &mut inherited_handles,
             user.as_mut(),
             info.show_window,
-        )
-        .map(|info| Self {
-            handle: Handle::new(info.hProcess),
-            main_thread: Handle::new(info.hThread),
+        )?;
+
+        let mut process_info: PROCESS_INFORMATION = unsafe { zeroed() };
+
+        unsafe {
+            // Disable error message popups.
+            SetErrorMode(SEM_NOGPFAULTERRORBOX | SEM_FAILCRITICALERRORS);
+
+            let result = if let Some(user_token) = user_token {
+                CreateProcessAsUserW(
+                    /*hToken=*/ user_token,
+                    /*lpApplicationName=*/ app_ptr,
+                    /*lpCommandLine=*/ cmd.as_mut_ptr(),
+                    /*lpProcessAttributes=*/ ptr::null_mut(),
+                    /*lpThreadAttributes=*/ ptr::null_mut(),
+                    /*bInheritHandles=*/ TRUE,
+                    /*dwCreationFlags=*/ creation_flags,
+                    /*lpEnvironment=*/ env.as_mut_ptr() as LPVOID,
+                    /*lpCurrentDirectory=*/ working_dir,
+                    /*lpStartupInfo=*/ startup_info.as_mut_ptr(),
+                    /*lpProcessInformation=*/ &mut process_info,
+                )
+            } else {
+                CreateProcessW(
+                    /*lpApplicationName=*/ app_ptr,
+                    /*lpCommandLine=*/ cmd.as_mut_ptr(),
+                    /*lpProcessAttributes=*/ ptr::null_mut(),
+                    /*lpThreadAttributes=*/ ptr::null_mut(),
+                    /*bInheritHandles=*/ TRUE,
+                    /*dwCreationFlags=*/ creation_flags,
+                    /*lpEnvironment=*/ env.as_mut_ptr() as LPVOID,
+                    /*lpCurrentDirectory=*/ working_dir,
+                    /*lpStartupInfo=*/ startup_info.as_mut_ptr(),
+                    /*lpProcessInformation=*/ &mut process_info,
+                )
+            };
+
+            // Restore default error mode.
+            SetErrorMode(0);
+            cvt(result)?;
+        }
+
+        Ok(Self {
+            handle: Handle::new(process_info.hProcess),
+            main_thread: Handle::new(process_info.hThread),
             user: user,
         })
     }
@@ -484,73 +542,6 @@ impl Group {
     }
 }
 
-fn create_suspended_process<K, V, E, S, T, U>(
-    argv: T,
-    env: E,
-    stdio: RawStdio,
-    working_dir: Option<U>,
-    user: Option<&mut User>,
-    show_window: bool,
-) -> Result<PROCESS_INFORMATION>
-where
-    K: AsRef<str>,
-    V: AsRef<str>,
-    E: IntoIterator<Item = (K, V)>,
-    S: AsRef<str>,
-    T: IntoIterator<Item = S>,
-    U: AsRef<str>,
-{
-    let mut cmd = argv_to_cmd(argv);
-    let mut env = create_env(env);
-    let creation_flags =
-        CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED;
-    let working_dir = working_dir.map_or(ptr::null(), |dir| to_utf16(dir.as_ref()).as_ptr());
-    let user_token = user.as_ref().map(|u| u.token().raw());
-
-    let mut inherited_handles = [stdio.stdin.raw(), stdio.stdout.raw(), stdio.stderr.raw()];
-    let mut startup_info = StartupInfo::create(&stdio, &mut inherited_handles, user, show_window)?;
-
-    let mut process_info: PROCESS_INFORMATION = unsafe { zeroed() };
-
-    unsafe {
-        SetErrorMode(SEM_NOGPFAULTERRORBOX | SEM_FAILCRITICALERRORS);
-        let result = if let Some(user_token) = user_token {
-            CreateProcessAsUserW(
-                /*hToken=*/ user_token,
-                /*lpApplicationName=*/ ptr::null(),
-                /*lpCommandLine=*/ cmd.as_mut_ptr(),
-                /*lpProcessAttributes=*/ ptr::null_mut(),
-                /*lpThreadAttributes=*/ ptr::null_mut(),
-                /*bInheritHandles=*/ TRUE,
-                /*dwCreationFlags=*/ creation_flags,
-                /*lpEnvironment=*/ env.as_mut_ptr() as LPVOID,
-                /*lpCurrentDirectory=*/ working_dir,
-                /*lpStartupInfo=*/ startup_info.as_mut_ptr(),
-                /*lpProcessInformation=*/ &mut process_info,
-            )
-        } else {
-            CreateProcessW(
-                /*lpApplicationName=*/ ptr::null(),
-                /*lpCommandLine=*/ cmd.as_mut_ptr(),
-                /*lpProcessAttributes=*/ ptr::null_mut(),
-                /*lpThreadAttributes=*/ ptr::null_mut(),
-                /*bInheritHandles=*/ TRUE,
-                /*dwCreationFlags=*/ creation_flags,
-                /*lpEnvironment=*/ env.as_mut_ptr() as LPVOID,
-                /*lpCurrentDirectory=*/ working_dir,
-                /*lpStartupInfo=*/ startup_info.as_mut_ptr(),
-                /*lpProcessInformation=*/ &mut process_info,
-            )
-        };
-
-        // Restore default error mode.
-        SetErrorMode(0);
-        cvt(result)?;
-    }
-
-    Ok(process_info)
-}
-
 fn argv_to_cmd<T, U>(argv: T) -> Vec<u16>
 where
     T: IntoIterator<Item = U>,
@@ -580,23 +571,32 @@ where
     .unwrap();
 }
 
-fn create_env<I, K, V>(vars: I) -> Vec<u16>
-where
-    K: AsRef<str>,
-    V: AsRef<str>,
-    I: IntoIterator<Item = (K, V)>,
-{
-    let mut result = vars
+fn create_env(info: &ProcessInfo, user: Option<&User>) -> Result<Vec<u16>> {
+    let mut env = match info.env {
+        Env::Clear => HashMap::new(),
+        Env::Inherit => std::env::vars().collect(),
+        Env::User => EnvBlock::create(user)?
+            .iter()
+            .map(|var| {
+                let idx = var.find('=').unwrap();
+                (var[0..idx].to_string(), var[idx + 1..].to_string())
+            })
+            .collect(),
+    };
+    env.extend(info.envs.iter().map(|(k, v)| (k.clone(), v.clone())));
+
+    let mut result = env
         .into_iter()
-        .map(|(k, v)| to_utf16(format!("{}={}", k.as_ref(), v.as_ref())))
+        .map(|(k, v)| to_utf16(format!("{}={}", k, v)))
         .flatten()
         .chain(std::iter::once(0))
         .collect::<Vec<u16>>();
+
     // Environment block is terminated by 2 zeros.
     if result.len() == 1 {
         result.push(0);
     }
-    result
+    Ok(result)
 }
 
 fn crash_cause(exit_code: DWORD) -> Option<&'static str> {

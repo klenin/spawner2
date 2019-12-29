@@ -97,6 +97,11 @@ impl ProcessInfo {
         self
     }
 
+    pub fn search_in_path(&mut self, v: bool) -> &mut Self {
+        self.0.search_in_path(v);
+        self
+    }
+
     pub fn env_clear(&mut self) -> &mut Self {
         self.0.env_clear();
         self

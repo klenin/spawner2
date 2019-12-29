@@ -12,10 +12,10 @@ use nix::libc::{
     c_ushort, getpwnam, prctl, PR_SET_NO_NEW_PRIVS, PR_SET_SECCOMP, STDERR_FILENO, STDIN_FILENO,
     STDOUT_FILENO,
 };
-use nix::sys::signal::{kill, Signal};
+use nix::sys::signal::{kill, raise, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{
-    chdir, close, dup2, execvpe, fork, getpid, getuid, setgroups, setresgid, setresuid, ForkResult,
+    chdir, close, dup2, execve, execvpe, fork, getuid, setgroups, setresgid, setresuid, ForkResult,
     Gid, Pid, Uid,
 };
 
@@ -50,6 +50,7 @@ pub struct ProcessInfo {
     args: Vec<String>,
     working_dir: Option<String>,
     suspended: bool,
+    search_in_path: bool,
     env: Env,
     envs: HashMap<String, String>,
     username: Option<String>,
@@ -116,6 +117,7 @@ impl ProcessInfo {
             args: Vec::new(),
             working_dir: None,
             suspended: false,
+            search_in_path: true,
             env: Env::Inherit,
             envs: HashMap::new(),
             username: None,
@@ -153,6 +155,11 @@ impl ProcessInfo {
 
     pub fn suspended(&mut self, v: bool) -> &mut Self {
         self.suspended = v;
+        self
+    }
+
+    pub fn search_in_path(&mut self, v: bool) -> &mut Self {
+        self.search_in_path = v;
         self
     }
 
@@ -244,6 +251,11 @@ impl Process {
     }
 
     fn suspended(info: &mut ProcessInfo, stdio: Stdio) -> Result<Self> {
+        let stdio = RawStdio {
+            stdin: stdio.stdin.into_inner(),
+            stdout: stdio.stdout.into_inner(),
+            stderr: stdio.stderr.into_inner(),
+        };
         let usr = info
             .username
             .as_ref()
@@ -276,19 +288,38 @@ impl Process {
             });
         }
 
-        *init_error.lock().unwrap() = init_child_process(
-            &c_cmd,
-            &c_args,
-            &c_env,
-            RawStdio {
-                stdin: stdio.stdin.into_inner(),
-                stdout: stdio.stdout.into_inner(),
-                stderr: stdio.stderr.into_inner(),
-            },
-            info.working_dir.as_ref().map(|s| s.as_str()),
-            info.filter.as_mut(),
-            usr.as_ref(),
-        );
+        *init_error.lock().unwrap() = init_stdio(stdio)
+            .and_then(|_| {
+                info.working_dir
+                    .as_ref()
+                    .map(|wd| chdir(wd.as_str()))
+                    .transpose()
+            })
+            .map_err(InitError::Other)
+            .and_then(|_| {
+                info.filter
+                    .as_mut()
+                    .map(init_seccomp)
+                    .transpose()
+                    .map_err(InitError::Seccomp)
+            })
+            .and_then(|_| {
+                usr.as_ref()
+                    .map(User::impersonate)
+                    .transpose()
+                    .and_then(|_| raise(Signal::SIGSTOP))
+                    .and_then(|_| {
+                        if info.search_in_path {
+                            execvpe(&c_cmd, &c_args, &c_env)
+                        } else {
+                            execve(&c_cmd, &c_args, &c_env)
+                        }
+                    })
+                    .map_err(InitError::Other)
+            })
+            .err()
+            .unwrap_or(InitError::None);
+
         process::exit(0);
     }
 }
@@ -568,31 +599,4 @@ fn init_seccomp(filter: &mut SyscallFilter) -> nix::Result<()> {
         return Err(nix::Error::last());
     }
     Ok(())
-}
-
-fn init_child_process(
-    filename: &CString,
-    args: &[CString],
-    env: &[CString],
-    stdio: RawStdio,
-    wd: Option<&str>,
-    filter: Option<&mut SyscallFilter>,
-    usr: Option<&User>,
-) -> InitError {
-    if let Err(e) = init_stdio(stdio).and_then(|_| wd.map(chdir).transpose()) {
-        return InitError::Other(e);
-    }
-    if let Err(e) = filter.map(init_seccomp).transpose() {
-        return InitError::Seccomp(e);
-    }
-    if let Err(e) = usr
-        .map(User::impersonate)
-        .transpose()
-        .and_then(|_| kill(getpid(), Signal::SIGSTOP))
-        .and_then(|_| execvpe(filename, args, env))
-    {
-        return InitError::Other(e);
-    }
-
-    InitError::None
 }

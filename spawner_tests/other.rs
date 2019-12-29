@@ -1,4 +1,4 @@
-use crate::term_reason::ensure_wall_clock_time_limit_exceeded;
+use crate::term_reason::{ensure_ok, ensure_wall_clock_time_limit_exceeded};
 
 use crate::common::APP;
 #[cfg(windows)]
@@ -121,6 +121,7 @@ fn exclusive_read_2() {
 
 #[test]
 fn wait_for_children() {
+    println!("{}", std::env::current_dir().unwrap().to_str().unwrap());
     let r = run(&[
         "--separator=@",
         "--wait-for-children",
@@ -133,4 +134,32 @@ fn wait_for_children() {
     ])
     .unwrap();
     ensure_wall_clock_time_limit_exceeded(&r[0]);
+}
+
+#[cfg(windows)]
+#[test]
+fn search_in_path_enabled() {
+    let r = run(&["-c", "cmd.exe", "/C", "EXIT", "0"]).unwrap();
+    ensure_ok(&r[0]);
+}
+
+#[cfg(windows)]
+#[test]
+fn search_in_path_disabled() {
+    let r = run(&["cmd.exe", "/C", "EXIT", "0"]).unwrap();
+    assert!(!r[0].spawner_error.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn search_in_path_enabled() {
+    let r = run(&["-c", "sh", "-c", "exit"]).unwrap();
+    ensure_ok(&r[0]);
+}
+
+#[cfg(unix)]
+#[test]
+fn search_in_path_disabled() {
+    let r = run(&["sh", "-c", "exit"]).unwrap();
+    assert!(!r[0].spawner_error.is_empty());
 }

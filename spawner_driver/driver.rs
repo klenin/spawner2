@@ -182,9 +182,6 @@ fn check_cmds(cmds: &[Command], warnings: &Warnings) -> Result<()> {
         if cmd.delegated {
             warnings.emit("'-runas', '--delegated' options have no effect");
         }
-        if cmd.use_syspath {
-            warnings.emit("'-c', '--systempath' options have no effect");
-        }
         if cmd.shared_memory.is_some() {
             warnings.emit("'--shared-memory' option has no effect");
         }
@@ -257,6 +254,7 @@ fn create_process_info(cmd: &Command, role: Role) -> ProcessInfo {
     let mut info = ProcessInfo::new(&cmd.argv[0]);
     info.args(cmd.argv[1..].iter())
         .suspended(role.is_agent())
+        .search_in_path(cmd.use_syspath)
         .envs(cmd.env_vars.iter().cloned());
     if let Some(ref wd) = cmd.working_directory {
         info.working_dir(wd);

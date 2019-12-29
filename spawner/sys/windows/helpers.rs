@@ -277,7 +277,7 @@ impl<'a> Drop for UserContext<'a> {
 }
 
 impl EnvBlock {
-    pub fn create(user: &Option<User>) -> Result<Self> {
+    pub fn create(user: Option<&User>) -> Result<Self> {
         // https://docs.microsoft.com/en-us/windows/desktop/api/processthreadsapi/nf-processthreadsapi-createprocessa
         //
         // An environment block consists of a null-terminated block of null-terminated strings.
