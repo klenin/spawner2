@@ -75,8 +75,11 @@ impl ControllerStdout {
                         c.send(data);
                     }
                 }
-                (Some(_), _) => {}
+                (Some(_), _) => {
+                    // Terminate\Resume message to an agent.
+                }
                 (None, _) => {
+                    // Write raw message to a file.
                     c.send(msg.as_raw());
                 }
             }

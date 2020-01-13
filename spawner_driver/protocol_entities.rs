@@ -1,5 +1,6 @@
 use crate::io::StdioMapping;
 
+use spawner::dataflow::{DestinationId, SourceId};
 use spawner::RunnerMessage;
 use spawner::{Error, Result};
 
@@ -47,8 +48,12 @@ impl Controller {
         let _ = self.sender.send(RunnerMessage::ResetTime);
     }
 
-    pub fn stdio_mapping(&self) -> StdioMapping {
-        self.mapping
+    pub fn stdout(&self) -> SourceId {
+        self.mapping.stdout
+    }
+
+    pub fn stdin(&self) -> DestinationId {
+        self.mapping.stdin
     }
 }
 
@@ -92,6 +97,14 @@ impl Agent {
 
     pub fn stdio_mapping(&self) -> StdioMapping {
         self.mapping
+    }
+
+    pub fn stdout(&self) -> SourceId {
+        self.mapping.stdout
+    }
+
+    pub fn stdin(&self) -> DestinationId {
+        self.mapping.stdin
     }
 
     pub fn is_terminated(&self) -> bool {

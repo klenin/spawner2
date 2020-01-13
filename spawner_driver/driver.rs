@@ -89,6 +89,7 @@ impl Driver {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
+            check_protocol_entities(&controller, &agents, &streams.graph, &streams.warnings);
             for (program, role) in programs.iter_mut().zip(roles.iter()) {
                 init_protocol_handlers(&mut streams, program, *role, &controller, &agents);
             }
@@ -173,6 +174,28 @@ impl fmt::Display for Errors {
     }
 }
 
+fn check_protocol_entities(
+    controller: &Controller,
+    agents: &[Agent],
+    graph: &Graph,
+    warnings: &Warnings,
+) {
+    for agent in agents {
+        if !graph.has_connection(controller.stdout(), agent.stdin()) {
+            warnings.emit(format!(
+                "Controller is not connected to agent#{} via stdout",
+                agent.idx().0 + 1
+            ))
+        }
+        if !graph.has_connection(agent.stdout(), controller.stdin()) {
+            warnings.emit(format!(
+                "Agent#{} is not connected to controller via stdout",
+                agent.idx().0 + 1
+            ))
+        }
+    }
+}
+
 fn check_cmds(cmds: &[Command], warnings: &Warnings) -> Result<()> {
     if cmds.iter().filter(|cmd| cmd.controller).count() > 1 {
         return Err(Error::from("There can be at most one controller"));
@@ -199,10 +222,17 @@ fn init_protocol_handlers(
     match role {
         Role::Agent(idx) => {
             let agent = &agents[idx.0];
+            if !streams
+                .graph
+                .has_connection(agent.stdout(), controller.stdin())
+            {
+                // Do not send any messages to controller if there's no connection.
+                return;
+            }
             program.on_terminate(AgentTermination::new(agent.clone()));
             streams
                 .graph
-                .source_mut(agent.stdio_mapping().stdout)
+                .source_mut(agent.stdout())
                 .unwrap()
                 .set_reader(AgentStdout::new(agent.clone()));
         }
@@ -210,7 +240,7 @@ fn init_protocol_handlers(
             program.on_terminate(ControllerTermination::new(agents.to_vec()));
             streams
                 .graph
-                .source_mut(controller.stdio_mapping().stdout)
+                .source_mut(controller.stdout())
                 .unwrap()
                 .set_reader(ControllerStdout::new(controller.clone(), agents.to_vec()));
         }

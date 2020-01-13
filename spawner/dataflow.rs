@@ -108,6 +108,10 @@ impl Source {
         &self.edges
     }
 
+    pub fn is_connected_to(&self, dst_id: DestinationId) -> bool {
+        self.edges().iter().any(|&dst| dst == dst_id)
+    }
+
     pub fn has_reader(&self) -> bool {
         self.reader.is_some()
     }
@@ -145,7 +149,7 @@ impl Graph {
         id
     }
 
-    pub fn source(&mut self, id: SourceId) -> Option<&Source> {
+    pub fn source(&self, id: SourceId) -> Option<&Source> {
         self.srcs.get(&id)
     }
 
@@ -223,6 +227,14 @@ impl Graph {
             src_id,
             dst_id,
         })
+    }
+
+    pub fn has_connection(&self, src_id: SourceId, dst_id: DestinationId) -> bool {
+        if let Some(src) = self.source(src_id) {
+            src.is_connected_to(dst_id)
+        } else {
+            false
+        }
     }
 
     pub fn transmit_data(self) -> Transmitter {
