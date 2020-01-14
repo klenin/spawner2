@@ -6,6 +6,7 @@ use crate::sys::unix::missing_decls::{
 use crate::sys::AsInnerMut;
 
 use nix::libc::{__u16, __u32, __u8};
+pub use nix::sched::CpuSet;
 
 // https://outflux.net/teach-seccomp
 pub struct SyscallFilter(Vec<sock_filter>);
@@ -14,6 +15,7 @@ pub struct SyscallFilterBuilder(Vec<sock_filter>);
 
 pub trait ProcessInfoExt {
     fn syscall_filter(&mut self, filter: SyscallFilter) -> &mut Self;
+    fn cpuset(&mut self, cpuset: CpuSet) -> &mut Self;
 }
 
 #[cfg(target_arch = "x86")]
@@ -59,6 +61,11 @@ impl AsInnerMut<Vec<sock_filter>> for SyscallFilter {
 impl ProcessInfoExt for ProcessInfo {
     fn syscall_filter(&mut self, filter: SyscallFilter) -> &mut Self {
         self.as_inner_mut().syscall_filter(filter);
+        self
+    }
+
+    fn cpuset(&mut self, cpuset: CpuSet) -> &mut Self {
+        self.as_inner_mut().cpuset(cpuset);
         self
     }
 }

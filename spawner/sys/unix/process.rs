@@ -13,6 +13,7 @@ use nix::libc::{
     c_ushort, getpwnam, prctl, PR_SET_NO_NEW_PRIVS, PR_SET_SECCOMP, STDERR_FILENO, STDIN_FILENO,
     STDOUT_FILENO,
 };
+use nix::sched::{sched_setaffinity, CpuSet};
 use nix::sys::signal::{kill, raise, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{
@@ -56,6 +57,7 @@ pub struct ProcessInfo {
     envs: HashMap<String, String>,
     username: Option<String>,
     filter: Option<SyscallFilter>,
+    cpuset: Option<CpuSet>,
 }
 
 #[derive(Copy, Clone)]
@@ -126,6 +128,7 @@ impl ProcessInfo {
             envs: HashMap::new(),
             username: None,
             filter: None,
+            cpuset: None,
         }
     }
 
@@ -188,6 +191,11 @@ impl ProcessInfo {
 
     pub fn syscall_filter(&mut self, filter: SyscallFilter) -> &mut Self {
         self.filter = Some(filter);
+        self
+    }
+
+    pub fn cpuset(&mut self, cpuset: CpuSet) -> &mut Self {
+        self.cpuset = Some(cpuset);
         self
     }
 }
@@ -566,6 +574,7 @@ fn init_child_process(
     filter: Option<&mut SyscallFilter>,
     group: Option<&mut Group>,
     usr: Option<&User>,
+    cpuset: Option<&CpuSet>,
 ) -> InitResult {
     group
         .map(|g| g.add_pid(Pid::this()))
@@ -579,6 +588,11 @@ fn init_child_process(
 
     init_stdio(stdio)
         .and_then(|_| working_dir.map(chdir).transpose())
+        .and_then(|_| {
+            cpuset
+                .map(|x| sched_setaffinity(Pid::this(), x))
+                .transpose()
+        })
         .map_err(InitError::Other)?;
 
     usr.map(User::impersonate)
@@ -642,6 +656,7 @@ fn create_process(
         info.filter.as_mut(),
         group,
         usr.as_ref(),
+        info.cpuset.as_ref(),
     )
     .and_then(|_| exec_app(&app, &args, &env, info.search_in_path).map_err(InitError::Other));
 

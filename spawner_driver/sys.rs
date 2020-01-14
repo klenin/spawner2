@@ -93,7 +93,7 @@ pub fn init_os_specific_process_extensions(
     _group: &mut Group,
     warnings: &Warnings,
 ) -> Result<()> {
-    use spawner::unix::process::{ProcessInfoExt, SyscallFilterBuilder};
+    use spawner::unix::process::{CpuSet, ProcessInfoExt, SyscallFilterBuilder};
 
     if cmd.show_window {
         warnings.emit("'-sw' option works on windows only");
@@ -104,6 +104,11 @@ pub fn init_os_specific_process_extensions(
         );
         info.env_inherit();
     }
+
+    // On unix C++ spawner runs all processes on the first core.
+    let mut cpuset = CpuSet::new();
+    cpuset.set(0)?;
+    info.cpuset(cpuset);
 
     // Syscall codes to allow execve.
     #[cfg(target_arch = "x86")]
