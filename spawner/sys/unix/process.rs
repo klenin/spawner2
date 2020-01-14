@@ -8,6 +8,7 @@ use crate::sys::unix::shared_mem::SharedMem;
 use crate::sys::{AsInnerMut, IntoInner};
 use crate::{Error, Result};
 
+use nix::errno::Errno;
 use nix::libc::{
     c_ushort, getpwnam, prctl, PR_SET_NO_NEW_PRIVS, PR_SET_SECCOMP, STDERR_FILENO, STDIN_FILENO,
     STDOUT_FILENO,
@@ -15,8 +16,8 @@ use nix::libc::{
 use nix::sys::signal::{kill, raise, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{
-    chdir, close, dup2, execve, execvpe, fork, getuid, setgroups, setresgid, setresuid, ForkResult,
-    Gid, Pid, Uid,
+    chdir, close, dup2, execve, execvpe, fork, setgroups, setresgid, setresuid, ForkResult, Gid,
+    Pid, Uid,
 };
 
 use cgroups_fs::{Cgroup, CgroupName};
@@ -59,13 +60,16 @@ pub struct ProcessInfo {
 
 #[derive(Copy, Clone)]
 enum InitError {
-    None,
+    Group(Option<nix::Error>),
     Other(nix::Error),
+    Impersonate(nix::Error),
     Seccomp(nix::Error),
 }
 
+type InitResult = std::result::Result<(), InitError>;
+
 enum ProcessStatus {
-    Alive(SharedMem<InitError>),
+    Alive(SharedMem<InitResult>),
     Exited(ExitStatus),
 }
 
@@ -206,19 +210,32 @@ impl Process {
             _ => return Ok(None),
         };
 
-        if let ProcessStatus::Alive(init_error) =
-            mem::replace(&mut self.status, ProcessStatus::Exited(exit_status.clone()))
-        {
-            match *init_error.lock().unwrap() {
-                InitError::None => {}
-                InitError::Other(e) => return Err(Error::from(e)),
-                InitError::Seccomp(e) => {
-                    return Err(Error::from(format!("Failed to initialize seccomp: {}", e)));
-                }
-            }
-        }
+        // Process has exited. Check initialization result.
+        let init_error =
+            match mem::replace(&mut self.status, ProcessStatus::Exited(exit_status.clone())) {
+                ProcessStatus::Alive(r) => match *r.lock().unwrap() {
+                    Ok(_) => return Ok(Some(exit_status)),
+                    Err(e) => e,
+                },
+                _ => return Ok(Some(exit_status)),
+            };
 
-        Ok(Some(exit_status))
+        match init_error {
+            InitError::Other(e) => Err(Error::from(e)),
+            InitError::Impersonate(e) => {
+                Err(Error::from(format!("Failed to impersonate user: {}", e)))
+            }
+            InitError::Seccomp(e) => {
+                Err(Error::from(format!("Failed to initialize seccomp: {}", e)))
+            }
+            InitError::Group(e) => match e {
+                Some(e) => Err(Error::from(format!(
+                    "Failed to add process to cgroup: {}",
+                    e
+                ))),
+                None => Err(Error::from("Failed to add process to cgroup")),
+            },
+        }
     }
 
     pub fn suspend(&self) -> Result<()> {
@@ -234,93 +251,17 @@ impl Process {
     }
 
     pub fn spawn(info: &mut ProcessInfo, stdio: Stdio) -> Result<Self> {
-        let ps = Self::suspended(info, stdio)?;
-        if !info.suspended {
-            ps.resume()?;
-        }
-        Ok(ps)
+        create_process(info, stdio, None).map(|(pid, init_result)| Self {
+            pid: pid,
+            status: ProcessStatus::Alive(init_result),
+        })
     }
 
     pub fn spawn_in_group(info: &mut ProcessInfo, stdio: Stdio, group: &mut Group) -> Result<Self> {
-        let ps = Self::suspended(info, stdio)?;
-        group.add(&ps)?;
-        if !info.suspended {
-            ps.resume()?;
-        }
-        Ok(ps)
-    }
-
-    fn suspended(info: &mut ProcessInfo, stdio: Stdio) -> Result<Self> {
-        let stdio = RawStdio {
-            stdin: stdio.stdin.into_inner(),
-            stdout: stdio.stdout.into_inner(),
-            stderr: stdio.stderr.into_inner(),
-        };
-        let usr = info
-            .username
-            .as_ref()
-            .map(|s| User::new(s.as_str()))
-            .transpose()?;
-        let init_error = SharedMem::alloc(InitError::None)?;
-
-        let mut env = match info.env {
-            Env::Clear => HashMap::new(),
-            Env::Inherit => std::env::vars().collect(),
-        };
-        env.extend(info.envs.iter().map(|(k, v)| (k.clone(), v.clone())));
-
-        let c_cmd = to_cstr(info.app.as_str())?;
-        let c_args = iter::once(info.app.as_str())
-            .chain(info.args.iter().map(|s| s.as_str()))
-            .map(to_cstr)
-            .collect::<Result<Vec<_>>>()?;
-        let c_env = env
-            .into_iter()
-            .map(|(k, v)| to_cstr(format!("{}={}", k, v)))
-            .collect::<Result<Vec<_>>>()?;
-
-        if let ForkResult::Parent { child, .. } = fork()? {
-            // Wait for initialization.
-            waitpid(child, Some(WaitPidFlag::WSTOPPED))?;
-            return Ok(Process {
-                pid: child,
-                status: ProcessStatus::Alive(init_error),
-            });
-        }
-
-        *init_error.lock().unwrap() = init_stdio(stdio)
-            .and_then(|_| {
-                info.working_dir
-                    .as_ref()
-                    .map(|wd| chdir(wd.as_str()))
-                    .transpose()
-            })
-            .map_err(InitError::Other)
-            .and_then(|_| {
-                info.filter
-                    .as_mut()
-                    .map(init_seccomp)
-                    .transpose()
-                    .map_err(InitError::Seccomp)
-            })
-            .and_then(|_| {
-                usr.as_ref()
-                    .map(User::impersonate)
-                    .transpose()
-                    .and_then(|_| raise(Signal::SIGSTOP))
-                    .and_then(|_| {
-                        if info.search_in_path {
-                            execvpe(&c_cmd, &c_args, &c_env)
-                        } else {
-                            execve(&c_cmd, &c_args, &c_env)
-                        }
-                    })
-                    .map_err(InitError::Other)
-            })
-            .err()
-            .unwrap_or(InitError::None);
-
-        process::exit(0);
+        create_process(info, stdio, Some(group)).map(|(pid, init_result)| Self {
+            pid: pid,
+            status: ProcessStatus::Alive(init_result),
+        })
     }
 }
 
@@ -391,13 +332,16 @@ impl Group {
         })
     }
 
-    pub fn add(&mut self, ps: &Process) -> Result<()> {
+    fn add_pid(&mut self, pid: Pid) -> std::io::Result<()> {
         self.memory
-            .add_task(ps.pid)
-            .and(self.cpuacct.add_task(ps.pid))
-            .and(self.pids.add_task(ps.pid))
-            .and(self.freezer.add_task(ps.pid))
-            .map_err(Error::from)
+            .add_task(pid)
+            .and(self.cpuacct.add_task(pid))
+            .and(self.pids.add_task(pid))
+            .and(self.freezer.add_task(pid))
+    }
+
+    pub fn add(&mut self, ps: &Process) -> Result<()> {
+        self.add_pid(ps.pid).map_err(Error::from)
     }
 
     pub fn set_os_limit(&mut self, limit: OsLimit, value: u64) -> Result<bool> {
@@ -545,11 +489,7 @@ impl User {
     }
 
     fn impersonate(&self) -> nix::Result<()> {
-        // Drop groups if we have root priveleges. Otherwise setgroups call will fail
-        // with `Operation not permitted` error.
-        if getuid().is_root() {
-            setgroups(&[self.gid])?;
-        }
+        setgroups(&[self.gid])?;
         setresgid(self.gid, self.gid, self.gid)?;
         setresuid(self.uid, self.uid, self.uid)?;
         Ok(())
@@ -576,6 +516,25 @@ fn to_cstr<S: Into<Vec<u8>>>(s: S) -> Result<CString> {
     CString::new(s).map_err(|e| Error::from(e.to_string()))
 }
 
+fn create_env(info: &ProcessInfo) -> Result<Vec<CString>> {
+    let mut env = match info.env {
+        Env::Clear => HashMap::new(),
+        Env::Inherit => std::env::vars().collect(),
+    };
+    env.extend(info.envs.iter().map(|(k, v)| (k.clone(), v.clone())));
+
+    env.into_iter()
+        .map(|(k, v)| to_cstr(format!("{}={}", k, v)))
+        .collect()
+}
+
+fn create_args(info: &ProcessInfo) -> Result<Vec<CString>> {
+    iter::once(info.app.as_str())
+        .chain(info.args.iter().map(|s| s.as_str()))
+        .map(to_cstr)
+        .collect()
+}
+
 fn init_stdio(stdio: RawStdio) -> nix::Result<()> {
     close(STDIN_FILENO)?;
     close(STDOUT_FILENO)?;
@@ -599,4 +558,92 @@ fn init_seccomp(filter: &mut SyscallFilter) -> nix::Result<()> {
         return Err(nix::Error::last());
     }
     Ok(())
+}
+
+fn init_child_process(
+    stdio: RawStdio,
+    working_dir: Option<&str>,
+    filter: Option<&mut SyscallFilter>,
+    group: Option<&mut Group>,
+    usr: Option<&User>,
+) -> InitResult {
+    group
+        .map(|g| g.add_pid(Pid::this()))
+        .transpose()
+        .map_err(|e| {
+            InitError::Group(
+                e.raw_os_error()
+                    .map(|v| nix::Error::from_errno(Errno::from_i32(v))),
+            )
+        })?;
+
+    init_stdio(stdio)
+        .and_then(|_| working_dir.map(chdir).transpose())
+        .map_err(InitError::Other)?;
+
+    usr.map(User::impersonate)
+        .transpose()
+        .map_err(InitError::Impersonate)?;
+
+    filter
+        .map(init_seccomp)
+        .transpose()
+        .map_err(InitError::Seccomp)?;
+
+    Ok(())
+}
+
+fn exec_app(
+    app: &CString,
+    args: &[CString],
+    env: &[CString],
+    search_in_path: bool,
+) -> nix::Result<()> {
+    raise(Signal::SIGSTOP)?;
+    if search_in_path {
+        execvpe(app, args, env)?;
+    } else {
+        execve(app, args, env)?;
+    }
+    Ok(())
+}
+
+fn create_process(
+    info: &mut ProcessInfo,
+    stdio: Stdio,
+    group: Option<&mut Group>,
+) -> Result<(Pid, SharedMem<InitResult>)> {
+    let usr = info
+        .username
+        .as_ref()
+        .map(|s| User::new(s.as_str()))
+        .transpose()?;
+    let init_result = SharedMem::alloc(Ok(()))?;
+    let app = to_cstr(info.app.as_str())?;
+    let args = create_args(info)?;
+    let env = create_env(info)?;
+
+    if let ForkResult::Parent { child, .. } = fork()? {
+        // Wait for initialization to complete.
+        waitpid(child, Some(WaitPidFlag::WSTOPPED))?;
+        if !info.suspended {
+            kill(child, Signal::SIGCONT)?;
+        }
+        return Ok((child, init_result));
+    }
+
+    *init_result.lock().unwrap() = init_child_process(
+        RawStdio {
+            stdin: stdio.stdin.into_inner(),
+            stdout: stdio.stdout.into_inner(),
+            stderr: stdio.stderr.into_inner(),
+        },
+        info.working_dir.as_ref().map(|wd| wd.as_str()),
+        info.filter.as_mut(),
+        group,
+        usr.as_ref(),
+    )
+    .and_then(|_| exec_app(&app, &args, &env, info.search_in_path).map_err(InitError::Other));
+
+    process::exit(0);
 }
