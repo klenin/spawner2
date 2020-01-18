@@ -2,9 +2,7 @@ use crate::cmd::{Command, Environment};
 use crate::io::{IoStreams, StdioMapping};
 use crate::misc::mb2b;
 use crate::protocol_entities::{Agent, AgentIdx, Controller};
-use crate::protocol_handlers::{
-    AgentStdout, AgentTermination, ControllerStdout, ControllerTermination,
-};
+use crate::protocol_handlers::{AgentStdout, ControllerStdout};
 use crate::sys::init_os_specific_process_extensions;
 
 use spawner::dataflow::Graph;
@@ -90,8 +88,8 @@ impl Driver {
                 })
                 .collect::<Vec<_>>();
             check_protocol_entities(&controller, &agents, &streams.graph, &streams.warnings);
-            for (program, role) in programs.iter_mut().zip(roles.iter()) {
-                init_protocol_handlers(&mut streams, program, *role, &controller, &agents);
+            for role in roles.iter() {
+                init_protocol_handlers(&mut streams, *role, &controller, &agents);
             }
             for agent in agents.iter() {
                 agent.stop_time_accounting();
@@ -214,7 +212,6 @@ fn check_cmds(cmds: &[Command], warnings: &Warnings) -> Result<()> {
 
 fn init_protocol_handlers(
     streams: &mut IoStreams,
-    program: &mut SpawnedProgram,
     role: Role,
     controller: &Controller,
     agents: &[Agent],
@@ -229,7 +226,6 @@ fn init_protocol_handlers(
                 // Do not send any messages to controller if there's no connection.
                 return;
             }
-            program.on_terminate(AgentTermination::new(agent.clone()));
             streams
                 .graph
                 .source_mut(agent.stdout())
@@ -237,7 +233,6 @@ fn init_protocol_handlers(
                 .set_reader(AgentStdout::new(agent.clone()));
         }
         Role::Controller => {
-            program.on_terminate(ControllerTermination::new(agents.to_vec()));
             streams
                 .graph
                 .source_mut(controller.stdout())

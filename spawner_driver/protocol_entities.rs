@@ -6,9 +6,7 @@ use spawner::{Error, Result};
 
 use std::char;
 use std::str;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
 
 #[derive(Copy, Clone, PartialEq)]
 pub struct AgentIdx(pub usize);
@@ -24,7 +22,6 @@ pub struct Agent {
     idx: AgentIdx,
     sender: Sender<RunnerMessage>,
     mapping: StdioMapping,
-    is_terminated: Arc<AtomicBool>,
 }
 
 pub enum MessageKind<'a> {
@@ -44,8 +41,17 @@ impl Controller {
         Self { sender, mapping }
     }
 
+    fn send(&self, msg: RunnerMessage) -> &Self {
+        let _ = self.sender.send(msg);
+        self
+    }
+
     pub fn reset_time(&self) {
-        let _ = self.sender.send(RunnerMessage::ResetTime);
+        self.send(RunnerMessage::ResetTime);
+    }
+
+    pub fn terminate(&self) {
+        self.send(RunnerMessage::Terminate);
     }
 
     pub fn stdout(&self) -> SourceId {
@@ -63,7 +69,6 @@ impl Agent {
             idx,
             sender,
             mapping,
-            is_terminated: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -105,14 +110,6 @@ impl Agent {
 
     pub fn stdin(&self) -> DestinationId {
         self.mapping.stdin
-    }
-
-    pub fn is_terminated(&self) -> bool {
-        self.is_terminated.load(Ordering::SeqCst)
-    }
-
-    pub fn set_terminated(&self) {
-        self.is_terminated.store(true, Ordering::SeqCst)
     }
 }
 

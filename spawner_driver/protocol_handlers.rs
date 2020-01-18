@@ -2,12 +2,10 @@ use crate::protocol_entities::{Agent, AgentIdx, Controller, Message, MessageKind
 
 use spawner::dataflow::{Connection, DestinationId, SourceReader};
 use spawner::pipe::ReadPipe;
-use spawner::{Error, OnTerminate, Result};
+use spawner::{Error, Result};
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
-use std::thread;
-use std::time::Duration;
 
 pub struct ControllerStdout {
     controller: Controller,
@@ -16,12 +14,6 @@ pub struct ControllerStdout {
 }
 
 pub struct AgentStdout(Agent);
-
-pub struct AgentTermination(Agent);
-
-pub struct ControllerTermination {
-    agents: Vec<Agent>,
-}
 
 struct MessageBuf {
     buf: Vec<u8>,
@@ -85,10 +77,8 @@ impl ControllerStdout {
             }
         }
     }
-}
 
-impl SourceReader for ControllerStdout {
-    fn read(&mut self, stdout: &mut ReadPipe, connections: &mut [Connection]) -> Result<()> {
+    fn read_stdout(&mut self, stdout: &mut ReadPipe, connections: &mut [Connection]) -> Result<()> {
         let mut stdout_reader = BufReader::new(stdout);
         let mut msg_buf = MessageBuf::new();
         let mut data_len = 0;
@@ -110,14 +100,27 @@ impl SourceReader for ControllerStdout {
     }
 }
 
+impl SourceReader for ControllerStdout {
+    fn read(&mut self, stdout: &mut ReadPipe, connections: &mut [Connection]) -> Result<()> {
+        if let Err(e) = self.read_stdout(stdout, connections) {
+            // Controller sent an invalide message. Terminate everything.
+            self.agents.iter().for_each(Agent::terminate);
+            self.controller.terminate();
+            return Err(e);
+        }
+
+        // No more data is available to read. We treat that as a termination event.
+        self.agents.iter().for_each(Agent::resume);
+        Ok(())
+    }
+}
+
 impl AgentStdout {
     pub fn new(agent: Agent) -> Self {
         Self(agent)
     }
-}
 
-impl SourceReader for AgentStdout {
-    fn read(&mut self, stdout: &mut ReadPipe, connections: &mut [Connection]) -> Result<()> {
+    fn read_stdout(&mut self, stdout: &mut ReadPipe, connections: &mut [Connection]) -> Result<()> {
         let mut stdout_reader = BufReader::new(stdout);
         let mut msg_buf = MessageBuf::new();
         let msg_prefix = format!("{}#", self.0.idx().0 + 1);
@@ -129,7 +132,7 @@ impl SourceReader for AgentStdout {
             let data = stdout_reader.fill_buf().unwrap_or(&[]);
             data_len = data.len();
             if data_len == 0 {
-                break;
+                return Ok(());
             }
 
             let mut next_msg_data = msg_buf.write(data)?;
@@ -145,49 +148,24 @@ impl SourceReader for AgentStdout {
                 next_msg_data = msg_buf.write(next_msg_data)?;
             }
         }
+    }
+}
 
-        while !self.0.is_terminated() {
-            thread::sleep(Duration::from_millis(1));
-        }
+impl SourceReader for AgentStdout {
+    fn read(&mut self, stdout: &mut ReadPipe, connections: &mut [Connection]) -> Result<()> {
+        let r = self.read_stdout(stdout, connections).map_err(|e| {
+            // Agent sent an invalide message. Terminate it.
+            self.0.terminate();
+            e
+        });
 
+        // No more data is available to read.
         let term_message = format!("{}T#\n", self.0.idx().0 + 1);
         for c in connections.iter_mut() {
             c.send(term_message.as_bytes());
         }
 
-        Ok(())
-    }
-}
-
-impl AgentTermination {
-    pub fn new(agent: Agent) -> Self {
-        Self(agent)
-    }
-}
-
-impl OnTerminate for AgentTermination {
-    fn on_terminate(&mut self) {
-        self.0.set_terminated();
-    }
-}
-
-impl Drop for AgentTermination {
-    fn drop(&mut self) {
-        self.0.set_terminated();
-    }
-}
-
-impl ControllerTermination {
-    pub fn new(agents: Vec<Agent>) -> Self {
-        Self { agents }
-    }
-}
-
-impl OnTerminate for ControllerTermination {
-    fn on_terminate(&mut self) {
-        for agent in &self.agents {
-            agent.resume();
-        }
+        r
     }
 }
 

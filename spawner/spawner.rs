@@ -10,11 +10,6 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-/// An action that is performed when the process terminates.
-pub trait OnTerminate: Send {
-    fn on_terminate(&mut self);
-}
-
 /// Describes the termination reason for a process.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum TerminationReason {
@@ -85,7 +80,6 @@ pub struct SpawnedProgram {
     stdio: Option<Stdio>,
     resource_limits: Option<ResourceLimits>,
     monitor_interval: Duration,
-    on_terminate: Option<Box<dyn OnTerminate>>,
     wait_for_children: bool,
     msg_channel: MessageChannel,
 }
@@ -105,7 +99,6 @@ struct ProcessMonitor {
     msg_receiver: Receiver<RunnerMessage>,
     monitor_interval: Duration,
     wait_for_children: bool,
-    on_terminate: Option<Box<dyn OnTerminate>>,
 }
 
 impl Default for ResourceLimits {
@@ -131,7 +124,6 @@ impl SpawnedProgram {
             stdio: None,
             resource_limits: None,
             monitor_interval: Duration::from_millis(1),
-            on_terminate: None,
             wait_for_children: false,
             msg_channel: channel(),
         }
@@ -149,14 +141,6 @@ impl SpawnedProgram {
 
     pub fn monitor_interval(&mut self, monitor_interval: Duration) -> &mut Self {
         self.monitor_interval = monitor_interval;
-        self
-    }
-
-    pub fn on_terminate<T>(&mut self, on_terminate: T) -> &mut Self
-    where
-        T: OnTerminate + 'static,
-    {
-        self.on_terminate = Some(Box::new(on_terminate));
         self
     }
 
@@ -221,7 +205,6 @@ impl ProcessMonitor {
         let limits = program.resource_limits.unwrap_or_default();
         let monitor_interval = program.monitor_interval;
         let wait_for_children = program.wait_for_children;
-        let on_terminate = program.on_terminate;
         let mut group = match program.group {
             Some(g) => g,
             None => Group::new()?,
@@ -254,7 +237,6 @@ impl ProcessMonitor {
             msg_receiver,
             monitor_interval,
             wait_for_children,
-            on_terminate,
         })
         .and_then(|pm| pm.monitoring_loop(group))
     }
@@ -348,13 +330,5 @@ impl ProcessMonitor {
             }
         }
         Ok(())
-    }
-}
-
-impl Drop for ProcessMonitor {
-    fn drop(&mut self) {
-        if let Some(mut handler) = self.on_terminate.take() {
-            handler.on_terminate();
-        }
     }
 }
