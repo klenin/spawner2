@@ -30,6 +30,7 @@ pub mod process;
 mod error;
 mod limit_checker;
 mod spawner;
+mod supervisor;
 mod sys;
 
 pub use error::*;
