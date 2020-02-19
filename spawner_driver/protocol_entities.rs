@@ -1,8 +1,7 @@
 use crate::io::StdioMapping;
 
 use spawner::dataflow::{DestinationId, SourceId};
-use spawner::RunnerMessage;
-use spawner::{Error, Result};
+use spawner::{Error, ProgramMessage, Result};
 
 use std::char;
 use std::str;
@@ -13,14 +12,14 @@ pub struct AgentIdx(pub usize);
 
 #[derive(Clone)]
 pub struct Controller {
-    sender: Sender<RunnerMessage>,
+    sender: Sender<ProgramMessage>,
     mapping: StdioMapping,
 }
 
 #[derive(Clone)]
 pub struct Agent {
     idx: AgentIdx,
-    sender: Sender<RunnerMessage>,
+    sender: Sender<ProgramMessage>,
     mapping: StdioMapping,
 }
 
@@ -37,21 +36,21 @@ pub struct Message<'a> {
 }
 
 impl Controller {
-    pub fn new(sender: Sender<RunnerMessage>, mapping: StdioMapping) -> Self {
+    pub fn new(sender: Sender<ProgramMessage>, mapping: StdioMapping) -> Self {
         Self { sender, mapping }
     }
 
-    fn send(&self, msg: RunnerMessage) -> &Self {
+    fn send(&self, msg: ProgramMessage) -> &Self {
         let _ = self.sender.send(msg);
         self
     }
 
     pub fn reset_time(&self) {
-        self.send(RunnerMessage::ResetTime);
+        self.send(ProgramMessage::ResetTime);
     }
 
     pub fn terminate(&self) {
-        self.send(RunnerMessage::Terminate);
+        self.send(ProgramMessage::Terminate);
     }
 
     pub fn stdout(&self) -> SourceId {
@@ -64,7 +63,7 @@ impl Controller {
 }
 
 impl Agent {
-    pub fn new(idx: AgentIdx, sender: Sender<RunnerMessage>, mapping: StdioMapping) -> Self {
+    pub fn new(idx: AgentIdx, sender: Sender<ProgramMessage>, mapping: StdioMapping) -> Self {
         Self {
             idx,
             sender,
@@ -76,28 +75,28 @@ impl Agent {
         self.idx
     }
 
-    fn send(&self, msg: RunnerMessage) -> &Self {
+    fn send(&self, msg: ProgramMessage) -> &Self {
         let _ = self.sender.send(msg);
         self
     }
 
     pub fn terminate(&self) {
-        self.send(RunnerMessage::Terminate);
+        self.send(ProgramMessage::Terminate);
     }
 
     pub fn stop_time_accounting(&self) {
-        self.send(RunnerMessage::StopTimeAccounting);
+        self.send(ProgramMessage::StopTimeAccounting);
     }
 
     pub fn suspend(&self) {
-        self.send(RunnerMessage::Suspend)
-            .send(RunnerMessage::StopTimeAccounting)
-            .send(RunnerMessage::ResetTime);
+        self.send(ProgramMessage::Suspend)
+            .send(ProgramMessage::StopTimeAccounting)
+            .send(ProgramMessage::ResetTime);
     }
 
     pub fn resume(&self) {
-        self.send(RunnerMessage::Resume)
-            .send(RunnerMessage::ResumeTimeAccounting);
+        self.send(ProgramMessage::Resume)
+            .send(ProgramMessage::ResumeTimeAccounting);
     }
 
     pub fn stdio_mapping(&self) -> StdioMapping {

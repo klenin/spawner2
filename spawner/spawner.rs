@@ -50,7 +50,7 @@ pub struct ResourceLimits {
     pub active_network_connections: Option<usize>,
 }
 
-pub enum RunnerMessage {
+pub enum ProgramMessage {
     Terminate,
     Suspend,
     Resume,
@@ -72,7 +72,7 @@ pub struct Report {
     pub termination_reason: Option<TerminationReason>,
 }
 
-pub type MessageChannel = (Sender<RunnerMessage>, Receiver<RunnerMessage>);
+pub type MessageChannel = (Sender<ProgramMessage>, Receiver<ProgramMessage>);
 
 pub struct SpawnedProgram {
     info: ProcessInfo,
@@ -85,7 +85,7 @@ pub struct SpawnedProgram {
 }
 
 pub struct Runner {
-    sender: Sender<RunnerMessage>,
+    sender: Sender<ProgramMessage>,
     handle: JoinHandle<Result<Report>>,
 }
 
@@ -96,7 +96,7 @@ struct ProcessMonitor {
     process: Process,
     creation_time: Instant,
     term_reason: Option<TerminationReason>,
-    msg_receiver: Receiver<RunnerMessage>,
+    msg_receiver: Receiver<ProgramMessage>,
     monitor_interval: Duration,
     wait_for_children: bool,
 }
@@ -161,7 +161,7 @@ impl SpawnedProgram {
 }
 
 impl Runner {
-    pub fn sender(&self) -> &Sender<RunnerMessage> {
+    pub fn sender(&self) -> &Sender<ProgramMessage> {
         &self.sender
     }
 }
@@ -310,23 +310,23 @@ impl ProcessMonitor {
     fn handle_messages(&mut self, group: &Group) -> Result<()> {
         for msg in self.msg_receiver.try_iter().take(10) {
             match msg {
-                RunnerMessage::Terminate => {
+                ProgramMessage::Terminate => {
                     group.terminate()?;
                     self.term_reason = Some(TerminationReason::TerminatedByRunner);
                 }
-                RunnerMessage::Suspend => {
+                ProgramMessage::Suspend => {
                     if self.process.exit_status()?.is_none() {
                         self.process.suspend()?;
                     }
                 }
-                RunnerMessage::Resume => {
+                ProgramMessage::Resume => {
                     if self.process.exit_status()?.is_none() {
                         self.process.resume()?;
                     }
                 }
-                RunnerMessage::ResetTime => self.limit_checker.reset_time(),
-                RunnerMessage::StopTimeAccounting => self.limit_checker.stop_time_accounting(),
-                RunnerMessage::ResumeTimeAccounting => self.limit_checker.resume_time_accounting(),
+                ProgramMessage::ResetTime => self.limit_checker.reset_time(),
+                ProgramMessage::StopTimeAccounting => self.limit_checker.stop_time_accounting(),
+                ProgramMessage::ResumeTimeAccounting => self.limit_checker.resume_time_accounting(),
             }
         }
         Ok(())
