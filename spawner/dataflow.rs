@@ -282,10 +282,6 @@ impl fmt::Display for Errors {
 }
 
 impl Transmitter {
-    /// Transmitter keeps pipes open as long as possible,
-    /// so make sure it is destroyed before `Spawner`.
-    ///
-    /// [`Spawner`]: struct.Spawner.html
     pub fn wait(self) -> std::result::Result<(), Errors> {
         let errors = self
             .readers

@@ -1,7 +1,5 @@
-use crate::io::StdioMapping;
-
 use spawner::dataflow::{DestinationId, SourceId};
-use spawner::{Error, ProgramMessage, Result};
+use spawner::{Error, ProgramMessage, Result, StdioMapping};
 
 use std::char;
 use std::str;

@@ -1,9 +1,8 @@
 use crate::cmd::{Command, RedirectList};
-use crate::driver::DriverResult;
 use crate::misc::{b2mb, mb2b};
 
 use spawner::process::ExitStatus;
-use spawner::{self, Error, TerminationReason};
+use spawner::{Error, ProgramResult, TerminationReason};
 
 use json::{array, object, JsonValue};
 
@@ -109,7 +108,7 @@ struct Mb(f64);
 struct FltSecs(f64);
 
 impl Report {
-    pub fn new(cmd: &Command, result: DriverResult) -> Self {
+    pub fn new(cmd: &Command, result: ProgramResult) -> Self {
         let mut report = Report::from(cmd);
         match result {
             Ok(runner_report) => {

@@ -1,4 +1,5 @@
-use crate::pipe::{ReadPipe, WritePipe};
+use crate::dataflow::{self, DestinationId, Graph, SourceId};
+use crate::pipe::{self, ReadPipe, WritePipe};
 use crate::process::{
     ExitStatus, Group, GroupIo, GroupMemory, GroupNetwork, GroupPidCounters, GroupTimers,
     ProcessInfo, Stdio,
@@ -6,7 +7,8 @@ use crate::process::{
 use crate::supervisor::Supervisor;
 use crate::{Error, Result};
 
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::fmt;
+use std::sync::mpsc::Receiver;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -72,24 +74,40 @@ pub struct Report {
     pub termination_reason: Option<TerminationReason>,
 }
 
-pub type MessageChannel = (Sender<ProgramMessage>, Receiver<ProgramMessage>);
+#[derive(Debug)]
+pub struct ProgramErrors {
+    pub errors: Vec<Error>,
+}
 
-pub struct SpawnedProgram {
+pub type ProgramResult = std::result::Result<Report, ProgramErrors>;
+
+pub struct Program {
     info: ProcessInfo,
     group: Option<Group>,
-    stdio: Option<Stdio>,
     resource_limits: Option<ResourceLimits>,
+    msg_receiver: Option<Receiver<ProgramMessage>>,
     monitor_interval: Duration,
     wait_for_children: bool,
-    msg_channel: MessageChannel,
 }
 
-pub struct Runner {
-    sender: Sender<ProgramMessage>,
-    handle: JoinHandle<Result<Report>>,
+#[derive(Copy, Clone)]
+pub struct StdioMapping {
+    pub stdin: DestinationId,
+    pub stdout: SourceId,
+    pub stderr: SourceId,
 }
 
-pub struct Spawner(Vec<Runner>);
+struct ProgramExt {
+    prog: Program,
+    stdio: Stdio,
+}
+
+#[derive(Default)]
+pub struct Session {
+    progs: Vec<ProgramExt>,
+    mappings: Vec<StdioMapping>,
+    graph: Graph,
+}
 
 impl Default for ResourceLimits {
     fn default() -> Self {
@@ -106,17 +124,37 @@ impl Default for ResourceLimits {
     }
 }
 
-impl SpawnedProgram {
+impl std::error::Error for ProgramErrors {}
+
+impl fmt::Display for ProgramErrors {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for e in self.errors.iter() {
+            writeln!(f, "{}", e)?;
+        }
+        Ok(())
+    }
+}
+
+impl Program {
     pub fn new(info: ProcessInfo) -> Self {
         Self {
             info,
             group: None,
-            stdio: None,
             resource_limits: None,
+            // stdio: None,
             monitor_interval: Duration::from_millis(1),
             wait_for_children: false,
-            msg_channel: channel(),
+            msg_receiver: None,
         }
+    }
+
+    pub fn new_with<F>(info: ProcessInfo, f: F) -> Self
+    where
+        F: FnOnce(&mut Self),
+    {
+        let mut p = Self::new(info);
+        f(&mut p);
+        p
     }
 
     pub fn group(&mut self, group: Group) -> &mut Self {
@@ -134,77 +172,178 @@ impl SpawnedProgram {
         self
     }
 
-    pub fn stdio(&mut self, stdio: Stdio) -> &mut Self {
-        self.stdio = Some(stdio);
-        self
-    }
-
     pub fn wait_for_children(&mut self, wait: bool) -> &mut Self {
         self.wait_for_children = wait;
         self
     }
 
-    pub fn msg_channel(&mut self, channel: MessageChannel) -> &mut Self {
-        self.msg_channel = channel;
+    pub fn msg_receiver(&mut self, receiver: Receiver<ProgramMessage>) -> &mut Self {
+        self.msg_receiver = Some(receiver);
         self
     }
-}
 
-impl Runner {
-    pub fn sender(&self) -> &Sender<ProgramMessage> {
-        &self.sender
+    fn spawn(self, stdio: Stdio) -> JoinHandle<Result<Report>> {
+        thread::spawn(|| {
+            Supervisor::start_monitoring(
+                self.info,
+                stdio,
+                match self.group {
+                    Some(g) => g,
+                    None => Group::new()?,
+                },
+                self.resource_limits.unwrap_or_default(),
+                self.monitor_interval,
+                self.msg_receiver,
+                self.wait_for_children,
+            )
+        })
     }
 }
 
-impl Spawner {
-    pub fn spawn<I>(programs: I) -> Self
+impl Session {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn add_program<P>(&mut self, p: P) -> Result<StdioMapping>
     where
-        I: IntoIterator<Item = SpawnedProgram>,
+        P: Into<Program>,
     {
-        Self(
-            programs
-                .into_iter()
-                .map(|prog| Runner {
-                    sender: prog.msg_channel.0.clone(),
-                    handle: thread::spawn(|| {
-                        Supervisor::start_monitoring(
-                            prog.info,
-                            match prog.stdio {
-                                Some(stdio) => stdio,
-                                None => Stdio {
-                                    stdin: ReadPipe::null()?,
-                                    stdout: WritePipe::null()?,
-                                    stderr: WritePipe::null()?,
-                                },
-                            },
-                            match prog.group {
-                                Some(g) => g,
-                                None => Group::new()?,
-                            },
-                            prog.resource_limits.unwrap_or_default(),
-                            prog.monitor_interval,
-                            Some(prog.msg_channel.1),
-                            prog.wait_for_children,
-                        )
-                    }),
-                })
-                .collect(),
-        )
+        let (stdin_r, stdin_w) = pipe::create()?;
+        let (stdout_r, stdout_w) = pipe::create()?;
+        let (stderr_r, stderr_w) = pipe::create()?;
+        let mapping = StdioMapping {
+            stdin: self.graph.add_destination(stdin_w),
+            stdout: self.graph.add_source(stdout_r),
+            stderr: self.graph.add_source(stderr_r),
+        };
+        self.progs.push(ProgramExt {
+            prog: p.into(),
+            stdio: Stdio {
+                stdin: stdin_r,
+                stdout: stdout_w,
+                stderr: stderr_w,
+            },
+        });
+        self.mappings.push(mapping);
+        Ok(mapping)
     }
 
-    pub fn runners(&self) -> &[Runner] {
-        &self.0
+    pub fn graph_mut(&mut self) -> &mut Graph {
+        &mut self.graph
     }
 
-    pub fn wait(self) -> Vec<Result<Report>> {
-        self.0
+    pub fn graph(&self) -> &Graph {
+        &self.graph
+    }
+
+    pub fn run(mut self) -> Result<Vec<ProgramResult>> {
+        self.optimize_io()?;
+
+        let mappings = self.mappings;
+        let transmitter = self.graph.transmit_data();
+        let threads = self
+            .progs
             .into_iter()
-            .map(|runner| {
-                runner
-                    .handle
-                    .join()
-                    .unwrap_or_else(|_| Err(Error::from("Runner thread panicked")))
-            })
-            .collect()
+            .map(|p| p.prog.spawn(p.stdio))
+            .collect::<Vec<_>>();
+
+        let mut transmitter_errors = transmitter.wait().err();
+        Ok(threads
+            .into_iter()
+            .zip(mappings.into_iter())
+            .map(|(thread, mapping)| get_program_result(thread, mapping, &mut transmitter_errors))
+            .collect::<Vec<_>>())
     }
+
+    fn optimize_io(&mut self) -> Result<()> {
+        for (mapping, prog) in self.mappings.iter().zip(self.progs.iter_mut()) {
+            let stdio = &mut prog.stdio;
+            optimize_istream(&mut self.graph, mapping.stdin, &mut stdio.stdin)?;
+            optimize_ostream(&mut self.graph, mapping.stdout, &mut stdio.stdout)?;
+            optimize_ostream(&mut self.graph, mapping.stderr, &mut stdio.stderr)?;
+        }
+        Ok(())
+    }
+}
+
+fn get_program_result(
+    thread: JoinHandle<Result<Report>>,
+    mapping: StdioMapping,
+    io_errs: &mut Option<dataflow::Errors>,
+) -> ProgramResult {
+    // Collect io errors for this program.
+    let mut errs = [mapping.stdout, mapping.stderr]
+        .iter()
+        .filter_map(|id| io_errs.as_mut().map(|e| e.errors.remove(id)).flatten())
+        .collect::<Vec<_>>();
+
+    let result = thread
+        .join()
+        .unwrap_or_else(|_| Err(Error::from("Supervisor thread panicked")))
+        .map_err(|e| {
+            errs.push(e);
+        })
+        .ok();
+    if errs.is_empty() {
+        Ok(result.unwrap())
+    } else {
+        Err(ProgramErrors { errors: errs })
+    }
+}
+
+fn optimize_ostream(graph: &mut Graph, src_id: SourceId, pipe: &mut WritePipe) -> Result<()> {
+    let num_edges = match graph.source(src_id) {
+        Some(src) => {
+            let num_edges = src.edges().len();
+            if num_edges > 1 || src.has_reader() {
+                return Ok(());
+            }
+            num_edges
+        }
+        None => return Ok(()),
+    };
+
+    if num_edges == 0 {
+        graph.remove_source(src_id);
+        *pipe = WritePipe::null()?;
+        return Ok(());
+    }
+
+    let dst_id = graph.source(src_id).map(|src| src.edges()[0]).unwrap();
+    if !graph.destination(dst_id).unwrap().edges().is_empty() {
+        return Ok(());
+    }
+
+    graph.remove_source(src_id);
+    *pipe = graph.remove_destination(dst_id).unwrap();
+    Ok(())
+}
+
+fn optimize_istream(graph: &mut Graph, dst_id: DestinationId, pipe: &mut ReadPipe) -> Result<()> {
+    let num_edges = match graph.destination(dst_id).map(|dst| dst.edges().len()) {
+        Some(num_edges) => num_edges,
+        None => return Ok(()),
+    };
+
+    if num_edges == 0 {
+        graph.remove_destination(dst_id);
+        *pipe = ReadPipe::null()?;
+        return Ok(());
+    } else if num_edges > 1 {
+        return Ok(());
+    }
+
+    let src_id = graph.destination(dst_id).map(|dst| dst.edges()[0]).unwrap();
+    if graph
+        .source(src_id)
+        .map(|src| src.edges().len() != 1 || src.has_reader())
+        .unwrap()
+    {
+        return Ok(());
+    }
+
+    graph.remove_destination(dst_id);
+    *pipe = graph.remove_source(src_id).unwrap();
+    Ok(())
 }
