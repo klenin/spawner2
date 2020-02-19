@@ -311,7 +311,7 @@ fn optimize_ostream(graph: &mut Graph, src_id: SourceId, pipe: &mut WritePipe) -
     }
 
     let dst_id = graph.source(src_id).map(|src| src.edges()[0]).unwrap();
-    if !graph.destination(dst_id).unwrap().edges().is_empty() {
+    if graph.destination(dst_id).unwrap().edges().len() > 1 {
         return Ok(());
     }
 
@@ -342,7 +342,7 @@ fn optimize_istream(graph: &mut Graph, dst_id: DestinationId, pipe: &mut ReadPip
     {
         return Ok(());
     }
-
+    
     graph.remove_destination(dst_id);
     *pipe = graph.remove_source(src_id).unwrap();
     Ok(())
