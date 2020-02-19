@@ -1,6 +1,5 @@
 use crate::process::{GroupTimers, ResourceUsage};
-use crate::spawner::{ResourceLimits, TerminationReason};
-use crate::Result;
+use crate::{ResourceLimits, Result, TerminationReason};
 
 use std::time::{Duration, Instant};
 
