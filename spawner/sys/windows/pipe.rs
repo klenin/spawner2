@@ -93,6 +93,10 @@ impl WritePipe {
         open(path, GENERIC_WRITE, CREATE_ALWAYS, true).map(Self)
     }
 
+    pub fn console() -> Result<Self> {
+        open("CONOUT$", GENERIC_WRITE, OPEN_EXISTING, false).map(Self)
+    }
+
     pub fn null() -> Result<Self> {
         open("nul", GENERIC_WRITE, OPEN_EXISTING, false).map(Self)
     }

@@ -43,6 +43,11 @@ pub fn open_output_file(
     }
 }
 
+#[cfg(windows)]
+pub fn open_output_console(_flags: RedirectFlags) -> Result<WritePipe> {
+    WritePipe::console()
+}
+
 #[cfg(unix)]
 pub fn open_output_file(
     file: &Path,

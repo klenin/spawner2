@@ -64,6 +64,10 @@ impl WritePipe {
     pub fn null() -> Result<Self> {
         imp::WritePipe::null().map(Self)
     }
+
+    pub fn console() -> Result<Self> {
+        imp::WritePipe::console().map(Self)
+    }
 }
 
 impl IntoInner<imp::WritePipe> for WritePipe {

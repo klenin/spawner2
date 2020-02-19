@@ -1,6 +1,6 @@
 use crate::cmd::{Command, RedirectFlags, RedirectKind, RedirectList};
 use crate::driver::Warnings;
-use crate::sys::{open_input_file, open_output_file};
+use crate::sys::{open_input_file, open_output_file, open_output_console};
 
 use spawner::dataflow::{DestinationId, Graph, SourceId};
 use spawner::pipe::{self, ReadPipe, WritePipe};
@@ -100,6 +100,7 @@ impl IoStreams {
             let dst = match &redirect.kind {
                 RedirectKind::File(f) => self.open_output_file(f, redirect.flags)?,
                 RedirectKind::Stdin(i) => self.get_mapping("Stdin", *i)?.stdin,
+                RedirectKind::Std => self.open_output_console(redirect.flags)?,
                 _ => continue,
             };
             self.graph.connect(src, dst);
@@ -130,6 +131,20 @@ impl IoStreams {
                 let pipe = open_output_file(&path, flags, &self.warnings)?;
                 let id = self.graph.add_file_destination(pipe);
                 self.output_files.insert(path, id);
+                Ok(id)
+            }
+        }
+    }
+
+    fn open_output_console(&mut self, flags: RedirectFlags) -> Result<DestinationId> {
+        let mut p = PathBuf::new();
+        p.set_file_name("*std");
+        match self.output_files.get(&p).copied() {
+            Some(id) => Ok(id),
+            None => {
+                let pipe = open_output_console(flags)?;
+                let id = self.graph.add_file_destination(pipe);
+                self.output_files.insert(p, id);
                 Ok(id)
             }
         }
