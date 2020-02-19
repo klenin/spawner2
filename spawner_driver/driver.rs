@@ -1,36 +1,43 @@
-use crate::cmd::{Command, Environment};
-use crate::io::{IoStreams, StdioMapping};
+use crate::cmd::{Command, Environment, RedirectFlags, RedirectKind, RedirectList};
 use crate::misc::mb2b;
 use crate::protocol_entities::{Agent, AgentIdx, Controller};
 use crate::protocol_handlers::{AgentStdout, ControllerStdout};
-use crate::sys::init_os_specific_process_extensions;
+use crate::report::Report;
+use crate::sys::{init_os_specific_process_extensions, open_input_file, open_output_file};
 
-use spawner::dataflow::Graph;
+use spawner::dataflow::{DestinationId, Graph, SourceId};
 use spawner::process::{Group, ProcessInfo};
 use spawner::{
-    Error, IdleTimeLimit, MessageChannel, Report, ResourceLimits, Result, SpawnedProgram, Spawner,
+    Error, IdleTimeLimit, Program, ProgramMessage, ResourceLimits, Result, Session, StdioMapping,
 };
 
+use spawner_opts::CmdLineOptions;
+
+use json::JsonValue;
+
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::sync::mpsc::channel;
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{channel, Receiver};
 
 pub struct Warnings(RefCell<HashSet<String>>);
 
 pub struct Driver {
-    graph: Graph,
-    programs: Vec<SpawnedProgram>,
+    sess: Session,
+    cmds: Vec<Command>,
     warnings: Warnings,
-    mappings: Vec<StdioMapping>,
 }
 
-#[derive(Debug)]
-pub struct Errors {
-    pub errors: Vec<Error>,
+struct StdioLinker<'w, 'g, 'm> {
+    mappings: &'m [StdioMapping],
+    graph: &'g mut Graph,
+    warnings: &'w Warnings,
+    output_files: HashMap<PathBuf, DestinationId>,
+    exclusive_input_files: HashMap<PathBuf, SourceId>,
 }
-
-pub type DriverResult = std::result::Result<Report, Errors>;
 
 #[derive(Copy, Clone)]
 enum Role {
@@ -59,97 +66,172 @@ impl fmt::Display for Warnings {
 }
 
 impl Driver {
-    pub fn new(cmds: &[Command]) -> Result<Self> {
-        let mut streams = IoStreams::new(cmds)?;
-        check_cmds(cmds, &streams.warnings)?;
+    pub fn from_argv<T, U>(argv: T) -> Result<Self>
+    where
+        T: IntoIterator<Item = U>,
+        U: AsRef<str>,
+    {
+        let warnings = Warnings::new();
+        let cmds = parse_argv(argv)?;
+        check_cmds(&cmds, &warnings)?;
 
-        let roles = create_roles(cmds);
+        let mut sess = Session::new();
         let mut senders = Vec::new();
-        let mut programs = cmds
+        let roles = create_roles(&cmds);
+        let mappings = cmds
             .iter()
             .zip(roles.iter())
             .map(|(cmd, role)| {
                 let channel = channel();
                 senders.push(channel.0.clone());
-                create_program(cmd, channel, *role, &streams.warnings)
+                create_program(cmd, channel.1, *role, &warnings).and_then(|p| sess.add_program(p))
             })
             .collect::<Result<Vec<_>>>()?;
 
+        StdioLinker::new(sess.graph_mut(), &mappings, &warnings).link(&cmds)?;
+
         if let Some(controller) = cmds.iter().position(|cmd| cmd.controller) {
-            let controller =
-                Controller::new(senders[controller].clone(), streams.mappings[controller]);
+            // Initialize protocol entities.
+            let controller = Controller::new(senders[controller].clone(), mappings[controller]);
             let agents = roles
                 .iter()
-                .zip(streams.mappings.iter())
+                .zip(mappings.iter())
                 .zip(senders.iter())
                 .filter_map(|((role, mapping), sender)| match role {
                     Role::Agent(idx) => Some(Agent::new(*idx, sender.clone(), *mapping)),
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            check_protocol_entities(&controller, &agents, &streams.graph, &streams.warnings);
-            for role in roles.iter() {
-                init_protocol_handlers(&mut streams, *role, &controller, &agents);
+            check_protocol_entities(&controller, &agents, sess.graph(), &warnings);
+
+            for entity in roles {
+                init_entity_handler(entity, sess.graph_mut(), &controller, &agents);
             }
-            for agent in agents.iter() {
+            for agent in &agents {
                 agent.stop_time_accounting();
             }
         }
 
-        streams.optimize()?;
-
-        for (program, stdio) in programs.iter_mut().zip(streams.stdio_list.into_iter()) {
-            program.stdio(stdio);
-        }
-
-        Ok(Driver {
-            graph: streams.graph,
-            programs,
-            warnings: streams.warnings,
-            mappings: streams.mappings,
+        Ok(Self {
+            sess,
+            cmds,
+            warnings,
         })
     }
 
-    pub fn run(self) -> Vec<DriverResult> {
-        let mut errors = Vec::new();
-        let mut reports = Vec::new();
-
-        let transmitter = self.graph.transmit_data();
-        let spawner = Spawner::spawn(self.programs);
-        let transmitter_result = transmitter.wait();
-
-        for report in spawner.wait() {
-            let mut program_errors = Vec::new();
-            match report {
-                Ok(report) => reports.push(report),
-                Err(e) => program_errors.push(e),
-            }
-            errors.push(program_errors);
-        }
-
-        if let Err(mut transmitter_errors) = transmitter_result {
-            for (mapping, program_errors) in self.mappings.into_iter().zip(errors.iter_mut()) {
-                for src in &[mapping.stdout, mapping.stderr] {
-                    if let Some(err) = transmitter_errors.errors.remove(src) {
-                        program_errors.push(err);
-                    }
-                }
-            }
-        }
-
-        if errors.iter().all(|e| e.is_empty()) {
-            reports.into_iter().map(Ok).collect()
+    pub fn run(self) -> Result<Vec<Report>> {
+        eprint!("{}", self.warnings);
+        let cmds = self.cmds;
+        let reports = self
+            .sess
+            .run()?
+            .into_iter()
+            .zip(cmds.iter())
+            .map(|(r, c)| Report::new(c, r))
+            .collect::<Vec<_>>();
+        if reports.is_empty() {
+            Command::print_help();
         } else {
-            errors
-                .into_iter()
-                .map(|errs| Err(Errors { errors: errs }))
-                .collect()
+            print_reports(&cmds, &reports)?;
+        }
+        Ok(reports)
+    }
+}
+
+impl<'w, 'g, 'm> StdioLinker<'w, 'g, 'm> {
+    fn new(graph: &'g mut Graph, mappings: &'m [StdioMapping], warnings: &'w Warnings) -> Self {
+        Self {
+            graph,
+            mappings,
+            warnings,
+            output_files: HashMap::new(),
+            exclusive_input_files: HashMap::new(),
         }
     }
 
-    pub fn warnings(&self) -> &Warnings {
-        &self.warnings
+    fn link(mut self, cmds: &[Command]) -> Result<()> {
+        for (idx, cmd) in cmds.iter().enumerate() {
+            let mapping = self.mappings[idx];
+            self.redirect_destination(mapping.stdin, &cmd.stdin_redirect)?;
+            self.redirect_source(mapping.stdout, &cmd.stdout_redirect)?;
+            self.redirect_source(mapping.stderr, &cmd.stderr_redirect)?;
+        }
+        Ok(())
     }
+
+    fn redirect_destination(
+        &mut self,
+        dst: DestinationId,
+        redirect_list: &RedirectList,
+    ) -> Result<()> {
+        for redirect in redirect_list.items.iter() {
+            let src = match &redirect.kind {
+                RedirectKind::File(f) => self.open_input_file(f, redirect.flags)?,
+                RedirectKind::Stdout(i) => self.get_mapping("Stdout", *i)?.stdout,
+                _ => continue,
+            };
+            self.graph.connect(src, dst);
+        }
+        Ok(())
+    }
+
+    fn redirect_source(&mut self, src: SourceId, redirect_list: &RedirectList) -> Result<()> {
+        for redirect in redirect_list.items.iter() {
+            let dst = match &redirect.kind {
+                RedirectKind::File(f) => self.open_output_file(f, redirect.flags)?,
+                RedirectKind::Stdin(i) => self.get_mapping("Stdin", *i)?.stdin,
+                _ => continue,
+            };
+            self.graph.connect(src, dst);
+        }
+        Ok(())
+    }
+
+    fn open_input_file(&mut self, path: &str, flags: RedirectFlags) -> Result<SourceId> {
+        let path = canonicalize(path)?;
+        match self.exclusive_input_files.get(&path).copied() {
+            Some(id) => Ok(id),
+            None => {
+                let pipe = open_input_file(&path, flags, &self.warnings)?;
+                let id = self.graph.add_source(pipe);
+                if flags.exclusive {
+                    self.exclusive_input_files.insert(path, id);
+                }
+                Ok(id)
+            }
+        }
+    }
+
+    fn open_output_file(&mut self, path: &str, flags: RedirectFlags) -> Result<DestinationId> {
+        let path = canonicalize(path)?;
+        match self.output_files.get(&path).copied() {
+            Some(id) => Ok(id),
+            None => {
+                let pipe = open_output_file(&path, flags, &self.warnings)?;
+                let id = self.graph.add_file_destination(pipe);
+                self.output_files.insert(path, id);
+                Ok(id)
+            }
+        }
+    }
+
+    fn get_mapping(&self, stream_name: &str, i: usize) -> Result<StdioMapping> {
+        if i >= self.mappings.len() {
+            Err(Error::from(format!(
+                "{} index '{}' is out of range",
+                stream_name, i
+            )))
+        } else {
+            Ok(self.mappings[i])
+        }
+    }
+}
+
+fn canonicalize(path: &str) -> Result<PathBuf> {
+    if !Path::exists(path.as_ref()) {
+        fs::File::create(path).map_err(|_| Error::from(format!("Unable to create '{}'", path)))?;
+    }
+    fs::canonicalize(path).map_err(|_| Error::from(format!("Unable to open '{}'", path)))
 }
 
 impl Role {
@@ -161,15 +243,85 @@ impl Role {
     }
 }
 
-impl std::error::Error for Errors {}
+fn parse_argv<T, U>(argv: T) -> Result<Vec<Command>>
+where
+    T: IntoIterator<Item = U>,
+    U: AsRef<str>,
+{
+    let argv: Vec<String> = argv.into_iter().map(|x| x.as_ref().to_string()).collect();
+    let mut default_cmd = Command::from_env()?;
+    let mut pos = 0;
+    let mut cmds: Vec<Command> = Vec::new();
 
-impl fmt::Display for Errors {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for e in self.errors.iter() {
-            writeln!(f, "{}", e)?;
+    while pos < argv.len() {
+        let mut cmd = default_cmd.clone();
+        pos += cmd.parse_argv(&argv[pos..]).map_err(Error::from)?;
+
+        let mut sep_pos = argv.len();
+        if let Some(sep) = &cmd.separator {
+            let full_sep = format!("--{}", sep);
+            if let Some(i) = argv[pos..].iter().position(|x| x == &full_sep) {
+                sep_pos = pos + i;
+            }
         }
-        Ok(())
+        cmd.argv.extend_from_slice(&argv[pos..sep_pos]);
+        pos = sep_pos + 1;
+
+        if cmd.argv.is_empty() {
+            default_cmd = cmd;
+        } else {
+            default_cmd.separator = cmd.separator.clone();
+            cmds.push(cmd);
+        }
     }
+
+    Ok(cmds)
+}
+
+fn print_reports(cmds: &[Command], reports: &[Report]) -> std::io::Result<()> {
+    let mut output_files: HashMap<&String, Vec<&Report>> = HashMap::new();
+    for (i, cmd) in cmds.iter().enumerate() {
+        if !cmd.hide_report && reports.len() == 1 {
+            println!("{}", reports[i]);
+        }
+        if let Some(filename) = &cmd.output_file {
+            output_files
+                .entry(filename)
+                .or_insert_with(Vec::new)
+                .push(&reports[i]);
+        }
+    }
+
+    for (filename, file_reports) in output_files.into_iter() {
+        let _ = fs::remove_file(filename);
+        let mut file = fs::File::create(filename)?;
+
+        if file_reports.len() == 1 && !file_reports[0].kind.is_json() {
+            write!(&mut file, "{}", file_reports[0])?;
+        } else if file_reports.iter().all(|r| r.kind.is_json()) {
+            let json_reports =
+                JsonValue::Array(file_reports.into_iter().map(Report::to_json).collect());
+            json_reports.write_pretty(&mut file, 4)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn check_cmds(cmds: &[Command], warnings: &Warnings) -> Result<()> {
+    if cmds.iter().filter(|cmd| cmd.controller).count() > 1 {
+        return Err(Error::from("There can be at most one controller"));
+    }
+    for cmd in cmds.iter() {
+        assert!(!cmd.argv.is_empty());
+        if cmd.delegated {
+            warnings.emit("'-runas', '--delegated' options have no effect");
+        }
+        if cmd.shared_memory.is_some() {
+            warnings.emit("'--shared-memory' option has no effect");
+        }
+    }
+    Ok(())
 }
 
 fn check_protocol_entities(
@@ -194,47 +346,21 @@ fn check_protocol_entities(
     }
 }
 
-fn check_cmds(cmds: &[Command], warnings: &Warnings) -> Result<()> {
-    if cmds.iter().filter(|cmd| cmd.controller).count() > 1 {
-        return Err(Error::from("There can be at most one controller"));
-    }
-    for cmd in cmds.iter() {
-        assert!(!cmd.argv.is_empty());
-        if cmd.delegated {
-            warnings.emit("'-runas', '--delegated' options have no effect");
-        }
-        if cmd.shared_memory.is_some() {
-            warnings.emit("'--shared-memory' option has no effect");
-        }
-    }
-    Ok(())
-}
-
-fn init_protocol_handlers(
-    streams: &mut IoStreams,
-    role: Role,
-    controller: &Controller,
-    agents: &[Agent],
-) {
-    match role {
+fn init_entity_handler(entity: Role, graph: &mut Graph, controller: &Controller, agents: &[Agent]) {
+    match entity {
         Role::Agent(idx) => {
             let agent = &agents[idx.0];
-            if !streams
-                .graph
-                .has_connection(agent.stdout(), controller.stdin())
-            {
+            if !graph.has_connection(agent.stdout(), controller.stdin()) {
                 // Do not send any messages to controller if there's no connection.
                 return;
             }
-            streams
-                .graph
+            graph
                 .source_mut(agent.stdout())
                 .unwrap()
                 .set_reader(AgentStdout::new(agent.clone()));
         }
         Role::Controller => {
-            streams
-                .graph
+            graph
                 .source_mut(controller.stdout())
                 .unwrap()
                 .set_reader(ControllerStdout::new(controller.clone(), agents.to_vec()));
@@ -245,34 +371,33 @@ fn init_protocol_handlers(
 
 fn create_program(
     cmd: &Command,
-    channel: MessageChannel,
+    receiver: Receiver<ProgramMessage>,
     role: Role,
     warnings: &Warnings,
-) -> Result<SpawnedProgram> {
+) -> Result<Program> {
     let mut info = create_process_info(cmd, role);
     let mut group = Group::new()?;
-    init_os_specific_process_extensions(cmd, &mut info, &mut group, warnings)?;
-
-    let mut program = SpawnedProgram::new(info);
-    program
-        .group(group)
-        .monitor_interval(cmd.monitor_interval)
-        .resource_limits(ResourceLimits {
-            wall_clock_time: cmd.wall_clock_time_limit,
-            idle_time: cmd.idle_time_limit.map(|limit| IdleTimeLimit {
-                total_idle_time: limit,
-                cpu_load_threshold: cmd.load_ratio / 100.0,
-            }),
-            total_user_time: cmd.time_limit,
-            max_memory_usage: cmd.memory_limit.map(mb2b),
-            total_bytes_written: cmd.write_limit.map(mb2b),
-            total_processes_created: cmd.process_count,
-            active_processes: cmd.active_process_count,
-            active_network_connections: cmd.active_connection_count,
+    init_os_specific_process_extensions(cmd, &mut info, &mut group, warnings).map(|_| {
+        Program::new_with(info, |p| {
+            p.group(group)
+                .monitor_interval(cmd.monitor_interval)
+                .resource_limits(ResourceLimits {
+                    wall_clock_time: cmd.wall_clock_time_limit,
+                    idle_time: cmd.idle_time_limit.map(|limit| IdleTimeLimit {
+                        total_idle_time: limit,
+                        cpu_load_threshold: cmd.load_ratio / 100.0,
+                    }),
+                    total_user_time: cmd.time_limit,
+                    max_memory_usage: cmd.memory_limit.map(mb2b),
+                    total_bytes_written: cmd.write_limit.map(mb2b),
+                    total_processes_created: cmd.process_count,
+                    active_processes: cmd.active_process_count,
+                    active_network_connections: cmd.active_connection_count,
+                })
+                .wait_for_children(cmd.wait_for_children)
+                .msg_receiver(receiver);
         })
-        .wait_for_children(cmd.wait_for_children)
-        .msg_channel(channel);
-    Ok(program)
+    })
 }
 
 fn create_process_info(cmd: &Command, role: Role) -> ProcessInfo {
