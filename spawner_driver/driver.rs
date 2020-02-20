@@ -134,7 +134,9 @@ impl Driver {
         eprint!("{}", self.warnings);
 
         let cmds = self.cmds;
-        self.stdio.stdin_w.map(spawn_console_reader);
+        if let Some(stdin) = self.stdio.stdin_w {
+            spawn_console_reader(stdin);
+        }
         let run = self.sess.run()?;
 
         let reports = run
