@@ -215,7 +215,9 @@ impl Process {
         Ok(match exit_code {
             STILL_ACTIVE => None,
             _ => {
-                let _ = self.terminate();
+                unsafe {
+                    TerminateProcess(self.handle.raw(), 0);
+                }
                 Some(match crash_cause(exit_code) {
                     Some(cause) => ExitStatus::Crashed(cause.to_string()),
                     None => ExitStatus::Finished(exit_code),
