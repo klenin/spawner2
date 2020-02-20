@@ -10,7 +10,6 @@ crate-type = ["lib"]
 
 [dependencies]
 cfg-if = "0.1.6"
-backtrace = "0.3.13"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3.6", features = [

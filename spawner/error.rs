@@ -1,7 +1,5 @@
 use crate::sys::error::SysError;
 
-use backtrace::Backtrace;
-
 use std::fmt;
 use std::io;
 
@@ -13,15 +11,11 @@ enum ErrorKind {
 
 pub struct Error {
     kind: ErrorKind,
-    backtrace: Backtrace,
 }
 
 impl Error {
     fn new(k: ErrorKind) -> Self {
-        Self {
-            kind: k,
-            backtrace: Backtrace::new(),
-        }
+        Self { kind: k }
     }
 
     pub fn last_os_error() -> Self {
@@ -43,7 +37,7 @@ impl fmt::Display for Error {
 
 impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}\n{:?}", self, self.backtrace)?;
+        writeln!(f, "{}", self)?;
         Ok(())
     }
 }
