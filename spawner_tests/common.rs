@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
+use cfg_if::cfg_if;
+
 pub struct TmpDir {
     dir: PathBuf,
 }
@@ -15,11 +17,24 @@ pub struct TmpDir {
 pub const MEM_ERR: u64 = 2 * 1024 * 1024; // 2MB
 pub const TIME_ERR: f64 = 0.15; // 150 ms
 
-#[cfg(windows)]
-pub const APP: &str = "../target/debug/app.exe";
+macro_rules! target_dir {
+    ($s:expr) => {
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../target/debug/", $s);
+    };
+    () => {
+        target_dir!("");
+    };
+}
 
-#[cfg(unix)]
-pub const APP: &str = "../target/debug/app";
+cfg_if! {
+    if #[cfg(windows)] {
+        pub const APP: &str = target_dir!("app.exe");
+        pub const SP: &str = target_dir!("sp.exe");
+    } else if #[cfg(unix)] {
+        pub const APP: &str = target_dir!("app");
+        pub const SP: &str = target_dir!("sp");
+    }
+}
 
 impl TmpDir {
     pub fn new() -> Self {
