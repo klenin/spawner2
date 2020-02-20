@@ -6,6 +6,7 @@ use crate::report::Report;
 use crate::sys::{init_os_specific_process_extensions, open_input_file, open_output_file};
 
 use spawner::dataflow::{DestinationId, Graph, SourceId};
+use spawner::pipe::{self, WritePipe};
 use spawner::process::{Group, ProcessInfo};
 use spawner::{
     Error, IdleTimeLimit, Program, ProgramMessage, ResourceLimits, Result, Session, StdioMapping,
@@ -19,9 +20,10 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
+use std::thread;
 
 pub struct Warnings(RefCell<HashSet<String>>);
 
@@ -29,11 +31,19 @@ pub struct Driver {
     sess: Session,
     cmds: Vec<Command>,
     warnings: Warnings,
+    stdio: DriverStdio,
+}
+
+/// All redirects to *std are redirected here.
+/// We don't want to redirect directly to STDIN\STDOUT handles since it may result in undefined behaviour.
+struct DriverStdio {
+    stdin_w: Option<WritePipe>,
 }
 
 struct StdioLinker<'w, 'g, 'm> {
     mappings: &'m [StdioMapping],
     graph: &'g mut Graph,
+    stdin: Option<(WritePipe, SourceId)>,
     warnings: &'w Warnings,
     output_files: HashMap<PathBuf, DestinationId>,
     exclusive_input_files: HashMap<PathBuf, SourceId>,
@@ -88,7 +98,7 @@ impl Driver {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        StdioLinker::new(sess.graph_mut(), &mappings, &warnings).link(&cmds)?;
+        let stdio = StdioLinker::new(sess.graph_mut(), &mappings, &warnings).link(&cmds)?;
 
         if let Some(controller) = cmds.iter().position(|cmd| cmd.controller) {
             // Initialize protocol entities.
@@ -116,15 +126,18 @@ impl Driver {
             sess,
             cmds,
             warnings,
+            stdio,
         })
     }
 
     pub fn run(self) -> Result<Vec<Report>> {
         eprint!("{}", self.warnings);
+
         let cmds = self.cmds;
-        let reports = self
-            .sess
-            .run()?
+        self.stdio.stdin_w.map(spawn_console_reader);
+        let run = self.sess.run()?;
+
+        let reports = run
             .wait()
             .into_iter()
             .zip(cmds.iter())
@@ -144,20 +157,23 @@ impl<'w, 'g, 'm> StdioLinker<'w, 'g, 'm> {
         Self {
             graph,
             mappings,
+            stdin: None,
             warnings,
             output_files: HashMap::new(),
             exclusive_input_files: HashMap::new(),
         }
     }
 
-    fn link(mut self, cmds: &[Command]) -> Result<()> {
+    fn link(mut self, cmds: &[Command]) -> Result<DriverStdio> {
         for (idx, cmd) in cmds.iter().enumerate() {
             let mapping = self.mappings[idx];
             self.redirect_destination(mapping.stdin, &cmd.stdin_redirect)?;
             self.redirect_source(mapping.stdout, &cmd.stdout_redirect)?;
             self.redirect_source(mapping.stderr, &cmd.stderr_redirect)?;
         }
-        Ok(())
+        Ok(DriverStdio {
+            stdin_w: self.stdin.map(|s| s.0),
+        })
     }
 
     fn redirect_destination(
@@ -169,6 +185,13 @@ impl<'w, 'g, 'm> StdioLinker<'w, 'g, 'm> {
             let src = match &redirect.kind {
                 RedirectKind::File(f) => self.open_input_file(f, redirect.flags)?,
                 RedirectKind::Stdout(i) => self.get_mapping("Stdout", *i)?.stdout,
+                RedirectKind::Std => {
+                    if self.stdin.is_none() {
+                        let (r, w) = pipe::create()?;
+                        self.stdin = Some((w, self.graph.add_source(r)));
+                    }
+                    self.stdin.as_ref().unwrap().1
+                }
                 _ => continue,
             };
             self.graph.connect(src, dst);
@@ -242,6 +265,21 @@ impl Role {
             _ => false,
         }
     }
+}
+
+fn spawn_console_reader(mut dst: WritePipe) {
+    thread::spawn(move || {
+        let mut s = String::new();
+        loop {
+            s.clear();
+            if io::stdin().read_line(&mut s).is_err() {
+                return;
+            }
+            if s.is_empty() || dst.write_all(s.as_bytes()).is_err() {
+                return;
+            }
+        }
+    });
 }
 
 fn parse_argv<T, U>(argv: T) -> Result<Vec<Command>>

@@ -1,4 +1,4 @@
-use crate::common::{read_all, write_all, TmpDir, APP};
+use crate::common::{read_all, write_all, TmpDir, APP, SP};
 
 use spawner_driver::run;
 
@@ -179,4 +179,53 @@ fn multiple_stdouts_to_file() {
     ])
     .unwrap();
     assert_eq!("AAA".repeat(40), read_all(out));
+}
+
+#[test]
+fn stdin_from_sp_stdin() {
+    let tmp = TmpDir::new();
+    let stdin = tmp.file("stdin.txt");
+    let stdout = tmp.file("stdout.txt");
+    let data = "123\n456\n789\n";
+    write_all(&stdin, data);
+    run(&[
+        format!("--in={}", stdin).as_str(),
+        SP,
+        "-d=2",
+        "--in=*std",
+        format!("--out={}", stdout).as_str(),
+        APP,
+        "pipe_loop",
+    ])
+    .unwrap();
+    assert_eq!(data, read_all(stdout));
+}
+
+#[test]
+fn multiple_stdins_from_sp_stdin() {
+    let tmp = TmpDir::new();
+    let stdin = tmp.file("stdin.txt");
+    let stdout1 = tmp.file("stdout1.txt");
+    let stdout2 = tmp.file("stdout2.txt");
+    let data = "123\n456\n789\n";
+    write_all(&stdin, data);
+    run(&[
+        format!("--in={}", stdin).as_str(),
+        SP,
+        "--separator=@",
+        "-d=2",
+        "--in=*std",
+        "--@",
+        format!("--out={}", stdout1).as_str(),
+        APP,
+        "pipe_loop",
+        "--@",
+        "-d=2",
+        format!("--out={}", stdout2).as_str(),
+        APP,
+        "pipe_loop",
+    ])
+    .unwrap();
+    assert_eq!(data, read_all(stdout1));
+    assert_eq!(data, read_all(stdout2));
 }
