@@ -220,7 +220,6 @@ fn multiple_stdins_from_sp_stdin() {
         APP,
         "pipe_loop",
         "--@",
-        "-d=2",
         format!("--out={}", stdout2).as_str(),
         APP,
         "pipe_loop",
