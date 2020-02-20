@@ -55,6 +55,7 @@ impl TmpDir {
     pub fn file<P: AsRef<Path>>(&self, filename: P) -> String {
         let mut path = self.dir.clone();
         path.push(filename);
+        fs::File::create(&path).unwrap();
         path.to_str().unwrap().to_string()
     }
 }
