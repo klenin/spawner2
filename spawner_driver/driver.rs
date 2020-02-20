@@ -125,6 +125,7 @@ impl Driver {
         let reports = self
             .sess
             .run()?
+            .wait()
             .into_iter()
             .zip(cmds.iter())
             .map(|(r, c)| Report::new(c, r))

@@ -1,4 +1,4 @@
-use crate::dataflow::{self, DestinationId, Graph, SourceId};
+use crate::dataflow::{self, DestinationId, Graph, SourceId, Transmitter};
 use crate::pipe::{self, ReadPipe, WritePipe};
 use crate::process::{
     ExitStatus, Group, GroupIo, GroupMemory, GroupNetwork, GroupPidCounters, GroupTimers,
@@ -109,6 +109,16 @@ pub struct Session {
     graph: Graph,
 }
 
+struct SupervisorThread {
+    handle: JoinHandle<Result<Report>>,
+}
+
+pub struct Run {
+    supervisors: Vec<SupervisorThread>,
+    mappings: Vec<StdioMapping>,
+    transmitter: Transmitter,
+}
+
 impl Default for ResourceLimits {
     fn default() -> Self {
         Self {
@@ -181,23 +191,6 @@ impl Program {
         self.msg_receiver = Some(receiver);
         self
     }
-
-    fn spawn(self, stdio: Stdio) -> JoinHandle<Result<Report>> {
-        thread::spawn(|| {
-            Supervisor::start_monitoring(
-                self.info,
-                stdio,
-                match self.group {
-                    Some(g) => g,
-                    None => Group::new()?,
-                },
-                self.resource_limits.unwrap_or_default(),
-                self.monitor_interval,
-                self.msg_receiver,
-                self.wait_for_children,
-            )
-        })
-    }
 }
 
 impl Session {
@@ -237,23 +230,16 @@ impl Session {
         &self.graph
     }
 
-    pub fn run(mut self) -> Result<Vec<ProgramResult>> {
-        self.optimize_io()?;
-
-        let mappings = self.mappings;
-        let transmitter = self.graph.transmit_data();
-        let threads = self
-            .progs
-            .into_iter()
-            .map(|p| p.prog.spawn(p.stdio))
-            .collect::<Vec<_>>();
-
-        let mut transmitter_errors = transmitter.wait().err();
-        Ok(threads
-            .into_iter()
-            .zip(mappings.into_iter())
-            .map(|(thread, mapping)| get_program_result(thread, mapping, &mut transmitter_errors))
-            .collect::<Vec<_>>())
+    pub fn run(mut self) -> Result<Run> {
+        self.optimize_io().map(|_| Run {
+            supervisors: self
+                .progs
+                .into_iter()
+                .map(|p| SupervisorThread::spawn(p.prog, p.stdio))
+                .collect(),
+            transmitter: self.graph.transmit_data(),
+            mappings: self.mappings,
+        })
     }
 
     fn optimize_io(&mut self) -> Result<()> {
@@ -267,28 +253,57 @@ impl Session {
     }
 }
 
-fn get_program_result(
-    thread: JoinHandle<Result<Report>>,
-    mapping: StdioMapping,
-    io_errs: &mut Option<dataflow::Errors>,
-) -> ProgramResult {
-    // Collect io errors for this program.
-    let mut errs = [mapping.stdout, mapping.stderr]
-        .iter()
-        .filter_map(|id| io_errs.as_mut().map(|e| e.errors.remove(id)).flatten())
-        .collect::<Vec<_>>();
+impl SupervisorThread {
+    fn spawn(p: Program, stdio: Stdio) -> Self {
+        Self {
+            handle: thread::spawn(|| {
+                Supervisor::start_monitoring(
+                    p.info,
+                    stdio,
+                    match p.group {
+                        Some(g) => g,
+                        None => Group::new()?,
+                    },
+                    p.resource_limits.unwrap_or_default(),
+                    p.monitor_interval,
+                    p.msg_receiver,
+                    p.wait_for_children,
+                )
+            }),
+        }
+    }
 
-    let result = thread
-        .join()
-        .unwrap_or_else(|_| Err(Error::from("Supervisor thread panicked")))
-        .map_err(|e| {
-            errs.push(e);
-        })
-        .ok();
-    if errs.is_empty() {
-        Ok(result.unwrap())
-    } else {
-        Err(ProgramErrors { errors: errs })
+    fn wait(self, mapping: StdioMapping, io_errs: &mut Option<dataflow::Errors>) -> ProgramResult {
+        // Collect io errors for this program.
+        let mut errs = [mapping.stdout, mapping.stderr]
+            .iter()
+            .filter_map(|id| io_errs.as_mut().map(|e| e.errors.remove(id)).flatten())
+            .collect::<Vec<_>>();
+
+        let result = self
+            .handle
+            .join()
+            .unwrap_or_else(|_| Err(Error::from("Supervisor thread panicked")))
+            .map_err(|e| {
+                errs.push(e);
+            })
+            .ok();
+        if errs.is_empty() {
+            Ok(result.unwrap())
+        } else {
+            Err(ProgramErrors { errors: errs })
+        }
+    }
+}
+
+impl Run {
+    pub fn wait(self) -> Vec<ProgramResult> {
+        let mut transmitter_errors = self.transmitter.wait().err();
+        self.supervisors
+            .into_iter()
+            .zip(self.mappings.into_iter())
+            .map(|(supervisor, mapping)| supervisor.wait(mapping, &mut transmitter_errors))
+            .collect::<Vec<_>>()
     }
 }
 
@@ -342,7 +357,7 @@ fn optimize_istream(graph: &mut Graph, dst_id: DestinationId, pipe: &mut ReadPip
     {
         return Ok(());
     }
-    
+
     graph.remove_destination(dst_id);
     *pipe = graph.remove_source(src_id).unwrap();
     Ok(())
