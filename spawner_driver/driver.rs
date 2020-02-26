@@ -3,7 +3,9 @@ use crate::misc::mb2b;
 use crate::protocol_entities::{Agent, AgentIdx, Controller};
 use crate::protocol_handlers::{AgentStdout, ControllerStdout};
 use crate::report::Report;
-use crate::sys::{init_os_specific_process_extensions, open_input_file, open_output_file};
+use crate::sys::{
+    init_os_specific_process_extensions, open_input_file, open_output_file, ConsoleReader,
+};
 
 use spawner::dataflow::{DestinationId, Graph, SourceId};
 use spawner::pipe::{self, WritePipe};
@@ -20,10 +22,9 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
-use std::io::{self, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
-use std::thread;
 
 pub struct Warnings(RefCell<HashSet<String>>);
 
@@ -134,10 +135,11 @@ impl Driver {
         eprint!("{}", self.warnings);
 
         let cmds = self.cmds;
-        if let Some(stdin) = self.stdio.stdin_w {
-            spawn_console_reader(stdin);
-        }
         let run = self.sess.run()?;
+
+        if let Some(stdin) = self.stdio.stdin_w {
+            ConsoleReader::spawn(stdin).join(&run);
+        }
 
         let reports = run
             .wait()
@@ -267,21 +269,6 @@ impl Role {
             _ => false,
         }
     }
-}
-
-fn spawn_console_reader(mut dst: WritePipe) {
-    thread::spawn(move || {
-        let mut s = String::new();
-        loop {
-            s.clear();
-            if io::stdin().read_line(&mut s).is_err() {
-                return;
-            }
-            if s.is_empty() || dst.write_all(s.as_bytes()).is_err() {
-                return;
-            }
-        }
-    });
 }
 
 fn parse_argv<T, U>(argv: T) -> Result<Vec<Command>>

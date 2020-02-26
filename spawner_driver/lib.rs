@@ -2,6 +2,12 @@ extern crate json;
 extern crate spawner;
 extern crate spawner_opts;
 
+#[cfg(windows)]
+extern crate winapi;
+
+#[cfg(unix)]
+extern crate libc;
+
 mod cmd;
 mod driver;
 mod misc;

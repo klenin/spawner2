@@ -7,21 +7,31 @@ use spawner::Result;
 
 use std::path::Path;
 
-#[cfg(windows)]
-pub fn open_input_file(
-    file: &Path,
-    flags: RedirectFlags,
-    _warnings: &Warnings,
-) -> Result<ReadPipe> {
-    use spawner::windows::pipe::ReadPipeExt;
-    if flags.exclusive {
-        ReadPipe::lock(file)
-    } else {
-        ReadPipe::open(file)
+pub struct ConsoleReader(libc::pid_t);
+
+impl ConsoleReader {
+    pub fn spawn<F>(f: F) -> Self
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        match unsafe { libc::fork() } {
+            -1 => unreachable!("Cannot create ConsoleReader"),
+            0 => {
+                f();
+                std::process::exit(0);
+            }
+            x => Self(x),
+        }
+    }
+
+    pub fn interrupt(self) {
+        // There's no way to interrupt reading thread. Just kill it.
+        unsafe {
+            libc::kill(self.0, libc::SIGKILL);
+        }
     }
 }
 
-#[cfg(unix)]
 pub fn open_input_file(file: &Path, flags: RedirectFlags, warnings: &Warnings) -> Result<ReadPipe> {
     if flags.exclusive {
         warnings.emit("Exclusive redirect works on windows only");
@@ -29,21 +39,6 @@ pub fn open_input_file(file: &Path, flags: RedirectFlags, warnings: &Warnings) -
     ReadPipe::open(file)
 }
 
-#[cfg(windows)]
-pub fn open_output_file(
-    file: &Path,
-    flags: RedirectFlags,
-    _warnings: &Warnings,
-) -> Result<WritePipe> {
-    use spawner::windows::pipe::WritePipeExt;
-    if flags.exclusive {
-        WritePipe::lock(file)
-    } else {
-        WritePipe::open(file)
-    }
-}
-
-#[cfg(unix)]
 pub fn open_output_file(
     file: &Path,
     flags: RedirectFlags,
@@ -55,38 +50,6 @@ pub fn open_output_file(
     WritePipe::open(file)
 }
 
-#[cfg(windows)]
-pub fn init_os_specific_process_extensions(
-    cmd: &Command,
-    info: &mut ProcessInfo,
-    group: &mut Group,
-    _warnings: &Warnings,
-) -> Result<()> {
-    use spawner::windows::process::{GroupExt, ProcessInfoExt, UiRestrictions};
-
-    if cmd.show_window {
-        info.show_window(true);
-    }
-    if cmd.env == Environment::UserDefault {
-        info.env_user();
-    }
-    if cmd.secure {
-        group.set_ui_restrictions(
-            UiRestrictions::new()
-                .limit_desktop()
-                .limit_display_settings()
-                .limit_exit_windows()
-                .limit_global_atoms()
-                .limit_handles()
-                .limit_read_clipboard()
-                .limit_write_clipboard()
-                .limit_system_parameters(),
-        )?;
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
 pub fn init_os_specific_process_extensions(
     cmd: &Command,
     info: &mut ProcessInfo,
