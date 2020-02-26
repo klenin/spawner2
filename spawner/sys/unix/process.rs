@@ -32,6 +32,7 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::iter;
 use std::mem;
+use std::os::unix::io::RawFd;
 use std::process;
 use std::thread;
 use std::time::Duration;
@@ -66,6 +67,7 @@ enum InitError {
     Other(nix::Error),
     Impersonate(nix::Error),
     Seccomp(nix::Error),
+    CloseFd,
 }
 
 type InitResult = std::result::Result<(), InitError>;
@@ -243,6 +245,7 @@ impl Process {
                 ))),
                 None => Err(Error::from("Failed to add process to cgroup")),
             },
+            InitError::CloseFd => Err(Error::from("Failed to close file descriptors")),
         }
     }
 
@@ -543,10 +546,20 @@ fn create_args(info: &ProcessInfo) -> Result<Vec<CString>> {
         .collect()
 }
 
+fn close_all_fds(ignore: &[RawFd]) -> InitResult {
+    procfs::Process::myself()
+        .and_then(|ps| ps.fd())
+        .map_err(|_| InitError::CloseFd)?
+        .into_iter()
+        .map(|fd_info| fd_info.fd as RawFd)
+        .filter(|&fd| !ignore.iter().any(|&x| x == fd))
+        .for_each(|fd| {
+            let _ = close(fd);
+        });
+    Ok(())
+}
+
 fn init_stdio(stdio: RawStdio) -> nix::Result<()> {
-    close(STDIN_FILENO)?;
-    close(STDOUT_FILENO)?;
-    close(STDERR_FILENO)?;
     dup2(stdio.stdin.raw(), STDIN_FILENO)?;
     dup2(stdio.stdout.raw(), STDOUT_FILENO)?;
     dup2(stdio.stderr.raw(), STDERR_FILENO)?;
@@ -585,6 +598,11 @@ fn init_child_process(
                     .map(|v| nix::Error::from_errno(Errno::from_i32(v))),
             )
         })?;
+
+    // Even though we set FD_CLOEXEC flag on all pipes, some child processes
+    // still inherit pipes of their siblings.
+    // Close all open file descriptors to fix this.
+    close_all_fds(&[stdio.stdin.raw(), stdio.stdout.raw(), stdio.stderr.raw()])?;
 
     init_stdio(stdio)
         .and_then(|_| working_dir.map(chdir).transpose())
