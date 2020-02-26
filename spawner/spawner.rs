@@ -8,7 +8,9 @@ use crate::supervisor::Supervisor;
 use crate::{Error, Result};
 
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -109,8 +111,11 @@ pub struct Session {
     graph: Graph,
 }
 
+struct FlagGuard(Arc<AtomicBool>);
+
 struct SupervisorThread {
     handle: JoinHandle<Result<Report>>,
+    is_finished: Arc<AtomicBool>,
 }
 
 pub struct Run {
@@ -253,10 +258,19 @@ impl Session {
     }
 }
 
+impl Drop for FlagGuard {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
 impl SupervisorThread {
     fn spawn(p: Program, stdio: Stdio) -> Self {
+        let is_finished = Arc::new(AtomicBool::new(false));
         Self {
+            is_finished: is_finished.clone(),
             handle: thread::spawn(|| {
+                let _guard = FlagGuard(is_finished);
                 Supervisor::start_monitoring(
                     p.info,
                     stdio,
@@ -294,6 +308,10 @@ impl SupervisorThread {
             Err(ProgramErrors { errors: errs })
         }
     }
+
+    fn is_finished(&self) -> bool {
+        self.is_finished.load(Ordering::Acquire)
+    }
 }
 
 impl Run {
@@ -304,6 +322,10 @@ impl Run {
             .zip(self.mappings.into_iter())
             .map(|(supervisor, mapping)| supervisor.wait(mapping, &mut transmitter_errors))
             .collect::<Vec<_>>()
+    }
+
+    pub fn all_finished(&self) -> bool {
+        self.supervisors.iter().all(SupervisorThread::is_finished)
     }
 }
 
