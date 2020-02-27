@@ -20,3 +20,6 @@ json = "*"
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3.6", features = [
     "ioapiset",] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.67"
