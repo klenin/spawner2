@@ -26,6 +26,7 @@ pub mod dataflow;
 pub mod pipe;
 pub mod process;
 
+mod dataflow_analysis;
 mod error;
 mod limit_checker;
 mod spawner;

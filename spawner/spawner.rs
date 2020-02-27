@@ -1,5 +1,6 @@
-use crate::dataflow::{self, DestinationId, Graph, SourceId, Transmitter};
-use crate::pipe::{self, ReadPipe, WritePipe};
+use crate::dataflow::{DestinationId, Graph, SourceId, Transmitter, TransmitterResults};
+use crate::dataflow_analysis::DataflowOptimizer;
+use crate::pipe;
 use crate::process::{
     ExitStatus, Group, GroupIo, GroupMemory, GroupNetwork, GroupPidCounters, GroupTimers,
     ProcessInfo, Stdio,
@@ -248,11 +249,13 @@ impl Session {
     }
 
     fn optimize_io(&mut self) -> Result<()> {
+        let mut optimizer =
+            DataflowOptimizer::new(&mut self.graph, &self.ignored_srcs, &self.ignored_dsts);
         for (mapping, prog) in self.mappings.iter().zip(self.progs.iter_mut()) {
             let stdio = &mut prog.stdio;
-            optimize_istream(&mut self.graph, mapping.stdin, &mut stdio.stdin)?;
-            optimize_ostream(&mut self.graph, mapping.stdout, &mut stdio.stdout)?;
-            optimize_ostream(&mut self.graph, mapping.stderr, &mut stdio.stderr)?;
+            optimizer.optimize_destination(mapping.stdin, &mut stdio.stdin)?;
+            optimizer.optimize_source(mapping.stdout, &mut stdio.stdout)?;
+            optimizer.optimize_source(mapping.stderr, &mut stdio.stderr)?;
         }
         Ok(())
     }
@@ -327,60 +330,4 @@ impl Run {
     pub fn all_finished(&self) -> bool {
         self.supervisors.iter().all(SupervisorThread::is_finished)
     }
-}
-
-fn optimize_ostream(graph: &mut Graph, src_id: SourceId, pipe: &mut WritePipe) -> Result<()> {
-    let num_edges = match graph.source(src_id) {
-        Some(src) => {
-            let num_edges = src.edges().len();
-            if num_edges > 1 || src.has_reader() {
-                return Ok(());
-            }
-            num_edges
-        }
-        None => return Ok(()),
-    };
-
-    if num_edges == 0 {
-        graph.remove_source(src_id);
-        *pipe = WritePipe::null()?;
-        return Ok(());
-    }
-
-    let dst_id = graph.source(src_id).map(|src| src.edges()[0]).unwrap();
-    if graph.destination(dst_id).unwrap().edges().len() > 1 {
-        return Ok(());
-    }
-
-    graph.remove_source(src_id);
-    *pipe = graph.remove_destination(dst_id).unwrap();
-    Ok(())
-}
-
-fn optimize_istream(graph: &mut Graph, dst_id: DestinationId, pipe: &mut ReadPipe) -> Result<()> {
-    let num_edges = match graph.destination(dst_id).map(|dst| dst.edges().len()) {
-        Some(num_edges) => num_edges,
-        None => return Ok(()),
-    };
-
-    if num_edges == 0 {
-        graph.remove_destination(dst_id);
-        *pipe = ReadPipe::null()?;
-        return Ok(());
-    } else if num_edges > 1 {
-        return Ok(());
-    }
-
-    let src_id = graph.destination(dst_id).map(|dst| dst.edges()[0]).unwrap();
-    if graph
-        .source(src_id)
-        .map(|src| src.edges().len() != 1 || src.has_reader())
-        .unwrap()
-    {
-        return Ok(());
-    }
-
-    graph.remove_destination(dst_id);
-    *pipe = graph.remove_source(src_id).unwrap();
-    Ok(())
 }
