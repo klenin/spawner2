@@ -105,6 +105,12 @@ fn create_udp_sockets(n: usize, ip: &'static str) {
     thread::sleep(Duration::from_secs(1));
 }
 
+fn try_write(file: String, text: String) {
+    if let Ok(mut f) = fs::File::open(file) {
+        let _ = f.write_all(text.as_bytes());
+    }
+}
+
 fn main() {
     let mut p = Parser(std::env::args().skip(1));
     while let Some(arg) = p.0.next() {
@@ -124,10 +130,7 @@ fn main() {
                 (0..p.parse::<usize>()).for_each(|_| print!("{}", s));
             }
             "wake_controller" => wake_controller(),
-            "try_open" => match fs::File::open(p.next()) {
-                Ok(_) => print!("ok"),
-                Err(_) => print!("err"),
-            },
+            "try_write" => try_write(p.next(), p.next()),
             "exec_rest" => {
                 let _ = process::Command::new(p.next()).args(p.0).spawn();
                 return;

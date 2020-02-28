@@ -11,8 +11,6 @@ use spawner_driver::run;
 fn exclusive_read() {
     let tmp = TmpDir::new();
     let file = tmp.file("file.txt");
-    let stdout = tmp.file("stdout.txt");
-
     write_all(&file, "data");
     run(&[
         "--separator=@",
@@ -21,14 +19,13 @@ fn exclusive_read() {
         format!("--in=*e:{}", file).as_str(),
         APP,
         "--@",
-        format!("--out={}", stdout).as_str(),
         APP,
-        "try_open",
+        "try_write",
         file.as_str(),
+        "123",
     ])
     .unwrap();
-
-    assert_eq!("err", read_all(stdout));
+    assert_eq!("data", read_all(file));
 }
 
 #[cfg(windows)]
@@ -36,23 +33,21 @@ fn exclusive_read() {
 fn exclusive_write() {
     let tmp = TmpDir::new();
     let file = tmp.file("file.txt");
-    let stdout = tmp.file("stdout.txt");
-
     run(&[
         "--separator=@",
         "-d=2",
         "--@",
         format!("--out=*e:{}", file).as_str(),
         APP,
+        "A",
         "--@",
-        format!("--out={}", stdout).as_str(),
         APP,
-        "try_open",
+        "try_write",
         file.as_str(),
+        "123",
     ])
     .unwrap();
-
-    assert_eq!("err", read_all(stdout));
+    assert_eq!("A", read_all(file));
 }
 
 #[cfg(windows)]
@@ -60,8 +55,6 @@ fn exclusive_write() {
 fn exclusive_write_2() {
     let tmp = TmpDir::new();
     let file = tmp.file("file.txt");
-    let stdout = tmp.file("stdout.txt");
-
     run(&[
         "--separator=@",
         "-d=1",
@@ -74,15 +67,13 @@ fn exclusive_write_2() {
         APP,
         "A",
         "--@",
-        format!("--out={}", stdout).as_str(),
         APP,
-        "try_open",
+        "try_write",
         file.as_str(),
+        "123",
     ])
     .unwrap();
-
     assert_eq!("AA", read_all(file));
-    assert_eq!("err", read_all(stdout));
 }
 
 #[cfg(windows)]
@@ -91,8 +82,6 @@ fn exclusive_read_2() {
     let tmp = TmpDir::new();
     let stdin = tmp.file("stdin.txt");
     let stderr = tmp.file("stderr.txt");
-    let stdout = tmp.file("stdout.txt");
-
     write_all(&stdin, "A");
     run(&[
         "--separator=@",
@@ -108,15 +97,13 @@ fn exclusive_read_2() {
         APP,
         "pipe_loop",
         "--@",
-        format!("--out={}", stdout).as_str(),
         APP,
-        "try_open",
+        "try_write",
         stdin.as_str(),
+        "123",
     ])
     .unwrap();
-
     assert_eq!("AA", read_all(stderr));
-    assert_eq!("err", read_all(stdout));
 }
 
 #[test]
