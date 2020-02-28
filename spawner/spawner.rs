@@ -8,6 +8,7 @@ use crate::process::{
 use crate::supervisor::Supervisor;
 use crate::{Error, Result};
 
+use std::collections::HashSet;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
@@ -110,6 +111,8 @@ pub struct Session {
     progs: Vec<ProgramExt>,
     mappings: Vec<StdioMapping>,
     graph: Graph,
+    ignored_srcs: HashSet<SourceId>,
+    ignored_dsts: HashSet<DestinationId>,
 }
 
 struct FlagGuard(Arc<AtomicBool>);
@@ -228,6 +231,14 @@ impl Session {
         Ok(mapping)
     }
 
+    pub fn disable_source_optimization(&mut self, src: SourceId) {
+        self.ignored_srcs.insert(src);
+    }
+
+    pub fn disable_destination_optimization(&mut self, dst: DestinationId) {
+        self.ignored_dsts.insert(dst);
+    }
+
     pub fn graph_mut(&mut self) -> &mut Graph {
         &mut self.graph
     }
@@ -290,11 +301,17 @@ impl SupervisorThread {
         }
     }
 
-    fn wait(self, mapping: StdioMapping, io_errs: &mut Option<dataflow::Errors>) -> ProgramResult {
+    fn wait(self, mapping: StdioMapping, results: &mut TransmitterResults) -> ProgramResult {
         // Collect io errors for this program.
         let mut errs = [mapping.stdout, mapping.stderr]
             .iter()
-            .filter_map(|id| io_errs.as_mut().map(|e| e.errors.remove(id)).flatten())
+            .filter_map(|id| {
+                if results.sources.get(id).map(Result::is_err).unwrap_or(false) {
+                    Some(results.sources.remove(id).unwrap().unwrap_err())
+                } else {
+                    None
+                }
+            })
             .collect::<Vec<_>>();
 
         let result = self
@@ -319,11 +336,11 @@ impl SupervisorThread {
 
 impl Run {
     pub fn wait(self) -> Vec<ProgramResult> {
-        let mut transmitter_errors = self.transmitter.wait().err();
+        let mut transmitter_results = self.transmitter.wait();
         self.supervisors
             .into_iter()
             .zip(self.mappings.into_iter())
-            .map(|(supervisor, mapping)| supervisor.wait(mapping, &mut transmitter_errors))
+            .map(|(supervisor, mapping)| supervisor.wait(mapping, &mut transmitter_results))
             .collect::<Vec<_>>()
     }
 

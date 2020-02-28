@@ -41,9 +41,9 @@ struct DriverStdio {
     stdin_w: Option<WritePipe>,
 }
 
-struct StdioLinker<'w, 'g, 'm> {
+struct StdioLinker<'w, 's, 'm> {
     mappings: &'m [StdioMapping],
-    graph: &'g mut Graph,
+    sess: &'s mut Session,
     stdin: Option<(WritePipe, SourceId)>,
     warnings: &'w Warnings,
     output_files: HashMap<PathBuf, DestinationId>,
@@ -99,7 +99,7 @@ impl Driver {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let stdio = StdioLinker::new(sess.graph_mut(), &mappings, &warnings).link(&cmds)?;
+        let stdio = StdioLinker::new(&mut sess, &mappings, &warnings).link(&cmds)?;
 
         if let Some(controller) = cmds.iter().position(|cmd| cmd.controller) {
             // Initialize protocol entities.
@@ -156,10 +156,10 @@ impl Driver {
     }
 }
 
-impl<'w, 'g, 'm> StdioLinker<'w, 'g, 'm> {
-    fn new(graph: &'g mut Graph, mappings: &'m [StdioMapping], warnings: &'w Warnings) -> Self {
+impl<'w, 's, 'm> StdioLinker<'w, 's, 'm> {
+    fn new(sess: &'s mut Session, mappings: &'m [StdioMapping], warnings: &'w Warnings) -> Self {
         Self {
-            graph,
+            sess,
             mappings,
             stdin: None,
             warnings,
@@ -192,13 +192,13 @@ impl<'w, 'g, 'm> StdioLinker<'w, 'g, 'm> {
                 RedirectKind::Std => {
                     if self.stdin.is_none() {
                         let (r, w) = pipe::create()?;
-                        self.stdin = Some((w, self.graph.add_source(r)));
+                        self.stdin = Some((w, self.sess.graph_mut().add_source(r)));
                     }
                     self.stdin.as_ref().unwrap().1
                 }
                 _ => continue,
             };
-            self.graph.connect(src, dst);
+            self.sess.graph_mut().connect(src, dst);
         }
         Ok(())
     }
@@ -210,7 +210,7 @@ impl<'w, 'g, 'm> StdioLinker<'w, 'g, 'm> {
                 RedirectKind::Stdin(i) => self.get_mapping("Stdin", *i)?.stdin,
                 _ => continue,
             };
-            self.graph.connect(src, dst);
+            self.sess.graph_mut().connect(src, dst);
         }
         Ok(())
     }
@@ -221,9 +221,11 @@ impl<'w, 'g, 'm> StdioLinker<'w, 'g, 'm> {
             Some(id) => Ok(id),
             None => {
                 let pipe = open_input_file(&path, flags, &self.warnings)?;
-                let id = self.graph.add_source(pipe);
+                let id = self.sess.graph_mut().add_source(pipe);
                 if flags.exclusive {
                     self.exclusive_input_files.insert(path, id);
+                    // Avoid inlining to keep pipe open as long as possible.
+                    self.sess.disable_source_optimization(id);
                 }
                 Ok(id)
             }
@@ -236,8 +238,12 @@ impl<'w, 'g, 'm> StdioLinker<'w, 'g, 'm> {
             Some(id) => Ok(id),
             None => {
                 let pipe = open_output_file(&path, flags, &self.warnings)?;
-                let id = self.graph.add_file_destination(pipe);
+                let id = self.sess.graph_mut().add_file_destination(pipe);
                 self.output_files.insert(path, id);
+                if flags.exclusive {
+                    // Avoid inlining to keep pipe open as long as possible.
+                    self.sess.disable_destination_optimization(id);
+                }
                 Ok(id)
             }
         }

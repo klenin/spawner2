@@ -78,6 +78,28 @@ fn exclusive_write_2() {
 
 #[cfg(windows)]
 #[test]
+fn exclusive_write_3() {
+    let tmp = TmpDir::new();
+    let file = tmp.file("file.txt");
+    run(&[
+        "--separator=@",
+        format!("--out=*e:{}", file).as_str(),
+        APP,
+        "A",
+        "--@",
+        APP,
+        "sleep",
+        "1",
+        "try_write",
+        file.as_str(),
+        "123",
+    ])
+    .unwrap();
+    assert_eq!("A", read_all(file));
+}
+
+#[cfg(windows)]
+#[test]
 fn exclusive_read_2() {
     let tmp = TmpDir::new();
     let stdin = tmp.file("stdin.txt");

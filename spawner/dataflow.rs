@@ -2,7 +2,6 @@ use crate::pipe::{ReadPipe, WritePipe};
 use crate::{Error, Result};
 
 use std::collections::HashMap;
-use std::fmt;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -54,14 +53,14 @@ pub struct Graph {
     dst_id_generator: usize,
 }
 
-#[derive(Debug)]
-pub struct Errors {
-    pub errors: HashMap<SourceId, Error>,
+pub struct TransmitterResults {
+    pub sources: HashMap<SourceId, Result<ReadPipe>>,
+    _file_dsts: Vec<Destination>,
 }
 
 pub struct Transmitter {
     readers: Vec<(SourceId, JoinHandle<Result<ReadPipe>>)>,
-    _file_dsts: Vec<Destination>,
+    file_dsts: Vec<Destination>,
 }
 
 impl ConnectionKind {
@@ -255,7 +254,7 @@ impl Graph {
                 .into_iter()
                 .map(|(id, src)| (id, thread::spawn(move || read_source(src))))
                 .collect(),
-            _file_dsts: file_dsts,
+            file_dsts: file_dsts,
         }
     }
 
@@ -270,37 +269,22 @@ impl Graph {
     }
 }
 
-impl std::error::Error for Errors {}
-
-impl fmt::Display for Errors {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for e in self.errors.values() {
-            writeln!(f, "{}", e)?;
-        }
-        Ok(())
-    }
-}
-
 impl Transmitter {
-    pub fn wait(self) -> std::result::Result<(), Errors> {
-        let errors = self
-            .readers
-            .into_iter()
-            .filter_map(|(id, reader)| {
-                match reader
-                    .join()
-                    .unwrap_or_else(|_| Err(Error::from("Source reader panicked")))
-                {
-                    Ok(_) => None,
-                    Err(e) => Some((id, e)),
-                }
-            })
-            .collect::<HashMap<_, _>>();
-
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(Errors { errors })
+    pub fn wait(self) -> TransmitterResults {
+        TransmitterResults {
+            sources: self
+                .readers
+                .into_iter()
+                .map(|(id, reader)| {
+                    (
+                        id,
+                        reader
+                            .join()
+                            .unwrap_or_else(|_| Err(Error::from("Source reader panicked"))),
+                    )
+                })
+                .collect::<HashMap<_, _>>(),
+            _file_dsts: self.file_dsts,
         }
     }
 }
