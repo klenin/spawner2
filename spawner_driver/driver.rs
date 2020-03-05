@@ -8,7 +8,7 @@ use crate::sys::{
 };
 
 use spawner::dataflow::{DestinationId, Graph, SourceId};
-use spawner::pipe::{self, WritePipe};
+use spawner::pipe::{self, ReadPipe, WritePipe};
 use spawner::process::{Group, ProcessInfo};
 use spawner::{
     Error, IdleTimeLimit, Program, ProgramMessage, ResourceLimits, Result, Session, StdioMapping,
@@ -22,7 +22,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 
@@ -39,12 +39,14 @@ pub struct Driver {
 /// We don't want to redirect directly to STDIN\STDOUT handles since it may result in undefined behaviour.
 struct DriverStdio {
     stdin_w: Option<WritePipe>,
+    stdout_r: Option<ReadPipe>,
 }
 
 struct StdioLinker<'w, 's, 'm> {
     mappings: &'m [StdioMapping],
     sess: &'s mut Session,
     stdin: Option<(WritePipe, SourceId)>,
+    stdout: Option<(ReadPipe, DestinationId)>,
     warnings: &'w Warnings,
     output_files: HashMap<PathBuf, DestinationId>,
     exclusive_input_files: HashMap<PathBuf, SourceId>,
@@ -137,6 +139,10 @@ impl Driver {
         let cmds = self.cmds;
         let run = self.sess.run()?;
 
+        let has_stdout_redirect = self.stdio.stdout_r.is_some();
+        if let Some(stdout) = self.stdio.stdout_r {
+            spawn_stdout_writer(stdout);
+        }
         if let Some(stdin) = self.stdio.stdin_w {
             ConsoleReader::spawn(stdin).join(&run);
         }
@@ -149,7 +155,7 @@ impl Driver {
             .collect::<Vec<_>>();
         if reports.is_empty() {
             Command::print_help();
-        } else {
+        } else if !has_stdout_redirect {
             print_reports(&cmds, &reports)?;
         }
         Ok(reports)
@@ -162,6 +168,7 @@ impl<'w, 's, 'm> StdioLinker<'w, 's, 'm> {
             sess,
             mappings,
             stdin: None,
+            stdout: None,
             warnings,
             output_files: HashMap::new(),
             exclusive_input_files: HashMap::new(),
@@ -177,6 +184,7 @@ impl<'w, 's, 'm> StdioLinker<'w, 's, 'm> {
         }
         Ok(DriverStdio {
             stdin_w: self.stdin.map(|s| s.0),
+            stdout_r: self.stdout.map(|s| s.0),
         })
     }
 
@@ -208,6 +216,13 @@ impl<'w, 's, 'm> StdioLinker<'w, 's, 'm> {
             let dst = match &redirect.kind {
                 RedirectKind::File(f) => self.open_output_file(f, redirect.flags)?,
                 RedirectKind::Stdin(i) => self.get_mapping("Stdin", *i)?.stdin,
+                RedirectKind::Std => {
+                    if self.stdout.is_none() {
+                        let (r, w) = pipe::create()?;
+                        self.stdout = Some((r, self.sess.graph_mut().add_destination(w)));
+                    }
+                    self.stdout.as_ref().unwrap().1
+                }
                 _ => continue,
             };
             self.sess.graph_mut().connect(src, dst);
@@ -310,6 +325,22 @@ where
     }
 
     Ok(cmds)
+}
+
+fn spawn_stdout_writer(src: ReadPipe) {
+    let mut s = String::new();
+    let mut reader = BufReader::new(src);
+    loop {
+        s.clear();
+        if reader.read_line(&mut s).is_err() {
+            println!("{}", s);
+            return;
+        }
+        if s.is_empty() {
+            return;
+        }
+        print!("{}", s);
+    }
 }
 
 fn print_reports(cmds: &[Command], reports: &[Report]) -> std::io::Result<()> {

@@ -228,3 +228,38 @@ fn multiple_stdins_from_sp_stdin() {
     assert_eq!(data, read_all(stdout1));
     assert_eq!(data, read_all(stdout2));
 }
+
+#[test]
+fn stdout_to_sp_stdout() {
+    let tmp = TmpDir::new();
+    let stdout = tmp.file("stdout.txt");
+    run(&[
+        format!("--out={}", stdout).as_str(),
+        SP,
+        "--out=*std",
+        APP,
+        "123",
+    ])
+    .unwrap();
+    assert_eq!("123", read_all(stdout).trim_end());
+}
+
+#[test]
+fn multiple_stdouts_to_sp_stdout() {
+    let tmp = TmpDir::new();
+    let stdout = tmp.file("stdout.txt");
+    run(&[
+        format!("--out={}", stdout).as_str(),
+        SP,
+        "--separator=@",
+        "--out=*std",
+        "--@",
+        APP,
+        "aaa",
+        "--@",
+        APP,
+        "aaa",
+    ])
+    .unwrap();
+    assert_eq!("aaaaaa", read_all(stdout).trim_end());
+}
