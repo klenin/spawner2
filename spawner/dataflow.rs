@@ -254,7 +254,7 @@ impl Graph {
                 .into_iter()
                 .map(|(id, src)| (id, thread::spawn(move || read_source(src))))
                 .collect(),
-            file_dsts: file_dsts,
+            file_dsts,
         }
     }
 
