@@ -359,14 +359,14 @@ fn parse_stdio_redirect(s: &str, list: &mut RedirectList) -> Result<Option<Redir
     if !s.starts_with('*') {
         // file
         Ok(Some(parse_file_redirect(s, Command::DEFAULT_FILE_FLAGS)))
-    } else if s.starts_with("*:") {
+    } else if let Some(pipe_or_file) = s.strip_prefix("*:") {
         // *: or *:file or *:n.stdio
         if len == 2 {
             list.default_flags = Command::DEFAULT_FILE_FLAGS;
             Ok(None)
         } else {
             Ok(Some(parse_pipe_or_file_redirect(
-                &s[2..],
+                pipe_or_file,
                 list.default_flags,
             )))
         }

@@ -65,10 +65,7 @@ pub struct Transmitter {
 
 impl ConnectionKind {
     fn is_file(&self) -> bool {
-        match self {
-            ConnectionKind::File(_) => true,
-            _ => false,
-        }
+        matches!(self, ConnectionKind::File(_))
     }
 }
 
@@ -95,10 +92,7 @@ impl Connection {
     }
 
     fn is_dead(&self) -> bool {
-        match self.state {
-            ConnectionState::Dead => true,
-            _ => false,
-        }
+        matches!(self.state, ConnectionState::Dead)
     }
 }
 

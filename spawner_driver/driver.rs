@@ -285,10 +285,7 @@ fn canonicalize(path: &str) -> Result<PathBuf> {
 
 impl Role {
     fn is_agent(&self) -> bool {
-        match self {
-            Role::Agent(_) => true,
-            _ => false,
-        }
+        matches!(self, Role::Agent(_))
     }
 }
 

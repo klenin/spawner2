@@ -431,7 +431,7 @@ impl<'a> OptContainer<'a> {
         for opt in &self.opts {
             let field = &opt.field.ident;
             let name = Lit::new(Literal::string(
-                opt.names.iter().next().unwrap_or(&String::from("")),
+                opt.names.get(0).unwrap_or(&String::from("")),
             ));
             match opt.kind {
                 OptKind::Flag => set_opts.push(quote! {

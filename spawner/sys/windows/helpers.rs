@@ -231,7 +231,7 @@ impl User {
             Ok(Self {
                 token: Handle(token),
                 winsta: new_winsta,
-                desktop: desktop,
+                desktop,
                 desktop_name: to_utf16(format!(
                     "{}\\{}",
                     String::from_utf16(winsta_name).map_err(|e| Error::from(e.to_string()))?,
@@ -304,7 +304,7 @@ impl EnvBlock {
         }
 
         Ok(Self {
-            block: block,
+            block,
             len: len as usize,
         })
     }
@@ -389,7 +389,7 @@ impl AttList {
                 /*lpSize=*/ &mut len,
             ))?;
 
-            Ok(Self { ptr: ptr, len: len })
+            Ok(Self { ptr, len })
         }
     }
 

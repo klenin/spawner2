@@ -355,7 +355,7 @@ impl Process {
         Ok(Self {
             handle: Handle::new(process_info.hProcess),
             main_thread: Handle::new(process_info.hThread),
-            user: user,
+            user,
         })
     }
 }
@@ -377,7 +377,7 @@ macro_rules! count_endpoints {
 impl<'a> ResourceUsage<'a> {
     pub fn new(group: &'a Group) -> Self {
         Self {
-            group: group,
+            group,
             pid_list: RefCell::new(PidList::new()),
             endpoints: RefCell::new(Endpoints::new()),
         }
@@ -447,7 +447,7 @@ impl Group {
             .map_err(Error::from)
             .and_then(|job| {
                 JobNotifications::new(&job).map(|notifications| Self {
-                    job: job,
+                    job,
                     notifications: RefCell::new(notifications),
                 })
             })

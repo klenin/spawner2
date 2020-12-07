@@ -249,10 +249,7 @@ impl From<&Command> for Report {
 
 impl ReportKind {
     pub fn is_json(&self) -> bool {
-        match self {
-            ReportKind::Json => true,
-            _ => false,
-        }
+        matches!(self, ReportKind::Json)
     }
 }
 
