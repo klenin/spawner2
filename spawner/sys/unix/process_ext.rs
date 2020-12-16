@@ -72,18 +72,13 @@ impl ProcessInfoExt for ProcessInfo {
 
 fn bpf_stmt(code: __u16, k: __u32) -> sock_filter {
     sock_filter {
-        code: code,
+        code,
         jt: 0,
         jf: 0,
-        k: k,
+        k,
     }
 }
 
 fn bpf_jump(code: __u16, k: __u32, jt: __u8, jf: __u8) -> sock_filter {
-    sock_filter {
-        code: code,
-        jt: jt,
-        jf: jf,
-        k: k,
-    }
+    sock_filter { code, jt, jf, k }
 }

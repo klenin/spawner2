@@ -263,14 +263,14 @@ impl Process {
 
     pub fn spawn(info: &mut ProcessInfo, stdio: Stdio) -> Result<Self> {
         create_process(info, stdio, None).map(|(pid, init_result)| Self {
-            pid: pid,
+            pid,
             status: ProcessStatus::Alive(init_result),
         })
     }
 
     pub fn spawn_in_group(info: &mut ProcessInfo, stdio: Stdio, group: &mut Group) -> Result<Self> {
         create_process(info, stdio, Some(group)).map(|(pid, init_result)| Self {
-            pid: pid,
+            pid,
             status: ProcessStatus::Alive(init_result),
         })
     }
@@ -279,7 +279,7 @@ impl Process {
 impl<'a> ResourceUsage<'a> {
     pub fn new(group: &'a Group) -> Self {
         Self {
-            group: group,
+            group,
             active_tasks: ActiveTasks::new(),
             dead_tasks_info: DeadTasksInfo::new(),
         }
@@ -310,7 +310,7 @@ impl<'a> ResourceUsage<'a> {
     pub fn pid_counters(&self) -> Result<Option<GroupPidCounters>> {
         let active_processes = self.active_tasks.count();
         Ok(Some(GroupPidCounters {
-            active_processes: active_processes,
+            active_processes,
             total_processes: self.dead_tasks_info.num_dead_tasks + active_processes,
         }))
     }
@@ -471,7 +471,7 @@ impl ActiveTasks {
 
         for (pid, wchar) in new_wchar_by_pid.iter() {
             if old_wchar_by_pid.get(pid).is_none() {
-                old_wchar_by_pid.insert(pid.clone(), wchar.unwrap_or(0));
+                old_wchar_by_pid.insert(*pid, wchar.unwrap_or(0));
             }
         }
 
@@ -671,7 +671,7 @@ fn create_process(
             stdout: stdio.stdout.into_inner(),
             stderr: stdio.stderr.into_inner(),
         },
-        info.working_dir.as_ref().map(|wd| wd.as_str()),
+        info.working_dir.as_deref(),
         info.filter.as_mut(),
         group,
         usr.as_ref(),
