@@ -23,13 +23,13 @@ use nix::unistd::{
 
 use cgroups_fs::{Cgroup, CgroupName};
 
-use procfs::{self, FDTarget};
+use procfs::process::FDTarget;
 
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 
 use std::collections::HashMap;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::iter;
 use std::mem;
 use std::os::unix::io::RawFd;
@@ -420,14 +420,14 @@ impl ActiveTasks {
     }
 
     fn count_network_connections(&self) -> procfs::ProcResult<usize> {
-        let tcp_inodes = procfs::tcp()?
+        let tcp_inodes = procfs::net::tcp()?
             .into_iter()
-            .chain(procfs::tcp6()?)
+            .chain(procfs::net::tcp6()?)
             .map(|tcp_entry| tcp_entry.inode);
 
-        let udp_inodes = procfs::udp()?
+        let udp_inodes = procfs::net::udp()?
             .into_iter()
-            .chain(procfs::udp6()?)
+            .chain(procfs::net::udp6()?)
             .map(|udp_entry| udp_entry.inode);
 
         Ok(tcp_inodes
@@ -441,7 +441,7 @@ impl ActiveTasks {
         let new_wchar_by_pid = freezer
             .get_tasks()?
             .into_iter()
-            .filter_map(|pid| procfs::Process::new(pid.as_raw()).ok())
+            .filter_map(|pid| procfs::process::Process::new(pid.as_raw()).ok())
             .map(|ps| {
                 let pid = Pid::from_raw(ps.pid());
 
@@ -547,7 +547,7 @@ fn create_args(info: &ProcessInfo) -> Result<Vec<CString>> {
 }
 
 fn close_all_fds(ignore: &[RawFd]) -> InitResult {
-    procfs::Process::myself()
+    procfs::process::Process::myself()
         .and_then(|ps| ps.fd())
         .map_err(|_| InitError::CloseFd)?
         .into_iter()
@@ -625,12 +625,7 @@ fn init_child_process(
     Ok(())
 }
 
-fn exec_app(
-    app: &CString,
-    args: &[CString],
-    env: &[CString],
-    search_in_path: bool,
-) -> nix::Result<()> {
+fn exec_app(app: &CStr, args: &[&CStr], env: &[&CStr], search_in_path: bool) -> nix::Result<()> {
     raise(Signal::SIGSTOP)?;
     if search_in_path {
         execvpe(app, args, env)?;
@@ -653,7 +648,13 @@ fn create_process(
     let init_result = SharedMem::alloc(Ok(()))?;
     let app = to_cstr(info.app.as_str())?;
     let args = create_args(info)?;
+    let args_ref = (0..args.len())
+        .map(|i| args[i].as_c_str())
+        .collect::<Vec<_>>();
     let env = create_env(info)?;
+    let env_ref = (0..env.len())
+        .map(|i| env[i].as_c_str())
+        .collect::<Vec<_>>();
 
     if let ForkResult::Parent { child, .. } = fork()? {
         // Wait for initialization to complete.
@@ -676,7 +677,9 @@ fn create_process(
         usr.as_ref(),
         info.cpuset.as_ref(),
     )
-    .and_then(|_| exec_app(&app, &args, &env, info.search_in_path).map_err(InitError::Other));
+    .and_then(|_| {
+        exec_app(&app, &args_ref, &env_ref, info.search_in_path).map_err(InitError::Other)
+    });
 
     process::exit(0);
 }
