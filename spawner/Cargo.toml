@@ -31,6 +31,6 @@ winapi = { version = "0.3.6", features = [
 
 [target.'cfg(unix)'.dependencies]
 cgroups-fs = "1.1.2"
-nix = "*"
+nix = "0.17.0"
 rand = "0.7.3"
 procfs = "0.9.1"
