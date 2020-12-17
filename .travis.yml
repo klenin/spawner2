@@ -1,0 +1,37 @@
+dist: bionic
+
+language: rust
+rust:
+  - stable
+
+branches:
+  only:
+    - /^v(\d+\.)+\d+$/
+
+before_install:
+  - sudo apt-get -y install p7zip-full
+  - sh create_cgroups.sh
+  - rustup component add rustfmt clippy
+  - cargo fmt -- --check
+  - cargo clippy -- -D warnings
+
+install:
+  - rustc -vV && cargo -vV
+  - cargo build
+  - cargo build --release
+
+script:
+  - cargo test -- --test-threads=1
+
+before_deploy:
+  - cd $TRAVIS_BUILD_DIR/target/release/
+  - 7z a $TRAVIS_BUILD_DIR/linux-amd64.zip sp
+
+deploy:
+  provider: releases
+  skip_cleanup: true
+  api_key: $GITHUB_AUTH_TOKEN
+  file:
+    - $TRAVIS_BUILD_DIR/linux-amd64.zip
+  on:
+    tags: true
