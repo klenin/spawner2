@@ -1,19 +1,22 @@
 use crate::sys::windows::error::SysError;
-use crate::sys::windows::missing_decls::{
-    GetExtendedTcpTable, GetExtendedUdpTable, MIB_TCP6ROW_OWNER_PID, MIB_TCP6TABLE_OWNER_PID,
-    MIB_TCPROW_OWNER_PID, MIB_TCPTABLE_OWNER_PID, MIB_UDP6ROW_OWNER_PID, MIB_UDP6TABLE_OWNER_PID,
-    MIB_UDPROW_OWNER_PID, MIB_UDPTABLE_OWNER_PID, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-    TCP_TABLE_OWNER_PID_ALL, UDP_TABLE_OWNER_PID,
-};
+use crate::sys::windows::missing_decls::PROC_THREAD_ATTRIBUTE_HANDLE_LIST;
 use crate::{Error, Result};
 
 use winapi::shared::basetsd::{DWORD_PTR, SIZE_T, ULONG_PTR};
+use winapi::shared::iprtrmib::{TCP_TABLE_OWNER_PID_ALL, UDP_TABLE_OWNER_PID};
 use winapi::shared::minwindef::{DWORD, FALSE, HWINSTA, LPVOID, TRUE, ULONG, WORD};
+use winapi::shared::tcpmib::{
+    MIB_TCP6ROW_OWNER_PID, MIB_TCP6TABLE_OWNER_PID, MIB_TCPROW_OWNER_PID, MIB_TCPTABLE_OWNER_PID,
+};
+use winapi::shared::udpmib::{
+    MIB_UDP6ROW_OWNER_PID, MIB_UDP6TABLE_OWNER_PID, MIB_UDPROW_OWNER_PID, MIB_UDPTABLE_OWNER_PID,
+};
 use winapi::shared::windef::HDESK;
 use winapi::shared::winerror::{ERROR_INSUFFICIENT_BUFFER, ERROR_MORE_DATA, NO_ERROR};
 use winapi::shared::ws2def::{AF_INET, AF_INET6};
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
 use winapi::um::ioapiset::{CreateIoCompletionPort, GetQueuedCompletionStatus};
+use winapi::um::iphlpapi::{GetExtendedTcpTable, GetExtendedUdpTable};
 use winapi::um::jobapi2::{QueryInformationJobObject, SetInformationJobObject};
 use winapi::um::processthreadsapi::{
     DeleteProcThreadAttributeList, InitializeProcThreadAttributeList, UpdateProcThreadAttribute,

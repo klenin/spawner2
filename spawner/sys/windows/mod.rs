@@ -1,8 +1,10 @@
 #[allow(clippy::cast_ptr_alignment)]
 mod helpers;
 
-#[allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
-mod missing_decls;
+mod missing_decls {
+    use winapi::shared::basetsd::DWORD_PTR;
+    pub const PROC_THREAD_ATTRIBUTE_HANDLE_LIST: DWORD_PTR = 131_074;
+}
 
 pub mod error;
 pub mod pipe;
