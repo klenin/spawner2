@@ -44,7 +44,6 @@ use winapi::um::winnt::{
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{self, Write};
-use std::fs::canonicalize;
 use std::mem::{size_of_val, zeroed};
 use std::ptr;
 use std::time::Duration;
@@ -286,11 +285,7 @@ impl Process {
         let app = if info.search_in_path {
             None
         } else {
-            Some(
-                canonicalize(&info.app)
-                    .map_err(|_| Error::last_os_error())
-                    .map(to_utf16)?,
-            )
+            Some(to_utf16(&info.app))
         };
         let app_ptr = app.as_ref().map_or(ptr::null(), |v| v.as_ptr());
 
