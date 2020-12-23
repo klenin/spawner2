@@ -16,6 +16,8 @@ path = "sp.rs"
 spawner = { path = "../spawner" }
 spawner_opts = { path = "../spawner_opts" }
 json = "*"
+chardet = "0.2"
+encoding = "0.2.33"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3.6", features = [

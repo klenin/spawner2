@@ -1,3 +1,5 @@
+extern crate chardet;
+extern crate encoding;
 extern crate json;
 extern crate spawner;
 extern crate spawner_opts;

@@ -18,11 +18,16 @@ use spawner_opts::CmdLineOptions;
 
 use json::JsonValue;
 
+use chardet::{charset2encoding, detect};
+
+use encoding::label::encoding_from_whatwg_label;
+use encoding::DecoderTrap;
+
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 
@@ -324,20 +329,30 @@ where
     Ok(cmds)
 }
 
-fn spawn_stdout_writer(src: ReadPipe) {
-    let mut s = String::new();
-    let mut reader = BufReader::new(src);
+fn spawn_stdout_writer(mut src: ReadPipe) {
+    let mut buf = [0u8; 4096];
     loop {
-        s.clear();
-        if reader.read_line(&mut s).is_err() {
-            println!("{}", s);
-            return;
-        }
-        if s.is_empty() {
-            return;
-        }
+        let n = match src.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(x) => x,
+        };
+        let result = detect(&buf[..n]);
+        let s = encoding_from_whatwg_label(charset2encoding(&result.0))
+            .map(|e| e.decode(&buf[..n], DecoderTrap::Ignore).ok())
+            .flatten()
+            .unwrap_or_else(|| {
+                String::from_utf8(
+                    buf.as_ref()
+                        .iter()
+                        .map(|b| std::ascii::escape_default(*b))
+                        .flatten()
+                        .collect(),
+                )
+                .unwrap()
+            });
         print!("{}", s);
     }
+    io::stdout().flush().ok();
 }
 
 fn print_reports(cmds: &[Command], reports: &[Report]) -> std::io::Result<()> {
