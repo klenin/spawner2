@@ -3,7 +3,7 @@ use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::winbase::{
     FormatMessageW, FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MESSAGE_IGNORE_INSERTS,
 };
-use winapi::um::winnt::{LANG_ENGLISH, MAKELANGID, SUBLANG_ENGLISH_US, WCHAR};
+use winapi::um::winnt::{LANG_ENGLISH, MAKELANGID, SUBLANG_ENGLISH_US};
 
 use std::char::{decode_utf16, REPLACEMENT_CHARACTER};
 use std::fmt::{self, Write};
@@ -26,7 +26,7 @@ impl std::error::Error for SysError {}
 
 impl fmt::Display for SysError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut buf = [0 as WCHAR; 256];
+        let mut buf = [0_u16; 256];
         let msg_len = unsafe {
             FormatMessageW(
                 /*dwFlags=*/

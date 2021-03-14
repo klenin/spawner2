@@ -116,7 +116,7 @@ impl OptionValueParser<f64> for PercentValueParser {
     fn parse(opt: &mut f64, v: &str) -> Result<(), String> {
         let (num_str, suffix) = split_number(v);
         if let Ok(num) = num_str.parse::<f64>() {
-            if suffix == "" || suffix == "%" {
+            if suffix.is_empty() || suffix == "%" {
                 *opt = num;
                 return Ok(());
             }

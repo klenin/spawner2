@@ -63,7 +63,7 @@ fn fwrite(filename: String, kb: usize) {
 }
 
 fn pipe_loop() {
-    let mut chunk = [0 as u8; 128];
+    let mut chunk = [0_u8; 128];
     while let Ok(bytes) = stdin().read(&mut chunk) {
         if bytes == 0 {
             break;

@@ -168,10 +168,8 @@ impl<'a> Opt<'a> {
     }
 
     fn from_meta(field: &'a Field, attr: &Attribute, meta: Option<Meta>) -> Result<Self, Error> {
-        if let Some(m) = meta {
-            if let Meta::List(list) = m {
-                return Opt::from_meta_list(field, &list);
-            }
+        if let Some(Meta::List(list)) = meta {
+            return Opt::from_meta_list(field, &list);
         }
         Err(Error::new_spanned(
             attr,
@@ -238,10 +236,8 @@ impl<'a> OptContainer<'a> {
         attr: &Attribute,
         meta: Option<Meta>,
     ) -> Result<Vec<OptContainerAttribute>, Error> {
-        if let Some(m) = meta {
-            if let Meta::List(list) = m {
-                return OptContainer::parse_meta_list(&list);
-            }
+        if let Some(Meta::List(list)) = meta {
+            return OptContainer::parse_meta_list(&list);
         }
         Err(Error::new_spanned(
             attr,

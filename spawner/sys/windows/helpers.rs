@@ -219,7 +219,7 @@ impl User {
             cvt(desktop)?;
 
             let mut winsta_name_bytes = 0;
-            let mut winsta_name_buf = [0 as WCHAR; 128];
+            let mut winsta_name_buf = [0_u16; 128];
             cvt(GetUserObjectInformationW(
                 /*hObj=*/ new_winsta as HANDLE,
                 /*nIndex=*/ UOI_NAME as c_int,
@@ -316,7 +316,7 @@ impl EnvBlock {
         unsafe { slice::from_raw_parts(self.block, self.len) }
     }
 
-    pub fn iter<'a>(&'a self) -> impl Iterator<Item = String> + 'a {
+    pub fn iter(&self) -> impl Iterator<Item = String> + '_ {
         self.as_slice()
             .split(|c| *c == 0)
             .map(String::from_utf16_lossy)
@@ -591,18 +591,20 @@ impl JobNotifications {
     }
 
     pub fn is_memory_limit_hit(&mut self) -> Result<bool> {
-        self.recv_message().map(|_| self.is_memory_limit_hit)
-    }
-    pub fn is_active_process_limit_hit(&mut self) -> Result<bool> {
-        self.recv_message()
-            .map(|_| self.is_active_process_limit_hit)
+        self.recv_message();
+        Ok(self.is_memory_limit_hit)
     }
 
-    fn recv_message(&mut self) -> Result<()> {
+    pub fn is_active_process_limit_hit(&mut self) -> Result<bool> {
+        self.recv_message();
+        Ok(self.is_active_process_limit_hit)
+    }
+
+    fn recv_message(&mut self) {
         let mut num_bytes = 0;
         let mut _key = 0;
         let mut _overlapped = ptr::null_mut();
-        if unsafe {
+        let status = unsafe {
             GetQueuedCompletionStatus(
                 /*CompletionPort=*/ self.completion_port.raw(),
                 /*lpNumberOfBytes=*/ &mut num_bytes,
@@ -610,14 +612,13 @@ impl JobNotifications {
                 /*lpOverlapped=*/ &mut _overlapped,
                 /*dwMilliseconds=*/ 0,
             )
-        } == TRUE
-        {
+        };
+        if status == TRUE {
             match num_bytes {
                 JOB_OBJECT_MSG_JOB_MEMORY_LIMIT => self.is_memory_limit_hit = true,
                 JOB_OBJECT_MSG_ACTIVE_PROCESS_LIMIT => self.is_active_process_limit_hit = true,
                 _ => {}
             }
         }
-        Ok(())
     }
 }
