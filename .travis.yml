@@ -4,9 +4,12 @@ language: rust
 rust:
   - stable
 
+cache: cargo
+
 branches:
   only:
     - /^v(\d+\.)+\d+$/
+    - master
 
 before_install:
   - sudo apt-get -y install p7zip-full
