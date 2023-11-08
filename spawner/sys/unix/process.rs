@@ -656,7 +656,7 @@ fn create_process(
         .map(|i| env[i].as_c_str())
         .collect::<Vec<_>>();
 
-    if let ForkResult::Parent { child, .. } = fork()? {
+    if let ForkResult::Parent { child, .. } = unsafe { fork() }? {
         // Wait for initialization to complete.
         waitpid(child, Some(WaitPidFlag::WSTOPPED))?;
         if !info.suspended {
